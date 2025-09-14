@@ -1,0 +1,83 @@
+version: "3"
+
+output: "prefixed"
+
+tasks:
+  build:
+    desc: 编译当前系统架构的所有的二进制文件
+    run: once
+    deps:
+      - tidy
+    cmds:
+      - |
+        CGO_ENABLED=0 GOOS={{.GO_OS}} GOARCH={{.GO_ARCH}} \
+        GOMODCACHE={{.GO_PATH}}/pkg/mod \
+        GOBIN={{.GO_BIN}} GOPATH={{.GO_PATH}} \
+        go install -trimpath  -v -ldflags "{{.LDFLAGS}}" ./...
+
+  build-os-arch:
+    desc: 编译某个系统架构的二进制文件
+    cmds:
+      - |
+        rm -rf ./bin/{{.GO_OS}}_{{.GO_ARCH}}
+      - |
+        CGO_ENABLED=0 GOOS={{.GO_OS}} GOARCH={{.GO_ARCH}} \
+        GOMODCACHE={{.GO_PATH}}/pkg/mod \
+        GOPATH={{.GO_BIN}} \
+        go install -trimpath  -v -ldflags "{{.LDFLAGS}}" ./...
+      - |
+        if [ "{{.GO_OS}}" == "{{OS}}" ] && [ "{{.GO_ARCH}}" == "{{ARCH}}"  ]; then
+          mv ./bin/bin  ./bin/{{.GO_OS}}_{{.GO_ARCH}}
+          cp ./bin/{{.GO_OS}}_{{.GO_ARCH}}/* ./bin/
+        else
+          mv ./bin/bin/{{.GO_OS}}_{{.GO_ARCH}} ./bin/{{.GO_OS}}_{{.GO_ARCH}}
+        fi
+  build-linux-amd64:
+    desc: 编译 linux/amd64 架构的二进制文件
+    run: once
+    cmds:
+      - task: build-os-arch
+        vars:
+          GO_ARCH: "amd64"
+          GO_OS: "linux"
+
+  build-linux-arm64:
+    desc: 编译 linux/arm64 架构的二进制文件
+    run: once
+    cmds:
+      - task: build-os-arch
+        vars:
+          GO_ARCH: "arm64"
+          GO_OS: "linux"
+
+  build-darwin-amd64:
+    desc: 编译 darwin/amd64 架构的二进制文件
+    run: once
+    cmds:
+      - task: build-os-arch
+        vars:
+          GO_ARCH: "amd64"
+          GO_OS: "darwin"
+  build-darwin-arm64:
+    desc: 编译 darwin/arm64 架构的二进制文件
+    run: once
+    cmds:
+      - task: build-os-arch
+        vars:
+          GO_ARCH: "arm64"
+          GO_OS: "darwin"
+
+  build-all:
+    desc: 编译所有系统架构的二进制文件
+    run: once
+    cmds:
+      - task: build-linux-amd64
+      - task: build-linux-arm64
+      - task: build-darwin-amd64
+      - task: build-darwin-arm64
+
+  tidy:
+    desc: go mod tidy
+    run: once
+    cmds:
+      - time go mod tidy

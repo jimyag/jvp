@@ -1,0 +1,36 @@
+version: "3"
+vars:
+  GIT_TAG:
+    sh: git describe --tags --always --dirty="-dev"
+  GO_BIN: "{{.USER_WORKING_DIR}}/bin"
+  GO_PATH:
+    sh: "go env GOPATH | awk -F: '{print $1}' "
+  BUILD_TIME:
+    sh: TZ='Asia/Shanghai' date "+%Y-%m-%d-%H-%M-%S"
+
+  LDFLAGS: "-s -w  -X 'github.com/jimmicro/version.GitTag={{.GIT_TAG}}' \
+    -X 'github.com/jimmicro/version.BuildTime={{.BUILD_TIME}}'"
+
+includes:
+  build: # 编译二进制
+    taskfile: ./hack/taskfile/build.yaml
+    flatten: true
+
+tasks:
+  default:
+    desc: List all tasks
+    cmds:
+      - task --list-all
+    silent: true
+
+  deps-golang:
+    desc: Download and install go dependencies
+    cmds:
+      - go mod download
+      - go install  github.com/go-task/task/v3/cmd/task@latest
+
+  deps-dev-tools:
+    desc: Install development tools
+    cmds:
+      - sudo apt update
+      - sudo apt install -y build-essential libvirt-dev qemu-system qemu-kvm libvirt-clients libvirt-daemon-system virtinst bridge-utils
