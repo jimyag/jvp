@@ -25,3 +25,5 @@ bin/
 .DS_Store
 
 !Dockerfile
+
+.claude

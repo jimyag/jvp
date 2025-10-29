@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"os"
 	"time"
 
 	"github.com/digitalocean/go-libvirt"
@@ -40,31 +41,63 @@ type NetworkInterface struct {
 	Model  string `json:"model"`
 }
 
-// XML 结构体用于解析域的 XML 配置
-type DomainXML struct {
-	XMLName xml.Name `xml:"domain"`
-	Name    string   `xml:"name"`
-	OS      struct {
-		Type string `xml:"type"`
-	} `xml:"os"`
-	Devices struct {
-		Interfaces []struct {
-			Type   string `xml:"type,attr"`
-			Source struct {
-				Network string `xml:"network,attr"`
-				Bridge  string `xml:"bridge,attr"`
-			} `xml:"source"`
-			MAC struct {
-				Address string `xml:"address,attr"`
-			} `xml:"mac"`
-			Model struct {
-				Type string `xml:"type,attr"`
-			} `xml:"model"`
-			Target struct {
-				Dev string `xml:"dev,attr"`
-			} `xml:"target"`
-		} `xml:"interface"`
-	} `xml:"devices"`
+// CloudInitConfig cloud-init 配置
+type CloudInitConfig struct {
+	Hostname      string            // 主机名
+	Username      string            // 用户名（默认：ubuntu）
+	Password      string            // 用户密码（明文，会被 hash）
+	SSHKeys       []string          // SSH 公钥列表
+	DisableRoot   bool              // 禁用 root 登录（默认：true）
+	Network       *CloudInitNetwork // 网络配置（可选）
+	Commands      []string          // 启动后执行的命令
+	Packages      []string          // 要安装的软件包
+	WriteFiles    []CloudInitFile   // 要写入的文件
+	Timezone      string            // 时区（如：Asia/Shanghai）
+	CustomUserData string           // 自定义 user-data YAML 内容（会覆盖其他配置）
+}
+
+// CloudInitNetwork cloud-init 网络配置
+type CloudInitNetwork struct {
+	Version   string                       // 版本（默认：2）
+	Ethernets map[string]CloudInitEthernet // 网卡配置
+}
+
+// CloudInitEthernet 以太网接口配置
+type CloudInitEthernet struct {
+	DHCP4     bool     // 启用 DHCP4
+	DHCP6     bool     // 启用 DHCP6
+	Addresses []string // 静态 IP 地址（CIDR 格式，如：192.168.1.100/24）
+	Gateway4  string   // IPv4 网关
+	Gateway6  string   // IPv6 网关
+	Nameservers []string // DNS 服务器
+}
+
+// CloudInitFile 要写入的文件
+type CloudInitFile struct {
+	Path        string // 文件路径
+	Content     string // 文件内容
+	Owner       string // 文件所有者（默认：root:root）
+	Permissions string // 文件权限（默认：0644）
+}
+
+// CreateVMConfig 创建虚拟机配置参数
+type CreateVMConfig struct {
+	Name          string            // 虚拟机名称（必填）
+	Memory        uint64            // 内存大小（KB）（必填）
+	VCPUs         uint16            // 虚拟 CPU 数量（必填）
+	DiskPath      string            // 磁盘路径（必填）
+	DiskSize      uint64            // 磁盘大小（GB）（可选，用于创建新磁盘）
+	DiskBus       string            // 磁盘总线类型：virtio, sata, scsi, ide（默认：virtio）
+	NetworkType   string            // 网络类型：network, bridge, direct（默认：bridge）
+	NetworkSource string            // 网络源：网络名称或网桥名称（默认：br0）
+	OSType        string            // 操作系统类型：hvm, linux, exe（默认：hvm）
+	Architecture  string            // CPU 架构：x86_64, aarch64, i686 等（默认：x86_64）
+	MachineType   string            // 机器类型（可选，如：pc-q35-6.2）
+	ISOPath       string            // ISO 路径（可选，用于操作系统安装）
+	VNCSocket         string            // VNC Unix socket 路径（可选，默认：/var/lib/libvirt/qemu/{name}.vnc）
+	Autostart         bool              // 是否开机自动启动（默认：false）
+	CloudInit         *CloudInitConfig  // cloud-init 配置（可选）
+	cloudInitISOPath  string            // cloud-init ISO 路径（内部使用）
 }
 
 func New() (*Client, error) {
@@ -188,7 +221,7 @@ func (c *Client) GetDomainInfo(domainUUID libvirt.UUID) (*DomainInfo, error) {
 func (c *Client) formatDomainState(state uint8) string {
 	switch libvirt.DomainState(state) {
 	case libvirt.DomainNostate:
-		return "No State"
+		return "NoState"
 	case libvirt.DomainRunning:
 		return "Running"
 	case libvirt.DomainBlocked:
@@ -196,13 +229,13 @@ func (c *Client) formatDomainState(state uint8) string {
 	case libvirt.DomainPaused:
 		return "Paused"
 	case libvirt.DomainShutdown:
-		return "Shutting Down"
+		return "ShuttingDown"
 	case libvirt.DomainShutoff:
-		return "Shut Off"
+		return "ShutOff"
 	case libvirt.DomainCrashed:
 		return "Crashed"
 	case libvirt.DomainPmsuspended:
-		return "PM Suspended"
+		return "PMSuspended"
 	default:
 		return fmt.Sprintf("Unknown (%d)", state)
 	}
@@ -233,9 +266,9 @@ func (c *Client) getDomainNetworkInfo(domain libvirt.Domain) ([]NetworkInterface
 	var interfaces []NetworkInterface
 	for _, iface := range domainXML.Devices.Interfaces {
 		netIface := NetworkInterface{
-			Name:  iface.Target.Dev,
+			Name:  iface.Source.Dev,
 			Type:  iface.Type,
-			MAC:   iface.MAC.Address,
+			MAC:   iface.Source.MAC,
 			Model: iface.Model.Type,
 		}
 
@@ -305,4 +338,412 @@ func (c *Client) PrintDomainInfo(info *DomainInfo) {
 			fmt.Printf("\n")
 		}
 	}
+}
+
+// ============================================================================
+// 虚拟机创建相关方法
+// ============================================================================
+
+// CreateDomainFromXML 从 DomainXML 结构创建虚拟机域
+// persistent: true=持久化域（推荐），false=临时域
+// 返回创建的 Domain 对象
+func (c *Client) CreateDomainFromXML(domainXML *DomainXML, persistent bool) (libvirt.Domain, error) {
+	// 序列化 DomainXML 为 XML 字符串
+	xmlBytes, err := xml.MarshalIndent(domainXML, "", "  ")
+	if err != nil {
+		return libvirt.Domain{}, fmt.Errorf("failed to marshal domain XML: %v", err)
+	}
+
+	xmlString := string(xmlBytes)
+
+	if persistent {
+		// 方案 A：定义持久化域
+		domain, err := c.conn.DomainDefineXML(xmlString)
+		if err != nil {
+			return libvirt.Domain{}, fmt.Errorf("failed to define domain: %v", err)
+		}
+		return domain, nil
+	} else {
+		// 创建临时域（会自动启动）
+		domain, err := c.conn.DomainCreateXML(xmlString, libvirt.DomainNone)
+		if err != nil {
+			return libvirt.Domain{}, fmt.Errorf("failed to create transient domain: %v", err)
+		}
+		return domain, nil
+	}
+}
+
+// DefineDomain 定义持久化域（不启动）
+// 使用 CreateVMConfig 配置参数来构建域
+func (c *Client) DefineDomain(config *CreateVMConfig) (libvirt.Domain, error) {
+	// 验证配置
+	if err := c.validateVMConfig(config); err != nil {
+		return libvirt.Domain{}, fmt.Errorf("invalid config: %v", err)
+	}
+
+	// 设置默认值
+	c.setDefaultVMConfig(config)
+
+	// 如果配置了 cloud-init，生成 cloud-init ISO
+	if config.CloudInit != nil {
+		isoPath, err := c.generateCloudInitISO(config)
+		if err != nil {
+			return libvirt.Domain{}, fmt.Errorf("failed to generate cloud-init ISO: %v", err)
+		}
+		config.cloudInitISOPath = isoPath
+		log.Printf("Generated cloud-init ISO: %s", config.cloudInitISOPath)
+	}
+
+	// 构建 DomainXML
+	domainXML, err := c.buildDomainXML(config)
+	if err != nil {
+		// 清理 cloud-init ISO（如果生成了）
+		if config.cloudInitISOPath != "" {
+			_ = os.Remove(config.cloudInitISOPath)
+		}
+		return libvirt.Domain{}, fmt.Errorf("failed to build domain XML: %v", err)
+	}
+
+	// 定义持久化域
+	domain, err := c.CreateDomainFromXML(domainXML, true)
+	if err != nil {
+		return libvirt.Domain{}, err
+	}
+
+	// 设置自动启动（如果需要）
+	if config.Autostart {
+		if err := c.conn.DomainSetAutostart(domain, 1); err != nil {
+			// 自动启动设置失败不是致命错误，记录日志即可
+			log.Printf("Warning: failed to set autostart for domain %s: %v", config.Name, err)
+		}
+	}
+
+	return domain, nil
+}
+
+// StartDomain 启动已定义的域
+func (c *Client) StartDomain(domain libvirt.Domain) error {
+	err := c.conn.DomainCreate(domain)
+	if err != nil {
+		return fmt.Errorf("failed to start domain %s: %v", domain.Name, err)
+	}
+	return nil
+}
+
+// DeleteDomain 删除域
+// flags: 可以组合以下标志
+//   - libvirt.DomainUndefineManagedSave: 同时删除托管保存的镜像
+//   - libvirt.DomainUndefineSnapshotsMetadata: 同时删除快照元数据
+//   - libvirt.DomainUndefineNvram: 同时删除 NVRAM 文件
+func (c *Client) DeleteDomain(domain libvirt.Domain, flags libvirt.DomainUndefineFlagsValues) error {
+	// 检查域是否在运行
+	state, _, err := c.conn.DomainGetState(domain, 0)
+	if err != nil {
+		return fmt.Errorf("failed to get domain state: %v", err)
+	}
+
+	// 如果域正在运行，先强制关闭
+	if libvirt.DomainState(state) == libvirt.DomainRunning {
+		if err := c.conn.DomainDestroy(domain); err != nil {
+			return fmt.Errorf("failed to destroy running domain: %v", err)
+		}
+		log.Printf("Domain %s was running and has been forcefully stopped", domain.Name)
+	}
+
+	// 删除域定义
+	err = c.conn.DomainUndefineFlags(domain, flags)
+	if err != nil {
+		return fmt.Errorf("failed to undefine domain: %v", err)
+	}
+
+	return nil
+}
+
+// CreateDomain 创建并可选启动虚拟机域
+// autoStart: true=立即启动域，false=仅定义不启动
+// 这是一个便捷方法，组合了 DefineDomain 和 StartDomain
+func (c *Client) CreateDomain(config *CreateVMConfig, autoStart bool) (libvirt.Domain, error) {
+	// 定义域
+	domain, err := c.DefineDomain(config)
+	if err != nil {
+		return libvirt.Domain{}, err
+	}
+
+	// 如果需要自动启动
+	if autoStart {
+		if err := c.StartDomain(domain); err != nil {
+			// 启动失败，尝试清理已定义的域
+			_ = c.conn.DomainUndefine(domain)
+			return libvirt.Domain{}, fmt.Errorf("failed to start domain after definition: %v", err)
+		}
+	}
+
+	return domain, nil
+}
+
+// ============================================================================
+// 辅助方法
+// ============================================================================
+
+// validateVMConfig 验证虚拟机配置参数
+func (c *Client) validateVMConfig(config *CreateVMConfig) error {
+	if config.Name == "" {
+		return fmt.Errorf("domain name is required")
+	}
+
+	if config.Memory == 0 {
+		return fmt.Errorf("memory size is required and must be greater than 0")
+	}
+
+	if config.VCPUs == 0 {
+		return fmt.Errorf("vCPU count is required and must be greater than 0")
+	}
+
+	if config.DiskPath == "" {
+		return fmt.Errorf("disk path is required")
+	}
+
+	return nil
+}
+
+// setDefaultVMConfig 设置配置的默认值
+func (c *Client) setDefaultVMConfig(config *CreateVMConfig) {
+	if config.DiskBus == "" {
+		config.DiskBus = "virtio"
+	}
+
+	if config.NetworkType == "" {
+		config.NetworkType = "bridge"
+	}
+
+	if config.NetworkSource == "" {
+		config.NetworkSource = "br0"
+	}
+
+	if config.OSType == "" {
+		config.OSType = "hvm"
+	}
+
+	if config.Architecture == "" {
+		config.Architecture = "x86_64"
+	}
+
+	if config.VNCSocket == "" {
+		config.VNCSocket = "/var/lib/libvirt/qemu/" + config.Name + ".vnc"
+	}
+}
+
+// buildDomainXML 根据配置构建 DomainXML 结构
+func (c *Client) buildDomainXML(config *CreateVMConfig) (*DomainXML, error) {
+	domain := &DomainXML{
+		Type: "kvm",
+		Name: config.Name,
+		Memory: DomainMemory{
+			Unit:  "KiB",
+			Value: config.Memory,
+		},
+		CurrentMemory: DomainMemory{
+			Unit:  "KiB",
+			Value: config.Memory,
+		},
+		VCPU: DomainVCPU{
+			Placement: "static",
+			Value:     int(config.VCPUs),
+		},
+		OS: DomainOS{
+			Type: DomainOSType{
+				Arch:    config.Architecture,
+				Machine: config.MachineType,
+				Value:   config.OSType,
+			},
+			Boot: DomainBoot{
+				Dev: "hd",
+			},
+		},
+		Features: &DomainFeatures{
+			ACPI: &DomainFeatureEnabled{},
+			APIC: &DomainFeatureEnabled{},
+		},
+		Clock: &DomainClock{
+			Offset: "utc",
+		},
+		OnPoweroff: "destroy",
+		OnReboot:   "restart",
+		OnCrash:    "destroy",
+		Devices:    c.buildDevices(config),
+	}
+
+	return domain, nil
+}
+
+// buildDevices 构建设备配置
+func (c *Client) buildDevices(config *CreateVMConfig) DomainDevices {
+	// 构建网络接口配置
+	var netSource DomainInterfaceSource
+	switch config.NetworkType {
+	case "bridge":
+		netSource = DomainInterfaceSource{
+			Bridge: config.NetworkSource,
+		}
+	case "network":
+		netSource = DomainInterfaceSource{
+			Network: config.NetworkSource,
+		}
+	case "direct":
+		netSource = DomainInterfaceSource{
+			Dev:  config.NetworkSource,
+			Mode: "bridge",
+		}
+	default:
+		// 默认使用 bridge
+		netSource = DomainInterfaceSource{
+			Bridge: config.NetworkSource,
+		}
+	}
+
+	devices := DomainDevices{
+		Emulator: "/usr/bin/qemu-system-" + config.Architecture,
+		Disks:    c.buildDisks(config),
+		Interfaces: []DomainInterface{
+			{
+				Type:   config.NetworkType,
+				Source: netSource,
+				Model: DomainInterfaceModel{
+					Type: "virtio",
+				},
+			},
+		},
+		Graphics: DomainGraphics{
+			Type:   "vnc",
+			Socket: config.VNCSocket,
+		},
+		Serial: DomainSerial{
+			Type: "pty",
+			Target: DomainSerialTarget{
+				Type: "isa-serial",
+				Port: 0,
+				Model: DomainSerialTargetModel{
+					Name: "isa-serial",
+				},
+			},
+		},
+		Console: DomainConsole{
+			Type: "pty",
+			Target: DomainConsoleTarget{
+				Type: "serial",
+				Port: 0,
+			},
+		},
+		Controllers: []DomainController{
+			{
+				Type:  "usb",
+				Index: 0,
+				Model: "ich9-ehci1",
+			},
+			{
+				Type:  "pci",
+				Index: 0,
+				Model: "pci-root",
+			},
+		},
+		Videos: []DomainVideo{
+			{
+				Model: DomainVideoModel{
+					Type:  "qxl",
+					VRam:  65536,
+					Heads: 1,
+				},
+			},
+		},
+		Inputs: []DomainInput{
+			{
+				Type: "tablet",
+				Bus:  "usb",
+			},
+			{
+				Type: "mouse",
+				Bus:  "ps2",
+			},
+			{
+				Type: "keyboard",
+				Bus:  "ps2",
+			},
+		},
+		MemBalloon: &DomainMemBalloon{
+			Model: "virtio",
+		},
+		RNG: &DomainRNG{
+			Model: "virtio",
+			Backend: &DomainRNGBackend{
+				Model: "random",
+				Value: "/dev/urandom",
+			},
+		},
+	}
+
+	return devices
+}
+
+// buildDisks 构建磁盘配置
+func (c *Client) buildDisks(config *CreateVMConfig) []DomainDisk {
+	disks := []DomainDisk{
+		{
+			Type:   "file",
+			Device: "disk",
+			Driver: DomainDiskDriver{
+				Name: "qemu",
+				Type: "qcow2",
+			},
+			Source: DomainDiskSource{
+				File: config.DiskPath,
+			},
+			Target: DomainDiskTarget{
+				Dev: "vda",
+				Bus: config.DiskBus,
+			},
+		},
+	}
+
+	// 如果提供了 ISO 路径，添加 CDROM 设备
+	if config.ISOPath != "" {
+		disks = append(disks, DomainDisk{
+			Type:   "file",
+			Device: "cdrom",
+			Driver: DomainDiskDriver{
+				Name: "qemu",
+				Type: "raw",
+			},
+			Source: DomainDiskSource{
+				File: config.ISOPath,
+			},
+			Target: DomainDiskTarget{
+				Dev: "hda",
+				Bus: "ide",
+			},
+		})
+
+		// 如果有 ISO，从 CDROM 启动
+		// 注意：这需要在 OS.Boot 中设置，但我们已经在 buildDomainXML 中设置了
+	}
+
+	// 如果有 cloud-init ISO，添加 CDROM 设备
+	if config.cloudInitISOPath != "" {
+		disks = append(disks, DomainDisk{
+			Type:   "file",
+			Device: "cdrom",
+			Driver: DomainDiskDriver{
+				Name: "qemu",
+				Type: "raw",
+			},
+			Source: DomainDiskSource{
+				File: config.cloudInitISOPath,
+			},
+			Target: DomainDiskTarget{
+				Dev: "hdb",
+				Bus: "ide",
+			},
+		})
+	}
+
+	return disks
 }
