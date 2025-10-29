@@ -15,6 +15,9 @@ includes:
   build: # 编译二进制
     taskfile: ./hack/taskfile/build.yaml
     flatten: true
+  lint:
+    taskfile: ./hack/taskfile/lint.yaml
+    flatten: true
 
 tasks:
   default:
@@ -28,6 +31,7 @@ tasks:
     cmds:
       - go mod download
       - go install  github.com/go-task/task/v3/cmd/task@latest
+      - go install mvdan.cc/gofumpt@latest
 
   deps-dev-tools:
     desc: Install development tools

@@ -73,7 +73,7 @@ func main() {
 	log.Printf("\nCloud-init ISO: %s", cloudInitISO)
 	log.Printf("Note: You can remove this ISO after first boot completes.")
 
-	//可选：首次启动完成后清理 cloud-init ISO
+	// 可选：首次启动完成后清理 cloud-init ISO
 	log.Printf("\nCleaning up cloud-init ISO...")
 	err = client.CleanupCloudInitISO(config.Name)
 	if err != nil {

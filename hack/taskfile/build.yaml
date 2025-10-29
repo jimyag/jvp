@@ -7,7 +7,7 @@ tasks:
     desc: 编译当前系统架构的所有的二进制文件
     run: once
     deps:
-      - tidy
+      - go-mod-tidy
     cmds:
       - |
         CGO_ENABLED=0 GOOS={{.GO_OS}} GOARCH={{.GO_ARCH}} \
@@ -76,8 +76,9 @@ tasks:
       - task: build-darwin-amd64
       - task: build-darwin-arm64
 
-  tidy:
+  go-mod-tidy:
     desc: go mod tidy
+    internal: true
     run: once
     cmds:
       - time go mod tidy

@@ -64,7 +64,7 @@ func (b *ISOBuilder) BuildISO(opts *BuildOptions) (string, error) {
 	}
 
 	metaDataPath := filepath.Join(tmpDir, "meta-data")
-	if err := os.WriteFile(metaDataPath, []byte(metaData), 0600); err != nil {
+	if err := os.WriteFile(metaDataPath, []byte(metaData), 0o600); err != nil {
 		return "", fmt.Errorf("failed to write meta-data: %v", err)
 	}
 
@@ -82,7 +82,7 @@ func (b *ISOBuilder) BuildISO(opts *BuildOptions) (string, error) {
 	}
 
 	userDataPath := filepath.Join(tmpDir, "user-data")
-	if err := os.WriteFile(userDataPath, []byte(userData), 0600); err != nil {
+	if err := os.WriteFile(userDataPath, []byte(userData), 0o600); err != nil {
 		return "", fmt.Errorf("failed to write user-data: %v", err)
 	}
 
@@ -94,7 +94,7 @@ func (b *ISOBuilder) BuildISO(opts *BuildOptions) (string, error) {
 		}
 
 		networkConfigPath := filepath.Join(tmpDir, "network-config")
-		if err := os.WriteFile(networkConfigPath, []byte(networkConfig), 0600); err != nil {
+		if err := os.WriteFile(networkConfigPath, []byte(networkConfig), 0o600); err != nil {
 			return "", fmt.Errorf("failed to write network-config: %v", err)
 		}
 	}

@@ -1,0 +1,36 @@
+version: "3"
+
+output: "prefixed"
+
+tasks:
+  lint:
+    deps:
+      - lint-tidy
+      - lint-gofumpt
+      - lint-gofmt
+      - lint-staticcheck
+    silent: true
+
+  lint-tidy:
+    internal: true
+    run: once
+    cmds:
+      - go mod tidy
+
+  lint-gofumpt:
+    internal: true
+    run: once
+    cmds:
+      - gofumpt -w .
+
+  lint-gofmt:
+    internal: true
+    run: once
+    cmds:
+      - gofmt -w .
+
+  lint-staticcheck:
+    internal: true
+    run: once
+    cmds:
+      - staticcheck ./...
