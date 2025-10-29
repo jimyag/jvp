@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 
+	"github.com/jimyag/jvp/pkg/cloudinit"
 	libvirtclient "github.com/jimyag/jvp/pkg/libvirt"
 )
 
@@ -15,54 +16,31 @@ func main() {
 
 	// 配置虚拟机参数（包含 cloud-init）
 	config := &libvirtclient.CreateVMConfig{
-		Name:          "cloudinit-test-vm",                    // 虚拟机名称
-		Memory:        2 * 1024 * 1024,                        // 2GB 内存（单位：KB）
-		VCPUs:         2,                                      // 2 核心 CPU
-		DiskPath:      "/var/lib/libvirt/images/ubuntu.qcow2", // 磁盘路径（需要预先存在）
-		NetworkType:   "bridge",                               // 网络类型：桥接
-		NetworkSource: "br0",                                  // 桥接网卡：br0
+		Name:          "cloudinit-test-vm",                  // 虚拟机名称
+		Memory:        2 * 1024 * 1024,                      // 2GB 内存（单位：KB）
+		VCPUs:         2,                                    // 2 核心 CPU
+		DiskPath:      "/var/lib/libvirt/images/test.qcow2", // 磁盘路径（需要预先存在）
+		NetworkType:   "bridge",                             // 网络类型：桥接
+		NetworkSource: "br0",                                // 桥接网卡：br0
 
 		// Cloud-Init 配置
-		CloudInit: &libvirtclient.CloudInitConfig{
-			Hostname: "my-cloud-vm", // 主机名
-			Username: "admin",       // 用户名
-			Password: "Password123", // 密码（会自动 hash）
-			SSHKeys: []string{
-				// 添加你的 SSH 公钥
-				"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC... user@example.com",
-			},
-			DisableRoot: true,              // 禁用 root 登录
-			Timezone:    "Asia/Shanghai",   // 设置时区
-			Packages: []string{             // 要安装的软件包
-				"vim",
-				"git",
-				"curl",
-				"htop",
-			},
+		CloudInit: &cloudinit.Config{
+			Hostname:    "jimyag",        // 主机名
+			Username:    "jimyag",        // 用户名
+			Password:    "jimyag",        // 密码（会自动 hash）
+			DisableRoot: false,           // 禁用 root 登录
+			Timezone:    "Asia/Shanghai", // 设置时区
+			Packages:    []string{},      // 要安装的软件包
 			Commands: []string{ // 启动后执行的命令
 				"echo 'Hello from cloud-init!' > /tmp/hello.txt",
 				"apt-get update",
 			},
-			WriteFiles: []libvirtclient.CloudInitFile{ // 写入配置文件
+			WriteFiles: []cloudinit.File{ // 写入配置文件
 				{
 					Path:        "/etc/motd",
-					Content:     "Welcome to Cloud-Init VM!\n",
+					Content:     "Welcome to jimyag's Cloud-Init VM!\n",
 					Owner:       "root:root",
 					Permissions: "0644",
-				},
-			},
-			// 可选：配置静态网络
-			Network: &libvirtclient.CloudInitNetwork{
-				Version: "2",
-				Ethernets: map[string]libvirtclient.CloudInitEthernet{
-					"eth0": {
-						DHCP4: true, // 使用 DHCP
-						// 或者使用静态 IP：
-						// DHCP4:     false,
-						// Addresses: []string{"192.168.1.100/24"},
-						// Gateway4:  "192.168.1.1",
-						// Nameservers: []string{"8.8.8.8", "8.8.4.4"},
-					},
 				},
 			},
 		},
@@ -95,10 +73,10 @@ func main() {
 	log.Printf("\nCloud-init ISO: %s", cloudInitISO)
 	log.Printf("Note: You can remove this ISO after first boot completes.")
 
-	// 可选：首次启动完成后清理 cloud-init ISO
-	// log.Printf("\nCleaning up cloud-init ISO...")
-	// err = client.cleanupCloudInitISO(config.Name)
-	// if err != nil {
-	// 	log.Printf("Warning: Failed to cleanup cloud-init ISO: %v", err)
-	// }
+	//可选：首次启动完成后清理 cloud-init ISO
+	log.Printf("\nCleaning up cloud-init ISO...")
+	err = client.CleanupCloudInitISO(config.Name)
+	if err != nil {
+		log.Printf("Warning: Failed to cleanup cloud-init ISO: %v", err)
+	}
 }

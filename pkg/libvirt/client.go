@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"log"
 	"net/url"
-	"os"
 	"time"
 
 	"github.com/digitalocean/go-libvirt"
+	"github.com/jimyag/jvp/pkg/cloudinit"
 )
 
 type Client struct {
@@ -41,63 +41,25 @@ type NetworkInterface struct {
 	Model  string `json:"model"`
 }
 
-// CloudInitConfig cloud-init 配置
-type CloudInitConfig struct {
-	Hostname      string            // 主机名
-	Username      string            // 用户名（默认：ubuntu）
-	Password      string            // 用户密码（明文，会被 hash）
-	SSHKeys       []string          // SSH 公钥列表
-	DisableRoot   bool              // 禁用 root 登录（默认：true）
-	Network       *CloudInitNetwork // 网络配置（可选）
-	Commands      []string          // 启动后执行的命令
-	Packages      []string          // 要安装的软件包
-	WriteFiles    []CloudInitFile   // 要写入的文件
-	Timezone      string            // 时区（如：Asia/Shanghai）
-	CustomUserData string           // 自定义 user-data YAML 内容（会覆盖其他配置）
-}
-
-// CloudInitNetwork cloud-init 网络配置
-type CloudInitNetwork struct {
-	Version   string                       // 版本（默认：2）
-	Ethernets map[string]CloudInitEthernet // 网卡配置
-}
-
-// CloudInitEthernet 以太网接口配置
-type CloudInitEthernet struct {
-	DHCP4     bool     // 启用 DHCP4
-	DHCP6     bool     // 启用 DHCP6
-	Addresses []string // 静态 IP 地址（CIDR 格式，如：192.168.1.100/24）
-	Gateway4  string   // IPv4 网关
-	Gateway6  string   // IPv6 网关
-	Nameservers []string // DNS 服务器
-}
-
-// CloudInitFile 要写入的文件
-type CloudInitFile struct {
-	Path        string // 文件路径
-	Content     string // 文件内容
-	Owner       string // 文件所有者（默认：root:root）
-	Permissions string // 文件权限（默认：0644）
-}
-
 // CreateVMConfig 创建虚拟机配置参数
 type CreateVMConfig struct {
-	Name          string            // 虚拟机名称（必填）
-	Memory        uint64            // 内存大小（KB）（必填）
-	VCPUs         uint16            // 虚拟 CPU 数量（必填）
-	DiskPath      string            // 磁盘路径（必填）
-	DiskSize      uint64            // 磁盘大小（GB）（可选，用于创建新磁盘）
-	DiskBus       string            // 磁盘总线类型：virtio, sata, scsi, ide（默认：virtio）
-	NetworkType   string            // 网络类型：network, bridge, direct（默认：bridge）
-	NetworkSource string            // 网络源：网络名称或网桥名称（默认：br0）
-	OSType        string            // 操作系统类型：hvm, linux, exe（默认：hvm）
-	Architecture  string            // CPU 架构：x86_64, aarch64, i686 等（默认：x86_64）
-	MachineType   string            // 机器类型（可选，如：pc-q35-6.2）
-	ISOPath       string            // ISO 路径（可选，用于操作系统安装）
-	VNCSocket         string            // VNC Unix socket 路径（可选，默认：/var/lib/libvirt/qemu/{name}.vnc）
-	Autostart         bool              // 是否开机自动启动（默认：false）
-	CloudInit         *CloudInitConfig  // cloud-init 配置（可选）
-	cloudInitISOPath  string            // cloud-init ISO 路径（内部使用）
+	Name              string              // 虚拟机名称（必填）
+	Memory            uint64              // 内存大小（KB）（必填）
+	VCPUs             uint16              // 虚拟 CPU 数量（必填）
+	DiskPath          string              // 磁盘路径（必填）
+	DiskSize          uint64              // 磁盘大小（GB）（可选，用于创建新磁盘）
+	DiskBus           string              // 磁盘总线类型：virtio, sata, scsi, ide（默认：virtio）
+	NetworkType       string              // 网络类型：network, bridge, direct（默认：bridge）
+	NetworkSource     string              // 网络源：网络名称或网桥名称（默认：br0）
+	OSType            string              // 操作系统类型：hvm, linux, exe（默认：hvm）
+	Architecture      string              // CPU 架构：x86_64, aarch64, i686 等（默认：x86_64）
+	MachineType       string              // 机器类型（可选，如：pc-q35-6.2）
+	ISOPath           string              // ISO 路径（可选，用于操作系统安装）
+	VNCSocket         string              // VNC Unix socket 路径（可选，默认：/var/lib/libvirt/qemu/{name}.vnc）
+	Autostart         bool                // 是否开机自动启动（默认：false）
+	CloudInit         *cloudinit.Config   // cloud-init 配置（可选）
+	CloudInitUserData *cloudinit.UserData // cloud-init 用户数据（可选）
+	cloudInitISOPath  string              // cloud-init ISO 路径（内部使用）
 }
 
 func New() (*Client, error) {
@@ -393,14 +355,20 @@ func (c *Client) DefineDomain(config *CreateVMConfig) (libvirt.Domain, error) {
 		config.cloudInitISOPath = isoPath
 		log.Printf("Generated cloud-init ISO: %s", config.cloudInitISOPath)
 	}
+	if config.CloudInitUserData != nil {
+		isoPath, err := c.generateCloudInitISO(config)
+		if err != nil {
+			return libvirt.Domain{}, fmt.Errorf("failed to generate cloud-init ISO: %v", err)
+		}
+		config.cloudInitISOPath = isoPath
+		log.Printf("Generated cloud-init ISO: %s", config.cloudInitISOPath)
+	}
 
 	// 构建 DomainXML
 	domainXML, err := c.buildDomainXML(config)
 	if err != nil {
 		// 清理 cloud-init ISO（如果生成了）
-		if config.cloudInitISOPath != "" {
-			_ = os.Remove(config.cloudInitISOPath)
-		}
+		c.cleanupCloudInitISOOnError(config.cloudInitISOPath)
 		return libvirt.Domain{}, fmt.Errorf("failed to build domain XML: %v", err)
 	}
 

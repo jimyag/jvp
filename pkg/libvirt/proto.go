@@ -157,7 +157,7 @@ type DomainGraphics struct {
 	Port     int                   `xml:"port,attr,omitempty"`
 	Autoport string                `xml:"autoport,attr,omitempty"`
 	Socket   string                `xml:"socket,attr,omitempty"` // Unix socket path for VNC
-	Listen   *DomainGraphicsListen `xml:"listen,omitempty"`       // Use pointer so omitempty works correctly
+	Listen   *DomainGraphicsListen `xml:"listen,omitempty"`      // Use pointer so omitempty works correctly
 }
 
 // DomainGraphicsListen represents graphics listen configuration
