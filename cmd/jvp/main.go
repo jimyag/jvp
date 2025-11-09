@@ -1,30 +1,24 @@
 package main
 
 import (
-	"fmt"
-	"log"
-	"time"
+	"context"
 
-	"github.com/digitalocean/go-qemu/qemu"
-	"github.com/digitalocean/go-qemu/qmp"
 	_ "github.com/jimmicro/version"
+	"github.com/jimyag/jvp/internal/jvp"
+	"github.com/jimyag/jvp/internal/jvp/config"
+	"github.com/rs/zerolog/log"
 )
 
 func main() {
-	m, err := qmp.NewSocketMonitor("127.0.0.1", "4444", 10*time.Second)
+	cfg, err := config.New()
 	if err != nil {
-		log.Fatalf("failed to create qmp monitor: %v", err)
+		log.Fatal().Err(err).Msg("Failed to create config")
 	}
-
-	d, err := qemu.NewDomain(m, "test")
+	server, err := jvp.New(cfg)
 	if err != nil {
-		log.Fatalf("failed to create qemu domain: %v", err)
+		log.Fatal().Err(err).Msg("Failed to create server")
 	}
-	ch, _, err := d.Events()
-	if err != nil {
-		log.Fatalf("failed to create qemu domain: %v", err)
-	}
-	for event := range ch {
-		fmt.Println(event.Data)
+	if err := server.Run(context.Background()); err != nil {
+		log.Fatal().Err(err).Msg("Failed to run server")
 	}
 }
