@@ -1,8 +1,11 @@
 package api
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 	"github.com/jimyag/jvp/internal/jvp/entity"
+	"github.com/jimyag/jvp/pkg/apierror"
 	"github.com/jimyag/jvp/pkg/ginx"
 	"github.com/rs/zerolog"
 )
@@ -22,5 +25,6 @@ func (i *Instance) RegisterRoutes(router *gin.RouterGroup) {
 func (i *Instance) RunInstances(ctx *gin.Context, req *entity.RunInstanceRequest) (*entity.RunInstanceResponse, error) {
 	logger := zerolog.Ctx(ctx)
 	logger.Info().Msgf("RunInstances: %+v", req)
-	return nil, nil
+	testErr := apierror.NewErrorWithStatus("InvalidRequest", "test error", http.StatusBadRequest)
+	return nil, testErr
 }

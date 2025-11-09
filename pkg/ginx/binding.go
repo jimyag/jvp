@@ -16,7 +16,7 @@ func isXMLRequest(ctx *gin.Context) bool {
 // bindArgs 绑定请求参数到 args 结构体
 // 优先级：XML/JSON Body（根据 Content-Type）> URI 参数 > Query 参数 > Form 参数
 // 默认使用 JSON，如果 Content-Type 包含 xml，则使用 XML
-func bindArgs(ctx *gin.Context, args interface{}) error {
+func bindArgs(ctx *gin.Context, args any) error {
 	// 1. 尝试从 XML/JSON body 绑定
 	// 直接尝试绑定，不依赖 ContentLength（因为 ContentLength 可能不准确）
 	// 根据 Content-Type 决定使用 XML 还是 JSON

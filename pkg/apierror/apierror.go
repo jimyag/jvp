@@ -23,9 +23,10 @@ func (er *ErrorResponse) Error() string {
 
 // Error 单个错误信息
 type Error struct {
-	Code     string `xml:"Code"    json:"code"`
-	Message  string `xml:"Message" json:"message"`
-	RawError error  `xml:"-"       json:"-"` // 内部错误，用于服务端调试，不会序列化到响应中
+	Code       string `xml:"Code"    json:"code"`
+	Message    string `xml:"Message" json:"message"`
+	HTTPStatus int    `xml:"-"       json:"-"` // HTTP 状态码，不会序列化到响应中
+	RawError   error  `xml:"-"       json:"-"` // 内部错误，用于服务端调试，不会序列化到响应中
 }
 
 // Error 实现 error 接口
@@ -78,20 +79,43 @@ var _ interface {
 } = (*Error)(nil)
 
 // NewError 创建新的错误
+// 默认 HTTP 状态码为 500
 func NewError(code, message string) *Error {
 	return &Error{
-		Code:    code,
-		Message: message,
+		Code:       code,
+		Message:    message,
+		HTTPStatus: 500,
+	}
+}
+
+// NewErrorWithStatus 创建新的错误，指定 HTTP 状态码
+func NewErrorWithStatus(code, message string, httpStatus int) *Error {
+	return &Error{
+		Code:       code,
+		Message:    message,
+		HTTPStatus: httpStatus,
 	}
 }
 
 // NewErrorWithRaw 创建新的错误，包含原始错误信息
 // rawError 用于服务端调试，不会序列化到响应中
+// 默认 HTTP 状态码为 500
 func NewErrorWithRaw(code, message string, rawError error) *Error {
 	return &Error{
-		Code:     code,
-		Message:  message,
-		RawError: rawError,
+		Code:       code,
+		Message:    message,
+		HTTPStatus: 500,
+		RawError:   rawError,
+	}
+}
+
+// NewErrorWithRawAndStatus 创建新的错误，包含原始错误信息和 HTTP 状态码
+func NewErrorWithRawAndStatus(code, message string, httpStatus int, rawError error) *Error {
+	return &Error{
+		Code:       code,
+		Message:    message,
+		HTTPStatus: httpStatus,
+		RawError:   rawError,
 	}
 }
 
