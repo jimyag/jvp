@@ -12,6 +12,7 @@ import (
 	libvirtlib "github.com/digitalocean/go-libvirt"
 	"github.com/jimyag/jvp/internal/jvp/entity"
 	"github.com/jimyag/jvp/internal/jvp/repository"
+	"github.com/jimyag/jvp/pkg/apierror"
 	"github.com/jimyag/jvp/pkg/idgen"
 	"github.com/jimyag/jvp/pkg/libvirt"
 	"github.com/rs/zerolog"
@@ -154,15 +155,12 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 	// 8. 保存到数据库
 	instanceModel, err := instanceEntityToModel(instance)
 	if err != nil {
-		logger.Warn().Err(err).Msg("Failed to convert instance to model, skipping database save")
-	} else {
-		if err := s.instanceRepo.Create(ctx, instanceModel); err != nil {
-			logger.Warn().Err(err).Msg("Failed to save instance to database")
-			// 不返回错误，因为实例已经创建成功
-		} else {
-			logger.Info().Str("instance_id", instanceID).Msg("Instance saved to database")
-		}
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to convert instance to model", err)
 	}
+	if err := s.instanceRepo.Create(ctx, instanceModel); err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to save instance to database", err)
+	}
+	logger.Info().Str("instance_id", instanceID).Msg("Instance saved to database")
 
 	return instance, nil
 }
@@ -359,11 +357,11 @@ func (s *InstanceService) TerminateInstances(ctx context.Context, req *entity.Te
 		if err == nil {
 			instanceModel.State = "terminated"
 			if err := s.instanceRepo.Update(ctx, instanceModel); err != nil {
-				logger.Warn().Err(err).Str("instance_id", instanceID).Msg("Failed to update instance state in database")
+				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update instance state in database", err)
 			}
 			// 软删除
 			if err := s.instanceRepo.Delete(ctx, instanceID); err != nil {
-				logger.Warn().Err(err).Str("instance_id", instanceID).Msg("Failed to delete instance from database")
+				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to delete instance from database", err)
 			}
 		}
 
@@ -437,7 +435,7 @@ func (s *InstanceService) StopInstances(ctx context.Context, req *entity.StopIns
 		if err == nil {
 			instanceModel.State = "stopped"
 			if err := s.instanceRepo.Update(ctx, instanceModel); err != nil {
-				logger.Warn().Err(err).Str("instance_id", instanceID).Msg("Failed to update instance state in database")
+				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update instance state in database", err)
 			}
 		}
 
@@ -503,7 +501,7 @@ func (s *InstanceService) StartInstances(ctx context.Context, req *entity.StartI
 		if err == nil {
 			instanceModel.State = "running"
 			if err := s.instanceRepo.Update(ctx, instanceModel); err != nil {
-				logger.Warn().Err(err).Str("instance_id", instanceID).Msg("Failed to update instance state in database")
+				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update instance state in database", err)
 			}
 		}
 
@@ -659,7 +657,7 @@ func (s *InstanceService) ModifyInstanceAttribute(ctx context.Context, req *enti
 			instanceModel.Name = *req.Name
 		}
 		if err := s.instanceRepo.Update(ctx, instanceModel); err != nil {
-			logger.Warn().Err(err).Str("instance_id", req.InstanceID).Msg("Failed to update instance in database")
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update instance in database", err)
 		}
 	}
 

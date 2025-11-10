@@ -140,3 +140,14 @@ func (er *ErrorResponse) AddError(err *Error) {
 func (er *ErrorResponse) ToXML() ([]byte, error) {
 	return xml.MarshalIndent(er, "", "    ")
 }
+
+// WrapError 包装预定义的错误，添加原始错误信息
+// 保留预定义错误的 Code 和 HTTPStatus，但使用自定义消息和原始错误
+func WrapError(baseErr *Error, message string, rawError error) *Error {
+	return &Error{
+		Code:       baseErr.Code,
+		Message:    message,
+		HTTPStatus: baseErr.HTTPStatus,
+		RawError:   rawError,
+	}
+}

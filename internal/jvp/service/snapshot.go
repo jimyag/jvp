@@ -7,6 +7,7 @@ import (
 
 	"github.com/jimyag/jvp/internal/jvp/entity"
 	"github.com/jimyag/jvp/internal/jvp/repository"
+	"github.com/jimyag/jvp/pkg/apierror"
 	"github.com/jimyag/jvp/pkg/idgen"
 	"github.com/jimyag/jvp/pkg/libvirt"
 	"github.com/jimyag/jvp/pkg/qemuimg"
@@ -77,15 +78,12 @@ func (s *SnapshotService) CreateEBSSnapshot(ctx context.Context, req *entity.Cre
 	// 保存到数据库
 	snapshotModel, err := snapshotEntityToModel(snapshot)
 	if err != nil {
-		logger.Warn().Err(err).Msg("Failed to convert snapshot to model, skipping database save")
-	} else {
-		if err := s.snapshotRepo.Create(ctx, snapshotModel); err != nil {
-			logger.Warn().Err(err).Msg("Failed to save snapshot to database")
-			// 不返回错误，因为快照已经创建成功
-		} else {
-			logger.Info().Str("snapshotID", snapshotID).Msg("Snapshot saved to database")
-		}
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to convert snapshot to model", err)
 	}
+	if err := s.snapshotRepo.Create(ctx, snapshotModel); err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to save snapshot to database", err)
+	}
+	logger.Info().Str("snapshotID", snapshotID).Msg("Snapshot saved to database")
 
 	logger.Info().
 		Str("snapshotID", snapshotID).
@@ -101,8 +99,7 @@ func (s *SnapshotService) DeleteEBSSnapshot(ctx context.Context, snapshotID stri
 
 	// 从数据库软删除
 	if err := s.snapshotRepo.Delete(ctx, snapshotID); err != nil {
-		logger.Warn().Err(err).Str("snapshotID", snapshotID).Msg("Failed to delete snapshot from database")
-		// 继续执行，即使数据库删除失败也继续
+		return apierror.WrapError(apierror.ErrInternalError, "Failed to delete snapshot from database", err)
 	}
 
 	// TODO: 删除快照文件
@@ -218,15 +215,12 @@ func (s *SnapshotService) CopyEBSSnapshot(ctx context.Context, req *entity.CopyS
 	// 保存到数据库
 	snapshotModel, err := snapshotEntityToModel(snapshot)
 	if err != nil {
-		logger.Warn().Err(err).Msg("Failed to convert snapshot to model, skipping database save")
-	} else {
-		if err := s.snapshotRepo.Create(ctx, snapshotModel); err != nil {
-			logger.Warn().Err(err).Msg("Failed to save snapshot to database")
-			// 不返回错误，因为快照已经创建成功
-		} else {
-			logger.Info().Str("snapshotID", snapshotID).Msg("Snapshot saved to database")
-		}
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to convert snapshot to model", err)
 	}
+	if err := s.snapshotRepo.Create(ctx, snapshotModel); err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to save snapshot to database", err)
+	}
+	logger.Info().Str("snapshotID", snapshotID).Msg("Snapshot saved to database")
 
 	logger.Info().
 		Str("snapshotID", snapshotID).

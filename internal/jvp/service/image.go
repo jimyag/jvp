@@ -13,6 +13,7 @@ import (
 
 	"github.com/jimyag/jvp/internal/jvp/entity"
 	"github.com/jimyag/jvp/internal/jvp/repository"
+	"github.com/jimyag/jvp/pkg/apierror"
 	"github.com/jimyag/jvp/pkg/idgen"
 	"github.com/jimyag/jvp/pkg/libvirt"
 	"github.com/jimyag/jvp/pkg/qemuimg"
@@ -133,15 +134,12 @@ func (s *ImageService) RegisterImage(ctx context.Context, req *entity.RegisterIm
 	// 保存到数据库
 	imageModel, err := imageEntityToModel(image)
 	if err != nil {
-		logger.Warn().Err(err).Msg("Failed to convert image to model, skipping database save")
-	} else {
-		if err := s.imageRepo.Create(ctx, imageModel); err != nil {
-			logger.Warn().Err(err).Msg("Failed to save image to database")
-			// 不返回错误，因为镜像已经注册成功
-		} else {
-			logger.Info().Str("image_id", imageID).Msg("Image saved to database")
-		}
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to convert image to model", err)
 	}
+	if err := s.imageRepo.Create(ctx, imageModel); err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to save image to database", err)
+	}
+	logger.Info().Str("image_id", imageID).Msg("Image saved to database")
 
 	return image, nil
 }

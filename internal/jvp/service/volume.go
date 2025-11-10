@@ -8,6 +8,7 @@ import (
 
 	"github.com/jimyag/jvp/internal/jvp/entity"
 	"github.com/jimyag/jvp/internal/jvp/repository"
+	"github.com/jimyag/jvp/pkg/apierror"
 	"github.com/jimyag/jvp/pkg/idgen"
 	"github.com/jimyag/jvp/pkg/libvirt"
 	"github.com/jimyag/jvp/pkg/qemuimg"
@@ -92,15 +93,12 @@ func (s *VolumeService) CreateEBSVolume(ctx context.Context, req *entity.CreateV
 	// 保存到数据库
 	volumeModel, err := volumeEntityToModel(ebsVolume)
 	if err != nil {
-		logger.Warn().Err(err).Msg("Failed to convert volume to model, skipping database save")
-	} else {
-		if err := s.volumeRepo.Create(ctx, volumeModel); err != nil {
-			logger.Warn().Err(err).Msg("Failed to save volume to database")
-			// 不返回错误，因为卷已经创建成功
-		} else {
-			logger.Info().Str("volumeID", volumeID).Msg("Volume saved to database")
-		}
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to convert volume to model", err)
 	}
+	if err := s.volumeRepo.Create(ctx, volumeModel); err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to save volume to database", err)
+	}
+	logger.Info().Str("volumeID", volumeID).Msg("Volume saved to database")
 
 	logger.Info().
 		Str("volumeID", volumeID).
@@ -132,8 +130,7 @@ func (s *VolumeService) DeleteEBSVolume(ctx context.Context, volumeID string) er
 
 	// 从数据库软删除
 	if err := s.volumeRepo.Delete(ctx, volumeID); err != nil {
-		logger.Warn().Err(err).Str("volumeID", volumeID).Msg("Failed to delete volume from database")
-		// 继续执行，即使数据库删除失败也继续
+		return apierror.WrapError(apierror.ErrInternalError, "Failed to delete volume from database", err)
 	}
 
 	logger.Info().Str("volumeID", volumeID).Msg("EBS volume deleted successfully")
@@ -211,7 +208,7 @@ func (s *VolumeService) AttachEBSVolume(ctx context.Context, req *entity.AttachV
 	if err == nil {
 		volumeModel.State = "in-use"
 		if err := s.volumeRepo.Update(ctx, volumeModel); err != nil {
-			logger.Warn().Err(err).Str("volumeID", req.VolumeID).Msg("Failed to update volume state in database")
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update volume state in database", err)
 		}
 	}
 
@@ -271,7 +268,7 @@ func (s *VolumeService) DetachEBSVolume(ctx context.Context, req *entity.DetachV
 	if err == nil {
 		volumeModel.State = "available"
 		if err := s.volumeRepo.Update(ctx, volumeModel); err != nil {
-			logger.Warn().Err(err).Str("volumeID", req.VolumeID).Msg("Failed to update volume state in database")
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update volume state in database", err)
 		}
 	}
 
@@ -486,7 +483,7 @@ func (s *VolumeService) ModifyEBSVolume(ctx context.Context, req *entity.ModifyV
 		if err == nil {
 			volumeModel.SizeGB = req.SizeGB
 			if err := s.volumeRepo.Update(ctx, volumeModel); err != nil {
-				logger.Warn().Err(err).Str("volumeID", req.VolumeID).Msg("Failed to update volume size in database")
+				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update volume size in database", err)
 			}
 		}
 	}
@@ -499,7 +496,7 @@ func (s *VolumeService) ModifyEBSVolume(ctx context.Context, req *entity.ModifyV
 		if err == nil {
 			volumeModel.VolumeType = req.VolumeType
 			if err := s.volumeRepo.Update(ctx, volumeModel); err != nil {
-				logger.Warn().Err(err).Str("volumeID", req.VolumeID).Msg("Failed to update volume type in database")
+				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update volume type in database", err)
 			}
 		}
 	}
@@ -510,7 +507,7 @@ func (s *VolumeService) ModifyEBSVolume(ctx context.Context, req *entity.ModifyV
 		if err == nil {
 			volumeModel.Iops = int(req.Iops)
 			if err := s.volumeRepo.Update(ctx, volumeModel); err != nil {
-				logger.Warn().Err(err).Str("volumeID", req.VolumeID).Msg("Failed to update volume IOPS in database")
+				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update volume IOPS in database", err)
 			}
 		}
 	}
