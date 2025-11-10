@@ -21,6 +21,12 @@ func NewInstance(instanceService *service.InstanceService) *Instance {
 func (i *Instance) RegisterRoutes(router *gin.RouterGroup) {
 	instanceRouter := router.Group("/instances")
 	instanceRouter.POST("/run", ginx.Adapt5(i.RunInstances))
+	instanceRouter.POST("/describe", ginx.Adapt5(i.DescribeInstances))
+	instanceRouter.POST("/terminate", ginx.Adapt5(i.TerminateInstances))
+	instanceRouter.POST("/stop", ginx.Adapt5(i.StopInstances))
+	instanceRouter.POST("/start", ginx.Adapt5(i.StartInstances))
+	instanceRouter.POST("/reboot", ginx.Adapt5(i.RebootInstances))
+	instanceRouter.POST("/modify-attribute", ginx.Adapt5(i.ModifyInstanceAttribute))
 }
 
 func (i *Instance) RunInstances(ctx *gin.Context, req *entity.RunInstanceRequest) (*entity.RunInstanceResponse, error) {
@@ -43,6 +49,146 @@ func (i *Instance) RunInstances(ctx *gin.Context, req *entity.RunInstanceRequest
 		Msg("Instance created successfully")
 
 	return &entity.RunInstanceResponse{
+		Instance: instance,
+	}, nil
+}
+
+func (i *Instance) DescribeInstances(ctx *gin.Context, req *entity.DescribeInstancesRequest) (*entity.DescribeInstancesResponse, error) {
+	logger := zerolog.Ctx(ctx)
+	logger.Info().
+		Interface("request", req).
+		Msg("DescribeInstances called")
+
+	instances, err := i.instanceService.DescribeInstances(ctx, req)
+	if err != nil {
+		logger.Error().
+			Err(err).
+			Msg("Failed to describe instances")
+		return nil, err
+	}
+
+	logger.Info().
+		Int("count", len(instances)).
+		Msg("Instances described successfully")
+
+	return &entity.DescribeInstancesResponse{
+		Instances: instances,
+	}, nil
+}
+
+func (i *Instance) TerminateInstances(ctx *gin.Context, req *entity.TerminateInstancesRequest) (*entity.TerminateInstancesResponse, error) {
+	logger := zerolog.Ctx(ctx)
+	logger.Info().
+		Strs("instanceIDs", req.InstanceIDs).
+		Msg("TerminateInstances called")
+
+	changes, err := i.instanceService.TerminateInstances(ctx, req)
+	if err != nil {
+		logger.Error().
+			Err(err).
+			Msg("Failed to terminate instances")
+		return nil, err
+	}
+
+	logger.Info().
+		Int("count", len(changes)).
+		Msg("Instances terminated successfully")
+
+	return &entity.TerminateInstancesResponse{
+		TerminatingInstances: changes,
+	}, nil
+}
+
+func (i *Instance) StopInstances(ctx *gin.Context, req *entity.StopInstancesRequest) (*entity.StopInstancesResponse, error) {
+	logger := zerolog.Ctx(ctx)
+	logger.Info().
+		Strs("instanceIDs", req.InstanceIDs).
+		Bool("force", req.Force).
+		Msg("StopInstances called")
+
+	changes, err := i.instanceService.StopInstances(ctx, req)
+	if err != nil {
+		logger.Error().
+			Err(err).
+			Msg("Failed to stop instances")
+		return nil, err
+	}
+
+	logger.Info().
+		Int("count", len(changes)).
+		Msg("Instances stopped successfully")
+
+	return &entity.StopInstancesResponse{
+		StoppingInstances: changes,
+	}, nil
+}
+
+func (i *Instance) StartInstances(ctx *gin.Context, req *entity.StartInstancesRequest) (*entity.StartInstancesResponse, error) {
+	logger := zerolog.Ctx(ctx)
+	logger.Info().
+		Strs("instanceIDs", req.InstanceIDs).
+		Msg("StartInstances called")
+
+	changes, err := i.instanceService.StartInstances(ctx, req)
+	if err != nil {
+		logger.Error().
+			Err(err).
+			Msg("Failed to start instances")
+		return nil, err
+	}
+
+	logger.Info().
+		Int("count", len(changes)).
+		Msg("Instances started successfully")
+
+	return &entity.StartInstancesResponse{
+		StartingInstances: changes,
+	}, nil
+}
+
+func (i *Instance) RebootInstances(ctx *gin.Context, req *entity.RebootInstancesRequest) (*entity.RebootInstancesResponse, error) {
+	logger := zerolog.Ctx(ctx)
+	logger.Info().
+		Strs("instanceIDs", req.InstanceIDs).
+		Msg("RebootInstances called")
+
+	changes, err := i.instanceService.RebootInstances(ctx, req)
+	if err != nil {
+		logger.Error().
+			Err(err).
+			Msg("Failed to reboot instances")
+		return nil, err
+	}
+
+	logger.Info().
+		Int("count", len(changes)).
+		Msg("Instances rebooted successfully")
+
+	return &entity.RebootInstancesResponse{
+		RebootingInstances: changes,
+	}, nil
+}
+
+func (i *Instance) ModifyInstanceAttribute(ctx *gin.Context, req *entity.ModifyInstanceAttributeRequest) (*entity.ModifyInstanceAttributeResponse, error) {
+	logger := zerolog.Ctx(ctx)
+	logger.Info().
+		Str("instanceID", req.InstanceID).
+		Interface("request", req).
+		Msg("ModifyInstanceAttribute called")
+
+	instance, err := i.instanceService.ModifyInstanceAttribute(ctx, req)
+	if err != nil {
+		logger.Error().
+			Err(err).
+			Msg("Failed to modify instance attribute")
+		return nil, err
+	}
+
+	logger.Info().
+		Str("instanceID", req.InstanceID).
+		Msg("Instance attribute modified successfully")
+
+	return &entity.ModifyInstanceAttributeResponse{
 		Instance: instance,
 	}, nil
 }

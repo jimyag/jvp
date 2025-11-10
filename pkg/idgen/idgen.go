@@ -73,6 +73,11 @@ func (g *Generator) GenerateInstanceID() (string, error) {
 	return g.generateIDWithPrefix("i", "generate instance ID")
 }
 
+// GenerateSnapshotID 生成 Snapshot ID（格式：snap-{递增 ID}）
+func (g *Generator) GenerateSnapshotID() (string, error) {
+	return g.generateIDWithPrefix("snap", "generate snapshot ID")
+}
+
 // GenerateID 生成通用递增 ID
 func (g *Generator) GenerateID() (uint64, error) {
 	return g.sf.NextID()
@@ -93,6 +98,11 @@ func GenerateVolumeID() (string, error) {
 // GenerateInstanceID 使用默认生成器生成 Instance ID
 func GenerateInstanceID() (string, error) {
 	return DefaultGenerator().GenerateInstanceID()
+}
+
+// GenerateSnapshotID 使用默认生成器生成 Snapshot ID
+func GenerateSnapshotID() (string, error) {
+	return DefaultGenerator().GenerateSnapshotID()
 }
 
 // GenerateID 使用默认生成器生成通用递增 ID

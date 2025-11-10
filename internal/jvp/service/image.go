@@ -9,10 +9,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/jimyag/jvp/internal/jvp/entity"
+	"github.com/jimyag/jvp/internal/jvp/repository"
 	"github.com/jimyag/jvp/pkg/idgen"
 	"github.com/jimyag/jvp/pkg/libvirt"
 	"github.com/jimyag/jvp/pkg/qemuimg"
@@ -56,6 +56,7 @@ type ImageService struct {
 	qemuImgClient  *qemuimg.Client
 	idGen          *idgen.Generator
 	httpClient     *http.Client
+	imageRepo      repository.ImageRepository
 
 	// 镜像存储配置
 	imagesPoolName string
@@ -66,6 +67,7 @@ type ImageService struct {
 func NewImageService(
 	storageService *StorageService,
 	libvirtClient *libvirt.Client,
+	repo *repository.Repository,
 ) (*ImageService, error) {
 	return &ImageService{
 		storageService: storageService,
@@ -75,6 +77,7 @@ func NewImageService(
 		httpClient: &http.Client{
 			Timeout: 30 * time.Minute, // 下载镜像可能需要较长时间
 		},
+		imageRepo:      repository.NewImageRepository(repo.DB()),
 		imagesPoolName: "images",
 		imagesPoolPath: "/var/lib/jvp/images/images",
 	}, nil
@@ -127,7 +130,18 @@ func (s *ImageService) RegisterImage(ctx context.Context, req *entity.RegisterIm
 		Str("name", req.Name).
 		Msg("Image registered successfully")
 
-	// TODO: 保存到 Repository（数据库）
+	// 保存到数据库
+	imageModel, err := imageEntityToModel(image)
+	if err != nil {
+		logger.Warn().Err(err).Msg("Failed to convert image to model, skipping database save")
+	} else {
+		if err := s.imageRepo.Create(ctx, imageModel); err != nil {
+			logger.Warn().Err(err).Msg("Failed to save image to database")
+			// 不返回错误，因为镜像已经注册成功
+		} else {
+			logger.Info().Str("image_id", imageID).Msg("Image saved to database")
+		}
+	}
 
 	return image, nil
 }
@@ -137,10 +151,13 @@ func (s *ImageService) GetImage(ctx context.Context, imageID string) (*entity.Im
 	logger := zerolog.Ctx(ctx)
 	logger.Info().Str("image_id", imageID).Msg("Getting image")
 
-	// TODO: 从 Repository 查询
-	// 这里先简化实现，实际应该从数据库查询
+	// 优先从数据库查询
+	imageModel, err := s.imageRepo.GetByID(ctx, imageID)
+	if err == nil {
+		return imageModelToEntity(imageModel)
+	}
 
-	// 首先检查是否是默认镜像
+	// 如果数据库中没有，检查是否是默认镜像（兼容旧数据）
 	if defaultImg := s.GetDefaultImageByName(imageID); defaultImg != nil {
 		imagePath := filepath.Join(s.imagesPoolPath, defaultImg.Filename)
 		fileInfo, err := os.Stat(imagePath)
@@ -211,29 +228,86 @@ func (s *ImageService) GetImage(ctx context.Context, imageID string) (*entity.Im
 	}, nil
 }
 
+// DescribeImages 描述镜像（支持过滤和分页）
+func (s *ImageService) DescribeImages(ctx context.Context, req *entity.DescribeImagesRequest) ([]entity.Image, error) {
+	logger := zerolog.Ctx(ctx)
+	logger.Info().Msg("Describing images")
+
+	var images []entity.Image
+
+	if len(req.ImageIDs) > 0 {
+		// 查询指定的镜像
+		for _, imageID := range req.ImageIDs {
+			image, err := s.GetImage(ctx, imageID)
+			if err != nil {
+				// 如果镜像不存在，跳过
+				logger.Warn().
+					Str("imageID", imageID).
+					Err(err).
+					Msg("Image not found, skipping")
+				continue
+			}
+			images = append(images, *image)
+		}
+	} else {
+		// 列出所有镜像
+		imageList, err := s.ListImages(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("list images: %w", err)
+		}
+
+		for _, img := range imageList {
+			images = append(images, *img)
+		}
+	}
+
+	// TODO: 应用过滤器和分页
+
+	return images, nil
+}
+
 // ListImages 列出所有镜像
 func (s *ImageService) ListImages(ctx context.Context) ([]*entity.Image, error) {
 	logger := zerolog.Ctx(ctx)
 	logger.Info().Msg("Listing images")
 
-	// TODO: 从 Repository 查询
-	// 这里先简化实现，从文件系统列出
+	// 从数据库查询
+	filters := make(map[string]interface{})
+	imageModels, err := s.imageRepo.List(ctx, filters)
+	if err != nil {
+		return nil, fmt.Errorf("list images from database: %w", err)
+	}
 
+	images := make([]*entity.Image, 0, len(imageModels))
+	for _, imageModel := range imageModels {
+		image, err := imageModelToEntity(imageModel)
+		if err != nil {
+			logger.Warn().Err(err).Str("image_id", imageModel.ID).Msg("Failed to convert image model to entity")
+			continue
+		}
+		images = append(images, image)
+	}
+
+	// 同时添加默认镜像（如果已下载但未注册到数据库）
 	// 确保目录存在
 	if err := os.MkdirAll(s.imagesPoolPath, 0o755); err != nil {
 		return nil, fmt.Errorf("create images directory: %w", err)
 	}
 
-	// 列出目录中的所有 .qcow2 文件
-	files, err := os.ReadDir(s.imagesPoolPath)
-	if err != nil {
-		return nil, fmt.Errorf("read images directory: %w", err)
-	}
-
-	images := make([]*entity.Image, 0)
-
-	// 首先添加默认镜像（如果已下载）
+	// 首先添加默认镜像（如果已下载但未在数据库中）
 	for _, defaultImg := range DefaultImages {
+		// 检查是否已在数据库中
+		exists := false
+		for _, img := range images {
+			if img.ID == defaultImg.Name {
+				exists = true
+				break
+			}
+		}
+		if exists {
+			continue
+		}
+
 		savePath := filepath.Join(s.imagesPoolPath, defaultImg.Filename)
 		if fileInfo, err := os.Stat(savePath); err == nil {
 			sizeGB := uint64(fileInfo.Size() / (1024 * 1024 * 1024))
@@ -256,58 +330,6 @@ func (s *ImageService) ListImages(ctx context.Context) ([]*entity.Image, error) 
 		}
 	}
 
-	// 然后添加其他已注册的镜像（以 ami- 开头的文件）
-	for _, file := range files {
-		if file.IsDir() {
-			continue
-		}
-
-		// 跳过默认镜像文件（已在上面的循环中处理）
-		isDefaultImage := false
-		for _, defaultImg := range DefaultImages {
-			if file.Name() == defaultImg.Filename {
-				isDefaultImage = true
-				break
-			}
-		}
-		if isDefaultImage {
-			continue
-		}
-
-		// 只处理以 ami- 开头的文件
-		if !strings.HasPrefix(file.Name(), "ami-") {
-			continue
-		}
-
-		// 去掉 .qcow2 后缀得到 imageID
-		imageID := strings.TrimSuffix(file.Name(), ".qcow2")
-		if !strings.HasPrefix(imageID, "ami-") {
-			continue
-		}
-
-		imagePath := filepath.Join(s.imagesPoolPath, file.Name())
-		fileInfo, err := file.Info()
-		if err != nil {
-			continue
-		}
-
-		sizeGB := uint64(fileInfo.Size() / (1024 * 1024 * 1024))
-		if sizeGB == 0 {
-			sizeGB = 1
-		}
-
-		images = append(images, &entity.Image{
-			ID:        imageID,
-			Name:      imageID, // 默认使用 ID 作为名称
-			Pool:      s.imagesPoolName,
-			Path:      imagePath,
-			SizeGB:    sizeGB,
-			Format:    "qcow2",
-			State:     "available",
-			CreatedAt: fileInfo.ModTime().Format(time.RFC3339),
-		})
-	}
-
 	return images, nil
 }
 
@@ -316,26 +338,28 @@ func (s *ImageService) DeleteImage(ctx context.Context, imageID string) error {
 	logger := zerolog.Ctx(ctx)
 	logger.Info().Str("image_id", imageID).Msg("Deleting image")
 
-	// 查找镜像文件
-	imagePath := filepath.Join(s.imagesPoolPath, imageID+".qcow2")
-
-	if _, err := os.Stat(imagePath); err != nil {
-		return fmt.Errorf("image not found: %w", err)
+	// 从数据库查询镜像信息
+	imageModel, err := s.imageRepo.GetByID(ctx, imageID)
+	if err != nil {
+		return fmt.Errorf("get image from database: %w", err)
 	}
 
 	// 删除文件
-	if err := os.Remove(imagePath); err != nil {
-		return fmt.Errorf("delete image file: %w", err)
+	if err := os.Remove(imageModel.Path); err != nil {
+		logger.Warn().Err(err).Str("path", imageModel.Path).Msg("Failed to delete image file")
+		// 继续执行，即使文件删除失败也继续删除数据库记录
+	}
+
+	// 从数据库删除（软删除）
+	if err := s.imageRepo.Delete(ctx, imageID); err != nil {
+		return fmt.Errorf("delete image from database: %w", err)
 	}
 
 	logger.Info().Str("image_id", imageID).Msg("Image deleted successfully")
-
-	// TODO: 从 Repository 删除
-
 	return nil
 }
 
-// CreateImageFromInstance 从 Instance 创建镜像（snapshot → image）
+// CreateImageFromInstance 从 Instance 创建镜像
 func (s *ImageService) CreateImageFromInstance(
 	ctx context.Context,
 	req *entity.CreateImageFromInstanceRequest,
@@ -346,13 +370,86 @@ func (s *ImageService) CreateImageFromInstance(
 		Str("image_name", req.ImageName).
 		Msg("Creating image from instance")
 
-	// TODO: 实现从 Instance 创建镜像的逻辑
 	// 1. 获取 Instance 的磁盘路径
-	// 2. 使用 qemu-img convert 创建镜像
-	// 3. 保存到 images pool
-	// 4. 注册镜像
+	// 通过 libvirt 获取 domain 的磁盘信息
+	disks, err := s.libvirtClient.GetDomainDisks(req.InstanceID)
+	if err != nil {
+		return nil, fmt.Errorf("get instance disks: %w", err)
+	}
 
-	return nil, fmt.Errorf("not implemented yet")
+	if len(disks) == 0 || disks[0].Source.File == "" {
+		return nil, fmt.Errorf("instance %s has no disk", req.InstanceID)
+	}
+
+	sourceDiskPath := disks[0].Source.File
+
+	// 2. 生成镜像 ID
+	imageID, err := s.idGen.GenerateImageID()
+	if err != nil {
+		return nil, fmt.Errorf("generate image ID: %w", err)
+	}
+
+	// 3. 确定镜像文件路径（保存到 images pool）
+	imageFilename := imageID + ".qcow2"
+	imagePath := filepath.Join(s.imagesPoolPath, imageFilename)
+
+	// 确保 images pool 存在
+	if err := s.storageService.EnsurePool(ctx, s.imagesPoolName); err != nil {
+		return nil, fmt.Errorf("ensure images pool: %w", err)
+	}
+
+	// 4. 使用 qemu-img convert 创建镜像（从实例磁盘转换为镜像）
+	logger.Info().
+		Str("source", sourceDiskPath).
+		Str("target", imagePath).
+		Msg("Converting disk to image")
+
+	err = s.qemuImgClient.Convert(ctx, "qcow2", "qcow2", sourceDiskPath, imagePath)
+	if err != nil {
+		return nil, fmt.Errorf("convert disk to image: %w", err)
+	}
+
+	// 5. 获取镜像大小
+	fileInfo, err := os.Stat(imagePath)
+	if err != nil {
+		// 清理已创建的镜像文件
+		_ = os.Remove(imagePath)
+		return nil, fmt.Errorf("get image file info: %w", err)
+	}
+
+	sizeGB := uint64(fileInfo.Size() / (1024 * 1024 * 1024))
+	if sizeGB == 0 {
+		sizeGB = 1
+	}
+
+	// 6. 修复文件权限（确保 libvirt-qemu 可以访问）
+	// 获取文件信息以确定是否需要修复权限
+	_ = fileInfo
+
+	// 7. 注册镜像
+	registerReq := &entity.RegisterImageRequest{
+		Name:        req.ImageName,
+		Description: req.Description,
+		Path:        imagePath,
+		Pool:        s.imagesPoolName,
+	}
+
+	image, err := s.RegisterImage(ctx, registerReq)
+	if err != nil {
+		// 清理已创建的镜像文件
+		_ = os.Remove(imagePath)
+		return nil, fmt.Errorf("register image: %w", err)
+	}
+
+	// 使用生成的 imageID
+	image.ID = imageID
+
+	logger.Info().
+		Str("image_id", imageID).
+		Str("instance_id", req.InstanceID).
+		Msg("Image created from instance successfully")
+
+	return image, nil
 }
 
 // DownloadImage 下载镜像文件

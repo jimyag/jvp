@@ -27,3 +27,79 @@ type RunInstanceRequest struct {
 type RunInstanceResponse struct {
 	Instance *Instance `json:"instance"`
 }
+
+// DescribeInstancesRequest 描述实例请求
+type DescribeInstancesRequest struct {
+	InstanceIDs []string `json:"instanceIDs,omitempty"`
+	Filters     []Filter `json:"filters,omitempty"`
+	MaxResults  int      `json:"maxResults,omitempty"`
+	NextToken   string   `json:"nextToken,omitempty"`
+}
+
+// DescribeInstancesResponse 描述实例响应
+type DescribeInstancesResponse struct {
+	Instances []Instance `json:"instances"`
+	NextToken string     `json:"nextToken,omitempty"`
+}
+
+// TerminateInstancesRequest 终止实例请求
+type TerminateInstancesRequest struct {
+	InstanceIDs []string `json:"instanceIDs" binding:"required"`
+}
+
+// TerminateInstancesResponse 终止实例响应
+type TerminateInstancesResponse struct {
+	TerminatingInstances []InstanceStateChange `json:"terminatingInstances"`
+}
+
+// StopInstancesRequest 停止实例请求
+type StopInstancesRequest struct {
+	InstanceIDs []string `json:"instanceIDs"     binding:"required"`
+	Force       bool     `json:"force,omitempty"`
+}
+
+// StopInstancesResponse 停止实例响应
+type StopInstancesResponse struct {
+	StoppingInstances []InstanceStateChange `json:"stoppingInstances"`
+}
+
+// StartInstancesRequest 启动实例请求
+type StartInstancesRequest struct {
+	InstanceIDs []string `json:"instanceIDs" binding:"required"`
+}
+
+// StartInstancesResponse 启动实例响应
+type StartInstancesResponse struct {
+	StartingInstances []InstanceStateChange `json:"startingInstances"`
+}
+
+// RebootInstancesRequest 重启实例请求
+type RebootInstancesRequest struct {
+	InstanceIDs []string `json:"instanceIDs" binding:"required"`
+}
+
+// RebootInstancesResponse 重启实例响应
+type RebootInstancesResponse struct {
+	RebootingInstances []InstanceStateChange `json:"rebootingInstances"`
+}
+
+// InstanceStateChange 实例状态变更信息
+type InstanceStateChange struct {
+	InstanceID    string `json:"instanceID"`
+	CurrentState  string `json:"currentState"`  // 当前状态
+	PreviousState string `json:"previousState"` // 之前的状态
+}
+
+// ModifyInstanceAttributeRequest 修改实例属性请求
+type ModifyInstanceAttributeRequest struct {
+	InstanceID string  `json:"instanceID"         binding:"required"`
+	MemoryMB   *uint64 `json:"memoryMB,omitempty"` // 内存大小（MB），nil 表示不修改
+	VCPUs      *uint16 `json:"vcpus,omitempty"`    // VCPU 数量，nil 表示不修改
+	Name       *string `json:"name,omitempty"`     // 实例名称，nil 表示不修改
+	Live       bool    `json:"live,omitempty"`     // 是否热修改（如果实例正在运行）
+}
+
+// ModifyInstanceAttributeResponse 修改实例属性响应
+type ModifyInstanceAttributeResponse struct {
+	Instance *Instance `json:"instance"`
+}

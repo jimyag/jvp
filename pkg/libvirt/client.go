@@ -415,6 +415,161 @@ func (c *Client) StartDomain(domain libvirt.Domain) error {
 	return nil
 }
 
+// StopDomain 停止运行中的域（优雅关闭）
+func (c *Client) StopDomain(domain libvirt.Domain) error {
+	err := c.conn.DomainShutdown(domain)
+	if err != nil {
+		return fmt.Errorf("failed to stop domain %s: %v", domain.Name, err)
+	}
+	return nil
+}
+
+// RebootDomain 重启域
+func (c *Client) RebootDomain(domain libvirt.Domain) error {
+	err := c.conn.DomainReboot(domain, 0)
+	if err != nil {
+		return fmt.Errorf("failed to reboot domain %s: %v", domain.Name, err)
+	}
+	return nil
+}
+
+// GetDomainByName 通过名称查找域
+func (c *Client) GetDomainByName(name string) (libvirt.Domain, error) {
+	domain, err := c.conn.DomainLookupByName(name)
+	if err != nil {
+		return libvirt.Domain{}, fmt.Errorf("failed to lookup domain by name %s: %v", name, err)
+	}
+	return domain, nil
+}
+
+// GetDomainState 获取域的状态
+func (c *Client) GetDomainState(domain libvirt.Domain) (uint8, uint32, error) {
+	state, reason, err := c.conn.DomainGetState(domain, 0)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to get domain state: %v", err)
+	}
+	return uint8(state), uint32(reason), nil
+}
+
+// DestroyDomain 强制销毁运行中的域
+func (c *Client) DestroyDomain(domain libvirt.Domain) error {
+	err := c.conn.DomainDestroy(domain)
+	if err != nil {
+		return fmt.Errorf("failed to destroy domain %s: %v", domain.Name, err)
+	}
+	return nil
+}
+
+// ModifyDomainMemory 修改域的内存大小
+// memoryKB: 新的内存大小（KB）
+// live: true=热修改（如果域正在运行），false=仅修改配置（需要重启生效）
+func (c *Client) ModifyDomainMemory(domain libvirt.Domain, memoryKB uint64, live bool) error {
+	// 获取当前 domain XML
+	xmlDesc, err := c.conn.DomainGetXMLDesc(domain, 0)
+	if err != nil {
+		return fmt.Errorf("get domain XML: %w", err)
+	}
+
+	// 解析 XML
+	var domainXML DomainXML
+	if err := xml.Unmarshal([]byte(xmlDesc), &domainXML); err != nil {
+		return fmt.Errorf("unmarshal domain XML: %w", err)
+	}
+
+	// 修改内存
+	domainXML.Memory.Value = memoryKB
+	if domainXML.CurrentMemory.Value == 0 {
+		domainXML.CurrentMemory.Value = memoryKB
+	}
+	domainXML.CurrentMemory.Value = memoryKB
+
+	// 重新序列化 XML
+	xmlBytes, err := xml.MarshalIndent(&domainXML, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal domain XML: %w", err)
+	}
+
+	// 如果 live 修改且域正在运行
+	if live {
+		state, _, err := c.conn.DomainGetState(domain, 0)
+		if err == nil && libvirt.DomainState(state) == libvirt.DomainRunning {
+			// 尝试热修改内存
+			err = c.conn.DomainSetMemory(domain, memoryKB)
+			if err != nil {
+				// 热修改失败，只更新配置
+				live = false
+			}
+		} else {
+			live = false
+		}
+	}
+
+	// 更新 domain 定义
+	_, err = c.conn.DomainDefineXML(string(xmlBytes))
+	if err != nil {
+		return fmt.Errorf("define domain with new memory: %w", err)
+	}
+
+	// 如果不是热修改，需要重启域才能生效
+	// 这里只更新配置，不自动重启
+	_ = live
+
+	return nil
+}
+
+// ModifyDomainVCPU 修改域的 VCPU 数量
+// vcpus: 新的 VCPU 数量
+// live: true=热修改（如果域正在运行），false=仅修改配置（需要重启生效）
+func (c *Client) ModifyDomainVCPU(domain libvirt.Domain, vcpus uint16, live bool) error {
+	// 获取当前 domain XML
+	xmlDesc, err := c.conn.DomainGetXMLDesc(domain, 0)
+	if err != nil {
+		return fmt.Errorf("get domain XML: %w", err)
+	}
+
+	// 解析 XML
+	var domainXML DomainXML
+	if err := xml.Unmarshal([]byte(xmlDesc), &domainXML); err != nil {
+		return fmt.Errorf("unmarshal domain XML: %w", err)
+	}
+
+	// 修改 VCPU
+	domainXML.VCPU.Value = int(vcpus)
+
+	// 重新序列化 XML
+	xmlBytes, err := xml.MarshalIndent(&domainXML, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal domain XML: %w", err)
+	}
+
+	// 如果 live 修改且域正在运行
+	if live {
+		state, _, err := c.conn.DomainGetState(domain, 0)
+		if err == nil && libvirt.DomainState(state) == libvirt.DomainRunning {
+			// 尝试热修改 VCPU
+			err = c.conn.DomainSetVcpusFlags(domain, uint32(vcpus), uint32(libvirt.DomainVCPULive))
+			if err != nil {
+				// 热修改失败，只更新配置
+				live = false
+			}
+		} else {
+			live = false
+		}
+	}
+
+	// 更新 domain 定义
+	_, err = c.conn.DomainDefineXML(string(xmlBytes))
+	if err != nil {
+		return fmt.Errorf("define domain with new VCPU: %w", err)
+	}
+
+	// 如果不是热修改，需要重启域才能生效
+	// 这里只更新配置，不自动重启
+	_ = live
+
+	return nil
+}
+
 // DeleteDomain 删除域
 // flags: 可以组合以下标志
 //   - libvirt.DomainUndefineManagedSave: 同时删除托管保存的镜像

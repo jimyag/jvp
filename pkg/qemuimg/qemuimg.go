@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -204,4 +205,101 @@ func (c *Client) CreateEmpty(ctx context.Context, format, outputFile string, siz
 	}
 
 	return nil
+}
+
+// Snapshot 创建快照
+// 注意：qemu-img snapshot 只支持 qcow2 格式
+//
+// 参数：
+//   - imagePath: 镜像文件路径
+//   - snapshotName: 快照名称
+//
+// 示例：
+//
+//	err := client.Snapshot(ctx, "/path/to/image.qcow2", "snapshot1")
+func (c *Client) Snapshot(ctx context.Context, imagePath, snapshotName string) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, c.qemuImgPath, "snapshot",
+		"-c", snapshotName,
+		imagePath,
+	)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to create snapshot %s for %s: %w, output: %s", snapshotName, imagePath, err, string(output))
+	}
+
+	return nil
+}
+
+// DeleteSnapshot 删除快照
+//
+// 参数：
+//   - imagePath: 镜像文件路径
+//   - snapshotName: 快照名称
+//
+// 示例：
+//
+//	err := client.DeleteSnapshot(ctx, "/path/to/image.qcow2", "snapshot1")
+func (c *Client) DeleteSnapshot(ctx context.Context, imagePath, snapshotName string) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, c.qemuImgPath, "snapshot",
+		"-d", snapshotName,
+		imagePath,
+	)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to delete snapshot %s from %s: %w, output: %s", snapshotName, imagePath, err, string(output))
+	}
+
+	return nil
+}
+
+// ListSnapshots 列出镜像的所有快照
+//
+// 参数：
+//   - imagePath: 镜像文件路径
+//
+// 返回：
+//   - 快照名称列表
+//
+// 示例：
+//
+//	snapshots, err := client.ListSnapshots(ctx, "/path/to/image.qcow2")
+func (c *Client) ListSnapshots(ctx context.Context, imagePath string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, c.qemuImgPath, "snapshot",
+		"-l", imagePath,
+	)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list snapshots for %s: %w, output: %s", imagePath, err, string(output))
+	}
+
+	// 解析输出，提取快照名称
+	// qemu-img snapshot -l 输出格式：
+	// Snapshot list:
+	// ID        TAG               VM SIZE                DATE       VM CLOCK
+	// 1         snapshot1         0 B 2024-01-01 12:00:00   00:00:00.000
+	lines := strings.Split(string(output), "\n")
+	var snapshots []string
+	for i, line := range lines {
+		if i < 2 {
+			continue // 跳过标题行
+		}
+		fields := strings.Fields(line)
+		if len(fields) >= 2 {
+			snapshots = append(snapshots, fields[1]) // TAG 列
+		}
+	}
+
+	return snapshots, nil
 }

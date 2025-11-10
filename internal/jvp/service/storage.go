@@ -102,7 +102,7 @@ func (s *StorageService) GetPool(ctx context.Context, poolName string) (*entity.
 }
 
 // CreateVolume 创建存储卷
-func (s *StorageService) CreateVolume(ctx context.Context, req *entity.CreateVolumeRequest) (*entity.Volume, error) {
+func (s *StorageService) CreateVolume(ctx context.Context, req *entity.CreateInternalVolumeRequest) (*entity.Volume, error) {
 	logger := zerolog.Ctx(ctx)
 
 	// 如果没有提供 VolumeID，自动生成

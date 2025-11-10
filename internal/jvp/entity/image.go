@@ -23,7 +23,37 @@ type RegisterImageRequest struct {
 
 // CreateImageFromInstanceRequest 从 Instance 创建镜像请求
 type CreateImageFromInstanceRequest struct {
-	InstanceID  string `json:"instance_id"` // Instance ID: i-{uuid}
-	ImageName   string `json:"image_name"`  // 镜像名称
-	Description string `json:"description"` // 描述
+	InstanceID  string `json:"instanceID"            binding:"required"` // Instance ID: i-{uuid}
+	ImageName   string `json:"imageName"             binding:"required"` // 镜像名称
+	Description string `json:"description,omitempty"`                    // 描述
+}
+
+// CreateImageFromInstanceResponse 从 Instance 创建镜像响应
+type CreateImageFromInstanceResponse struct {
+	Image *Image `json:"image"`
+}
+
+// DescribeImagesRequest 描述镜像请求
+type DescribeImagesRequest struct {
+	ImageIDs   []string `json:"imageIDs,omitempty"`
+	Owners     []string `json:"owners,omitempty"`
+	Filters    []Filter `json:"filters,omitempty"`
+	MaxResults int      `json:"maxResults,omitempty"`
+	NextToken  string   `json:"nextToken,omitempty"`
+}
+
+// DescribeImagesResponse 描述镜像响应
+type DescribeImagesResponse struct {
+	Images    []Image `json:"images"`
+	NextToken string  `json:"nextToken,omitempty"`
+}
+
+// DeregisterImageRequest 取消注册镜像请求
+type DeregisterImageRequest struct {
+	ImageID string `json:"imageID" binding:"required"`
+}
+
+// DeregisterImageResponse 取消注册镜像响应
+type DeregisterImageResponse struct {
+	Return bool `json:"return"`
 }

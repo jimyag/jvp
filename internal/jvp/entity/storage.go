@@ -21,8 +21,8 @@ type Volume struct {
 	Format      string `json:"format"`       // 格式：qcow2, raw
 }
 
-// CreateVolumeRequest 创建 Volume 请求
-type CreateVolumeRequest struct {
+// CreateInternalVolumeRequest 创建内部 Volume 请求（用于 StorageService）
+type CreateInternalVolumeRequest struct {
 	PoolName string `json:"pool_name"` // Pool 名称
 	VolumeID string `json:"volume_id"` // Volume ID: vol-{uuid}
 	SizeGB   uint64 `json:"size_gb"`   // 大小（GB）
