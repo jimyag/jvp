@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
+	"github.com/jimmicro/grace"
 	"github.com/jimyag/jvp/internal/jvp/api"
 	"github.com/jimyag/jvp/internal/jvp/config"
 	"github.com/jimyag/jvp/internal/jvp/repository"
@@ -87,9 +89,45 @@ func New(cfg *config.Config) (*Server, error) {
 }
 
 func (s *Server) Run(ctx context.Context) error {
-	return s.api.Run(ctx)
+	// 使用 grace.Shepherd 管理服务生命周期
+	services := []grace.Grace{
+		s.api,
+	}
+
+	shepherd := grace.NewShepherd(
+		services,
+		grace.WithTimeout(30*time.Second),
+		grace.WithLogger(&zerologLogger{}),
+	)
+
+	shepherd.Start(ctx)
+	return nil
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
 	return s.api.Shutdown(ctx)
+}
+
+// Name 实现 grace.Grace 接口
+func (s *Server) Name() string {
+	return "JVP Server"
+}
+
+// zerologLogger 实现 grace.Logger 接口
+type zerologLogger struct{}
+
+func (l *zerologLogger) Info(msg string, args ...interface{}) {
+	logger := zerolog.DefaultContextLogger.Info()
+	if len(args) > 0 {
+		logger = logger.Interface("args", args)
+	}
+	logger.Msg(msg)
+}
+
+func (l *zerologLogger) Error(msg string, args ...interface{}) {
+	logger := zerolog.DefaultContextLogger.Error()
+	if len(args) > 0 {
+		logger = logger.Interface("args", args)
+	}
+	logger.Msg(msg)
 }

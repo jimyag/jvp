@@ -22,7 +22,7 @@ import (
 type InstanceService struct {
 	storageService *StorageService
 	imageService   *ImageService
-	libvirtClient  *libvirt.Client
+	libvirtClient  libvirt.LibvirtClient
 	idGen          *idgen.Generator
 	instanceRepo   repository.InstanceRepository
 }
@@ -31,7 +31,7 @@ type InstanceService struct {
 func NewInstanceService(
 	storageService *StorageService,
 	imageService *ImageService,
-	libvirtClient *libvirt.Client,
+	libvirtClient libvirt.LibvirtClient,
 	repo *repository.Repository,
 ) (*InstanceService, error) {
 	return &InstanceService{

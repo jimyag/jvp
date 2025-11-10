@@ -53,7 +53,7 @@ var DefaultImages = []DefaultImage{
 // ImageService 镜像服务，管理镜像模板
 type ImageService struct {
 	storageService *StorageService
-	libvirtClient  *libvirt.Client
+	libvirtClient  libvirt.LibvirtClient
 	qemuImgClient  *qemuimg.Client
 	idGen          *idgen.Generator
 	httpClient     *http.Client
@@ -67,7 +67,7 @@ type ImageService struct {
 // NewImageService 创建新的 Image Service
 func NewImageService(
 	storageService *StorageService,
-	libvirtClient *libvirt.Client,
+	libvirtClient libvirt.LibvirtClient,
 	repo *repository.Repository,
 ) (*ImageService, error) {
 	return &ImageService{

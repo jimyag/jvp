@@ -19,17 +19,18 @@ import (
 type VolumeService struct {
 	storageService  *StorageService
 	instanceService *InstanceService
-	libvirtClient   *libvirt.Client
+	libvirtClient   libvirt.LibvirtClient
 	qemuImgClient   *qemuimg.Client
 	idGen           *idgen.Generator
 	volumeRepo      repository.VolumeRepository
+	snapshotRepo    repository.SnapshotRepository
 }
 
 // NewVolumeService 创建新的 Volume Service
 func NewVolumeService(
 	storageService *StorageService,
 	instanceService *InstanceService,
-	libvirtClient *libvirt.Client,
+	libvirtClient libvirt.LibvirtClient,
 	repo *repository.Repository,
 ) *VolumeService {
 	return &VolumeService{
@@ -39,6 +40,7 @@ func NewVolumeService(
 		qemuImgClient:   qemuimg.New(""),
 		idGen:           idgen.New(),
 		volumeRepo:      repository.NewVolumeRepository(repo.DB()),
+		snapshotRepo:    repository.NewSnapshotRepository(repo.DB()),
 	}
 }
 
@@ -58,8 +60,30 @@ func (s *VolumeService) CreateEBSVolume(ctx context.Context, req *entity.CreateV
 
 	// 确定大小（如果从快照创建，使用快照大小；否则使用请求的大小）
 	sizeGB := req.SizeGB
-	// TODO: 如果从快照创建，从快照获取大小
-	_ = req.SnapshotID // 暂时未使用，保留用于后续实现
+	var sourceVolumePath string
+	if req.SnapshotID != "" {
+		// 从快照创建卷
+		// 获取快照信息
+		snapshotModel, err := s.snapshotRepo.GetByID(ctx, req.SnapshotID)
+		if err != nil {
+			return nil, fmt.Errorf("snapshot %s not found: %w", req.SnapshotID, err)
+		}
+		if snapshotModel.State != "completed" {
+			return nil, fmt.Errorf("snapshot %s is not completed (state: %s)", req.SnapshotID, snapshotModel.State)
+		}
+
+		// 如果未指定大小，使用快照大小
+		if sizeGB == 0 {
+			sizeGB = snapshotModel.VolumeSizeGB
+		}
+
+		// 获取源卷信息
+		sourceVolume, err := s.storageService.GetVolume(ctx, snapshotModel.VolumeID)
+		if err != nil {
+			return nil, fmt.Errorf("get source volume %s: %w", snapshotModel.VolumeID, err)
+		}
+		sourceVolumePath = sourceVolume.Path
+	}
 
 	// 创建内部 Volume
 	internalReq := &entity.CreateInternalVolumeRequest{
@@ -69,9 +93,44 @@ func (s *VolumeService) CreateEBSVolume(ctx context.Context, req *entity.CreateV
 		Format:   "qcow2",
 	}
 
-	_, err = s.storageService.CreateVolume(ctx, internalReq)
+	internalVolume, err := s.storageService.CreateVolume(ctx, internalReq)
 	if err != nil {
 		return nil, fmt.Errorf("create volume: %w", err)
+	}
+
+	// 如果从快照创建，需要从源卷复制数据
+	if req.SnapshotID != "" && sourceVolumePath != "" {
+		// 删除 CreateVolume 创建的空文件，因为 Convert 需要创建新文件
+		if err := os.Remove(internalVolume.Path); err != nil && !os.IsNotExist(err) {
+			// 清理已创建的 volume
+			_ = s.storageService.DeleteVolume(ctx, volumeID)
+			return nil, fmt.Errorf("remove empty volume file: %w", err)
+		}
+
+		// 从源卷复制到新卷（这会包含快照状态）
+		err = s.qemuImgClient.Convert(ctx, "qcow2", "qcow2", sourceVolumePath, internalVolume.Path)
+		if err != nil {
+			// 清理已创建的 volume
+			_ = s.storageService.DeleteVolume(ctx, volumeID)
+			return nil, fmt.Errorf("convert volume from snapshot: %w", err)
+		}
+
+		// 如果需要调整大小
+		sourceSizeGB := internalVolume.CapacityB / (1024 * 1024 * 1024)
+		if sourceSizeGB < sizeGB {
+			err = s.qemuImgClient.Resize(ctx, internalVolume.Path, sizeGB)
+			if err != nil {
+				// 清理已创建的 volume
+				_ = s.storageService.DeleteVolume(ctx, volumeID)
+				return nil, fmt.Errorf("resize volume: %w", err)
+			}
+		}
+
+		// 重新获取 volume 信息（因为大小可能已改变）
+		_, err = s.storageService.GetVolume(ctx, volumeID)
+		if err != nil {
+			return nil, fmt.Errorf("get volume info: %w", err)
+		}
 	}
 
 	// 转换为 EBS Volume

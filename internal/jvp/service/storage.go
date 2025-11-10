@@ -17,7 +17,7 @@ import (
 
 // StorageService 存储服务，管理 libvirt storage pool 和 volume
 type StorageService struct {
-	libvirtClient *libvirt.Client
+	libvirtClient libvirt.LibvirtClient
 	qemuImgClient *qemuimg.Client
 	idGen         *idgen.Generator
 
@@ -30,7 +30,7 @@ type StorageService struct {
 
 // NewStorageService 创建新的 Storage Service
 func NewStorageService(
-	libvirtClient *libvirt.Client,
+	libvirtClient libvirt.LibvirtClient,
 ) (*StorageService, error) {
 	// 默认配置
 	defaultPoolName := "default"

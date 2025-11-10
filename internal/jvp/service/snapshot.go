@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/jimyag/jvp/internal/jvp/entity"
@@ -17,7 +18,7 @@ import (
 // SnapshotService EBS Snapshot 服务
 type SnapshotService struct {
 	storageService *StorageService
-	libvirtClient  *libvirt.Client
+	libvirtClient  libvirt.LibvirtClient
 	idGen          *idgen.Generator
 	snapshotRepo   repository.SnapshotRepository
 }
@@ -25,7 +26,7 @@ type SnapshotService struct {
 // NewSnapshotService 创建新的 Snapshot Service
 func NewSnapshotService(
 	storageService *StorageService,
-	libvirtClient *libvirt.Client,
+	libvirtClient libvirt.LibvirtClient,
 	repo *repository.Repository,
 ) *SnapshotService {
 	return &SnapshotService{
@@ -97,12 +98,31 @@ func (s *SnapshotService) DeleteEBSSnapshot(ctx context.Context, snapshotID stri
 	logger := zerolog.Ctx(ctx)
 	logger.Info().Str("snapshotID", snapshotID).Msg("Deleting EBS snapshot")
 
+	// 获取快照信息
+	snapshotModel, err := s.snapshotRepo.GetByID(ctx, snapshotID)
+	if err != nil {
+		return fmt.Errorf("snapshot %s not found: %w", snapshotID, err)
+	}
+
+	// 获取源卷信息
+	volume, err := s.storageService.GetVolume(ctx, snapshotModel.VolumeID)
+	if err != nil {
+		logger.Warn().Err(err).Str("volumeID", snapshotModel.VolumeID).Msg("Failed to get volume, skipping snapshot file deletion")
+	} else {
+		// 使用 qemu-img 删除卷内部的快照
+		qemuImgClient := qemuimg.New("")
+		err = qemuImgClient.DeleteSnapshot(ctx, volume.Path, snapshotID)
+		if err != nil {
+			logger.Warn().Err(err).Str("snapshotID", snapshotID).Str("volumePath", volume.Path).Msg("Failed to delete snapshot from volume, continuing with database deletion")
+		} else {
+			logger.Info().Str("snapshotID", snapshotID).Str("volumePath", volume.Path).Msg("Snapshot deleted from volume")
+		}
+	}
+
 	// 从数据库软删除
 	if err := s.snapshotRepo.Delete(ctx, snapshotID); err != nil {
 		return apierror.WrapError(apierror.ErrInternalError, "Failed to delete snapshot from database", err)
 	}
-
-	// TODO: 删除快照文件
 
 	logger.Info().Str("snapshotID", snapshotID).Msg("EBS snapshot deleted successfully")
 	return nil
@@ -169,7 +189,24 @@ func (s *SnapshotService) DescribeEBSSnapshots(ctx context.Context, req *entity.
 		}
 	}
 
-	// TODO: 应用分页
+	// 应用分页
+	if req.MaxResults > 0 && len(snapshots) > req.MaxResults {
+		// 如果有 NextToken，从指定位置开始
+		startIndex := 0
+		if req.NextToken != "" {
+			for i, snapshot := range snapshots {
+				if snapshot.SnapshotID == req.NextToken {
+					startIndex = i + 1
+					break
+				}
+			}
+		}
+		endIndex := startIndex + req.MaxResults
+		if endIndex > len(snapshots) {
+			endIndex = len(snapshots)
+		}
+		snapshots = snapshots[startIndex:endIndex]
+	}
 
 	return snapshots, nil
 }
@@ -182,42 +219,91 @@ func (s *SnapshotService) CopyEBSSnapshot(ctx context.Context, req *entity.CopyS
 		Str("sourceRegion", req.SourceRegion).
 		Msg("Copying EBS snapshot")
 
+	// 获取源快照信息
+	sourceSnapshotModel, err := s.snapshotRepo.GetByID(ctx, req.SourceSnapshotID)
+	if err != nil {
+		return nil, fmt.Errorf("source snapshot %s not found: %w", req.SourceSnapshotID, err)
+	}
+	if sourceSnapshotModel.State != "completed" {
+		return nil, fmt.Errorf("source snapshot %s is not completed (state: %s)", req.SourceSnapshotID, sourceSnapshotModel.State)
+	}
+
+	// 获取源卷信息
+	sourceVolume, err := s.storageService.GetVolume(ctx, sourceSnapshotModel.VolumeID)
+	if err != nil {
+		return nil, fmt.Errorf("get source volume %s: %w", sourceSnapshotModel.VolumeID, err)
+	}
+
+	// 生成新的 Volume ID 用于复制
+	newVolumeID, err := s.idGen.GenerateVolumeID()
+	if err != nil {
+		return nil, fmt.Errorf("generate volume ID: %w", err)
+	}
+
+	// 创建临时卷用于复制快照
+	// 注意：这里我们创建一个新卷，然后从源卷复制数据
+	// 由于快照是卷内部的，我们需要复制整个卷
+	internalReq := &entity.CreateInternalVolumeRequest{
+		PoolName: "default",
+		VolumeID: newVolumeID,
+		SizeGB:   sourceSnapshotModel.VolumeSizeGB,
+		Format:   "qcow2",
+	}
+
+	tempVolume, err := s.storageService.CreateVolume(ctx, internalReq)
+	if err != nil {
+		return nil, fmt.Errorf("create temporary volume: %w", err)
+	}
+
+	// 删除 CreateVolume 创建的空文件，因为 Convert 需要创建新文件
+	if err := os.Remove(tempVolume.Path); err != nil && !os.IsNotExist(err) {
+		_ = s.storageService.DeleteVolume(ctx, newVolumeID)
+		return nil, fmt.Errorf("remove empty volume file: %w", err)
+	}
+
+	// 从源卷复制到新卷（这会包含快照状态）
+	qemuImgClient := qemuimg.New("")
+	err = qemuImgClient.Convert(ctx, "qcow2", "qcow2", sourceVolume.Path, tempVolume.Path)
+	if err != nil {
+		_ = s.storageService.DeleteVolume(ctx, newVolumeID)
+		return nil, fmt.Errorf("convert volume: %w", err)
+	}
+
 	// 生成新的 Snapshot ID
 	snapshotID, err := s.idGen.GenerateSnapshotID()
 	if err != nil {
+		_ = s.storageService.DeleteVolume(ctx, newVolumeID)
 		return nil, fmt.Errorf("generate snapshot ID: %w", err)
 	}
 
-	// TODO: 复制快照文件
-
-	// 获取源快照信息
-	sourceSnapshot, err := s.DescribeEBSSnapshots(ctx, &entity.DescribeSnapshotsRequest{
-		SnapshotIDs: []string{req.SourceSnapshotID},
-	})
-	if err != nil || len(sourceSnapshot) == 0 {
-		return nil, fmt.Errorf("source snapshot %s not found", req.SourceSnapshotID)
+	// 在新卷上创建快照（使用新的快照 ID）
+	err = qemuImgClient.Snapshot(ctx, tempVolume.Path, snapshotID)
+	if err != nil {
+		_ = s.storageService.DeleteVolume(ctx, newVolumeID)
+		return nil, fmt.Errorf("create snapshot on copied volume: %w", err)
 	}
-	source := sourceSnapshot[0]
 
 	snapshot := &entity.EBSSnapshot{
 		SnapshotID:   snapshotID,
-		VolumeID:     source.VolumeID,
-		State:        "pending",
+		VolumeID:     newVolumeID, // 使用新卷 ID
+		State:        "completed",
 		StartTime:    time.Now().Format(time.RFC3339),
-		Progress:     "0%",
+		Progress:     "100%",
 		OwnerID:      "default",
 		Description:  req.Description,
 		Encrypted:    req.Encrypted,
-		VolumeSizeGB: source.VolumeSizeGB,
+		VolumeSizeGB: sourceSnapshotModel.VolumeSizeGB,
 		Tags:         extractTags(req.TagSpecifications, "snapshot"),
 	}
 
 	// 保存到数据库
 	snapshotModel, err := snapshotEntityToModel(snapshot)
 	if err != nil {
+		_ = s.storageService.DeleteVolume(ctx, newVolumeID)
 		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to convert snapshot to model", err)
 	}
 	if err := s.snapshotRepo.Create(ctx, snapshotModel); err != nil {
+		_ = s.storageService.DeleteVolume(ctx, newVolumeID)
 		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to save snapshot to database", err)
 	}
 	logger.Info().Str("snapshotID", snapshotID).Msg("Snapshot saved to database")

@@ -76,10 +76,26 @@ func printRoutes(engine *gin.Engine) {
 }
 
 func (a *API) Run(ctx context.Context) error {
-	// TODO 添加 graceful shutdown
-	return a.server.ListenAndServe()
+	errCh := make(chan error, 1)
+	go func() {
+		if err := a.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		return nil
+	case err := <-errCh:
+		return err
+	}
 }
 
 func (a *API) Shutdown(ctx context.Context) error {
 	return a.server.Shutdown(ctx)
+}
+
+// Name 实现 grace.Grace 接口
+func (a *API) Name() string {
+	return "API Server"
 }
