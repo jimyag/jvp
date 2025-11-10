@@ -9,18 +9,17 @@ import (
 )
 
 type API struct {
-	svc    *service.Service
 	engine *gin.Engine
 	server *http.Server
 
 	instance *Instance
 }
 
-func New() (*API, error) {
+func New(instanceService *service.InstanceService) (*API, error) {
 	engine := gin.Default()
 	api := &API{
 		engine:   engine,
-		instance: NewInstance(),
+		instance: NewInstance(instanceService),
 	}
 	api.instance.RegisterRoutes(engine.Group("/api"))
 	api.server = &http.Server{

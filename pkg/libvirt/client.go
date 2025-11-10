@@ -5,6 +5,10 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"os"
+	"os/user"
+	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/digitalocean/go-libvirt"
@@ -55,7 +59,7 @@ type CreateVMConfig struct {
 	Architecture      string              // CPU 架构：x86_64, aarch64, i686 等（默认：x86_64）
 	MachineType       string              // 机器类型（可选，如：pc-q35-6.2）
 	ISOPath           string              // ISO 路径（可选，用于操作系统安装）
-	VNCSocket         string              // VNC Unix socket 路径（可选，默认：/var/lib/libvirt/qemu/{name}.vnc）
+	VNCSocket         string              // VNC Unix socket 路径（可选，默认：/var/lib/jvp/qemu/{name}.vnc）
 	Autostart         bool                // 是否开机自动启动（默认：false）
 	CloudInit         *cloudinit.Config   // cloud-init 配置（可选）
 	CloudInitUserData *cloudinit.UserData // cloud-init 用户数据（可选）
@@ -346,6 +350,19 @@ func (c *Client) DefineDomain(config *CreateVMConfig) (libvirt.Domain, error) {
 	// 设置默认值
 	c.setDefaultVMConfig(config)
 
+	// 确保 VNC socket 目录存在，并设置正确的权限
+	if config.VNCSocket != "" {
+		vncDir := filepath.Dir(config.VNCSocket)
+		if err := os.MkdirAll(vncDir, 0o755); err != nil {
+			return libvirt.Domain{}, fmt.Errorf("create VNC socket directory: %w", err)
+		}
+		// 设置目录所有者为 libvirt-qemu:kvm，以便 QEMU 进程可以创建 socket
+		if err := c.fixVNCDirOwnership(vncDir); err != nil {
+			// 非致命错误，只记录警告
+			log.Printf("Warning: failed to fix VNC directory ownership: %v", err)
+		}
+	}
+
 	// 如果配置了 cloud-init，生成 cloud-init ISO
 	if config.CloudInit != nil {
 		isoPath, err := c.generateCloudInitISO(config)
@@ -497,7 +514,7 @@ func (c *Client) setDefaultVMConfig(config *CreateVMConfig) {
 	}
 
 	if config.VNCSocket == "" {
-		config.VNCSocket = "/var/lib/libvirt/qemu/" + config.Name + ".vnc"
+		config.VNCSocket = "/var/lib/jvp/qemu/" + config.Name + ".vnc"
 	}
 }
 
@@ -650,6 +667,34 @@ func (c *Client) buildDevices(config *CreateVMConfig) DomainDevices {
 	}
 
 	return devices
+}
+
+// fixVNCDirOwnership 修复 VNC socket 目录的所有权为 libvirt-qemu:kvm
+func (c *Client) fixVNCDirOwnership(dirPath string) error {
+	// 查找 libvirt-qemu 用户和 kvm 组
+	libvirtUser, err := user.Lookup("libvirt-qemu")
+	if err != nil {
+		// 如果找不到用户，返回错误（非致命，调用方会记录警告）
+		return fmt.Errorf("lookup libvirt-qemu user: %w", err)
+	}
+
+	kvmGroup, err := user.LookupGroup("kvm")
+	if err != nil {
+		return fmt.Errorf("lookup kvm group: %w", err)
+	}
+
+	uid, err := strconv.Atoi(libvirtUser.Uid)
+	if err != nil {
+		return fmt.Errorf("parse libvirt-qemu UID: %w", err)
+	}
+
+	gid, err := strconv.Atoi(kvmGroup.Gid)
+	if err != nil {
+		return fmt.Errorf("parse kvm GID: %w", err)
+	}
+
+	// 修改目录所有权
+	return os.Chown(dirPath, uid, gid)
 }
 
 // buildDisks 构建磁盘配置

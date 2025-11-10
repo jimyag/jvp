@@ -140,7 +140,7 @@ func main() {
     lockPasswd := false
     isoPath, err := builder.BuildISO(&cloudinit.BuildOptions{
         VMName:    "my-vm",
-        OutputDir: "/var/lib/libvirt/images",
+        OutputDir: "/var/lib/jvp/images",
         Config: &cloudinit.Config{
             Hostname: "my-server",
             Users: []cloudinit.User{

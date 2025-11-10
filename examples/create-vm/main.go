@@ -17,17 +17,17 @@ func main() {
 
 	// 配置虚拟机参数
 	config := &libvirtclient.CreateVMConfig{
-		Name:          "test-vm",                            // 虚拟机名称
-		Memory:        2 * 1024 * 1024,                      // 2GB 内存（单位：KB）
-		VCPUs:         1,                                    // 1 核心 CPU
-		DiskPath:      "/var/lib/libvirt/images/test.qcow2", // 磁盘路径
-		NetworkType:   "bridge",                             // 网络类型：桥接
-		NetworkSource: "br0",                                // 桥接网卡：br0
+		Name:          "test-vm",                        // 虚拟机名称
+		Memory:        2 * 1024 * 1024,                  // 2GB 内存（单位：KB）
+		VCPUs:         1,                                // 1 核心 CPU
+		DiskPath:      "/var/lib/jvp/images/test.qcow2", // 磁盘路径
+		NetworkType:   "bridge",                         // 网络类型：桥接
+		NetworkSource: "br0",                            // 桥接网卡：br0
 		// 以下参数使用默认值
 		// DiskBus:       "virtio",                             // 默认值
 		// OSType:        "hvm",                                // 默认值
 		// Architecture:  "x86_64",                             // 默认值
-		// VNCSocket:     "/var/lib/libvirt/qemu/test-vm.vnc",  // 默认值
+		// VNCSocket:     "/var/lib/jvp/qemu/test-vm.vnc",  // 默认值
 	}
 
 	log.Printf("Creating VM with following configuration:")
@@ -60,7 +60,7 @@ func main() {
 
 	log.Printf("✓ Domain '%s' created and started successfully", domain.Name)
 	log.Printf("  UUID: %x", domain.UUID)
-	log.Printf("  VNC Socket: /var/lib/libvirt/qemu/%s.vnc", config.Name)
+	log.Printf("  VNC Socket: /var/lib/jvp/qemu/%s.vnc", config.Name)
 
 	// 获取域的详细信息
 	info, err := client.GetDomainInfo(domain.UUID)
@@ -90,7 +90,7 @@ func main() {
 	}
 
 	log.Printf("\n✓ VM is ready to use!")
-	log.Printf("  Connect to VNC: socat - UNIX-CONNECT:/var/lib/libvirt/qemu/%s.vnc", config.Name)
+	log.Printf("  Connect to VNC: socat - UNIX-CONNECT:/var/lib/jvp/qemu/%s.vnc", config.Name)
 
 	// 可选：删除虚拟机（取消注释以启用）
 	// log.Printf("\nDeleting domain...")

@@ -1,7 +1,6 @@
 package config
 
-type Config struct {
-}
+type Config struct{}
 
 func New() (*Config, error) {
 	return &Config{}, nil

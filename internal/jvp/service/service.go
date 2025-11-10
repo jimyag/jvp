@@ -2,8 +2,7 @@ package service
 
 import "context"
 
-type Service struct {
-}
+type Service struct{}
 
 func New() (*Service, error) {
 	return &Service{}, nil

@@ -16,12 +16,12 @@ func main() {
 
 	// 配置虚拟机参数（包含 cloud-init）
 	config := &libvirtclient.CreateVMConfig{
-		Name:          "cloudinit-test-vm",                  // 虚拟机名称
-		Memory:        2 * 1024 * 1024,                      // 2GB 内存（单位：KB）
-		VCPUs:         2,                                    // 2 核心 CPU
-		DiskPath:      "/var/lib/libvirt/images/test.qcow2", // 磁盘路径（需要预先存在）
-		NetworkType:   "bridge",                             // 网络类型：桥接
-		NetworkSource: "br0",                                // 桥接网卡：br0
+		Name:          "cloudinit-test-vm",              // 虚拟机名称
+		Memory:        2 * 1024 * 1024,                  // 2GB 内存（单位：KB）
+		VCPUs:         2,                                // 2 核心 CPU
+		DiskPath:      "/var/lib/jvp/images/test.qcow2", // 磁盘路径（需要预先存在）
+		NetworkType:   "bridge",                         // 网络类型：桥接
+		NetworkSource: "br0",                            // 桥接网卡：br0
 
 		// Cloud-Init 配置
 		CloudInit: &cloudinit.Config{
@@ -61,7 +61,7 @@ func main() {
 
 	log.Printf("✓ VM created and started successfully")
 	log.Printf("  UUID: %x", domain.UUID)
-	log.Printf("  VNC Socket: /var/lib/libvirt/qemu/%s.vnc", config.Name)
+	log.Printf("  VNC Socket: /var/lib/jvp/qemu/%s.vnc", config.Name)
 	log.Printf("\nCloud-init will run on first boot and configure the VM.")
 	log.Printf("You can login with:")
 	log.Printf("  Username: %s", config.CloudInit.Username)

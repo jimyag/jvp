@@ -22,7 +22,7 @@ func NewISOBuilder() *ISOBuilder {
 // BuildOptions ISO 构建选项
 type BuildOptions struct {
 	VMName      string    // 虚拟机名称（用于生成 ISO 文件名）
-	OutputDir   string    // 输出目录（默认：/var/lib/libvirt/images）
+	OutputDir   string    // 输出目录（默认：/var/lib/jvp/images）
 	Config      *Config   // cloud-init 配置
 	UserData    *UserData // cloud-init 用户数据
 	KeepTempDir bool      // 是否保留临时目录（用于调试）
@@ -42,7 +42,7 @@ func (b *ISOBuilder) BuildISO(opts *BuildOptions) (string, error) {
 	// 设置默认输出目录
 	outputDir := opts.OutputDir
 	if outputDir == "" {
-		outputDir = "/var/lib/libvirt/images"
+		outputDir = "/var/lib/jvp/images"
 	}
 
 	// 创建临时目录
@@ -134,7 +134,7 @@ func (b *ISOBuilder) BuildISO(opts *BuildOptions) (string, error) {
 // CleanupISO 清理 cloud-init ISO 文件
 func (b *ISOBuilder) CleanupISO(vmName string, outputDir string) error {
 	if outputDir == "" {
-		outputDir = "/var/lib/libvirt/images"
+		outputDir = "/var/lib/jvp/images"
 	}
 
 	isoPath := filepath.Join(outputDir, fmt.Sprintf("%s-cidata.iso", vmName))
@@ -147,7 +147,7 @@ func (b *ISOBuilder) CleanupISO(vmName string, outputDir string) error {
 // GetISOPath 获取 cloud-init ISO 路径
 func (b *ISOBuilder) GetISOPath(vmName string, outputDir string) string {
 	if outputDir == "" {
-		outputDir = "/var/lib/libvirt/images"
+		outputDir = "/var/lib/jvp/images"
 	}
 	return filepath.Join(outputDir, fmt.Sprintf("%s-cidata.iso", vmName))
 }

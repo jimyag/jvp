@@ -7,10 +7,8 @@ import (
 // contextKey 用于在 gin.Context 中存储值的类型安全 key
 type contextKey struct{}
 
-var (
-	// responseFormatKey 用于存储响应格式（"json" 或 "xml"）
-	responseFormatKey = contextKey{}
-)
+// responseFormatKey 用于存储响应格式（"json" 或 "xml"）
+var responseFormatKey = contextKey{}
 
 // setResponseFormat 设置响应格式
 func setResponseFormat(ctx *gin.Context, format string) {

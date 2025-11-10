@@ -1,4 +1,3 @@
 package api
 
-type Config struct {
-}
+type Config struct{}
