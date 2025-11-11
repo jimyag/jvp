@@ -61,9 +61,21 @@ JVP 是一个基于 QEMU/KVM 和 libvirt 的虚拟化平台，提供完整的虚
 - **结构化日志**：使用 zerolog 记录结构化日志
 - **优雅关闭**：支持优雅关闭和资源清理
 
+## Web 管理界面
+
+JVP 提供了现代化的 Web 管理界面,位于 `web/` 目录。参考 MotherDuck 设计系统,提供响应式布局和简洁现代的界面。
+
+快速启动:
+
+```bash
+cd web && ./start.sh
+```
+
+访问 `http://localhost:3000` 使用图形化界面管理虚拟化资源。详细文档: [web/README.md](web/README.md)、[web/USAGE.md](web/USAGE.md)
+
 ## API 端点
 
-所有 API 端点位于 `/api` 路径下：
+所有 API 端点位于 `/api` 路径下:
 
 - `/api/instances/*` - 实例管理
 - `/api/volumes/*` - 卷管理
