@@ -167,12 +167,12 @@ export default function InstanceDetailPage() {
               </button>
             )}
             <button
-              onClick={() => handleAction("restart")}
+              onClick={() => handleAction("reboot")}
               className="btn-secondary flex items-center gap-2"
-              title="Restart"
+              title="Reboot"
             >
               <RefreshCw size={16} />
-              Restart
+              Reboot
             </button>
             <button
               onClick={() => setIsResetPasswordModalOpen(true)}

@@ -1,5 +1,36 @@
 # 更新日志
 
+## 修复 API 端点和参数错误 (2024-11-11)
+
+### 🐛 Bug 修复
+
+1. **API 端点命名错误**
+   - ❌ 之前: 使用 `/api/instances/restart`
+   - ✅ 现在: 使用 `/api/instances/reboot`
+   - 修复了 404 错误
+
+2. **API 请求参数命名错误**
+   - ❌ 之前: 实例列表页使用 `instance_ids` (下划线命名)
+   - ✅ 现在: 使用 `instanceIDs` (驼峰命名)
+   - 影响操作: 启动、停止、重启、删除实例
+
+### 📋 修改的文件
+
+- `app/instances/page.tsx` - 修复 API 端点和参数
+- `app/instances/[id]/page.tsx` - 修复 API 端点
+
+### 📝 后端 API 端点
+
+根据后端代码 (`internal/jvp/api/instnace.go`),正确的端点是:
+- `POST /api/instances/run` - 创建实例
+- `POST /api/instances/describe` - 查询实例
+- `POST /api/instances/start` - 启动实例
+- `POST /api/instances/stop` - 停止实例
+- `POST /api/instances/reboot` - 重启实例 (不是 restart)
+- `POST /api/instances/terminate` - 删除实例
+- `POST /api/instances/reset-password` - 重置密码
+- `POST /api/instances/modify-attribute` - 修改属性
+
 ## 移除不存在的详情页链接 (2024-11-11)
 
 ### 🐛 Bug 修复

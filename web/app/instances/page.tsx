@@ -86,7 +86,7 @@ export default function InstancesPage() {
       await fetch(`/api/instances/${action}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instance_ids: [instanceId] }),
+        body: JSON.stringify({ instanceIDs: [instanceId] }),
       });
       fetchInstances();
     } catch (error) {
@@ -101,7 +101,7 @@ export default function InstancesPage() {
       await fetch("/api/instances/terminate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instance_ids: [instanceId] }),
+        body: JSON.stringify({ instanceIDs: [instanceId] }),
       });
       fetchInstances();
     } catch (error) {
@@ -173,9 +173,9 @@ export default function InstancesPage() {
               </button>
             )}
             <button
-              onClick={() => handleAction(instance.id, "restart")}
+              onClick={() => handleAction(instance.id, "reboot")}
               className="p-2 text-gray-600 hover:text-blue-600 transition-colors"
-              title="Restart"
+              title="Reboot"
             >
               <RefreshCw size={16} />
             </button>
