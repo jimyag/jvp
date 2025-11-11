@@ -3,15 +3,16 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/jimyag/jvp/internal/jvp/repository/model"
-	_ "modernc.org/sqlite" // 纯 Go SQLite 驱动，不需要 CGO（必须在 gorm.io/driver/sqlite 之前导入）
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+	_ "modernc.org/sqlite" // 纯 Go SQLite 驱动，不需要 CGO
 )
 
 // Repository 数据库仓库
@@ -28,13 +29,23 @@ func New(dbPath string) (*Repository, error) {
 	}
 
 	// 连接数据库（使用纯 Go SQLite 驱动，不需要 CGO）
-	// modernc.org/sqlite 已通过 import _ "modernc.org/sqlite" 注册为 "sqlite" 驱动
-	// GORM 会自动检测并使用已注册的驱动
-	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
+	// 直接使用 database/sql + modernc.org/sqlite 创建连接，然后传递给 GORM
+	sqlDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+
+	// 使用 GORM 的 Dialector 包装已创建的 sql.DB 连接
+	db, err := gorm.Open(sqlite.Dialector{
+		DriverName: "sqlite",
+		DSN:        dbPath,
+		Conn:       sqlDB,
+	}, &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent), // 生产环境可以设置为 Silent
 	})
 	if err != nil {
-		return nil, fmt.Errorf("open database: %w", err)
+		sqlDB.Close()
+		return nil, fmt.Errorf("open gorm database: %w", err)
 	}
 
 	// 自动迁移

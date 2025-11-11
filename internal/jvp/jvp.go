@@ -118,16 +118,20 @@ type zerologLogger struct{}
 
 func (l *zerologLogger) Info(msg string, args ...interface{}) {
 	logger := zerolog.DefaultContextLogger.Info()
+	// 如果有参数，使用 Msgf 格式化消息
 	if len(args) > 0 {
-		logger = logger.Interface("args", args)
+		logger.Msgf(msg, args...)
+	} else {
+		logger.Msg(msg)
 	}
-	logger.Msg(msg)
 }
 
 func (l *zerologLogger) Error(msg string, args ...interface{}) {
 	logger := zerolog.DefaultContextLogger.Error()
+	// 如果有参数，使用 Msgf 格式化消息
 	if len(args) > 0 {
-		logger = logger.Interface("args", args)
+		logger.Msgf(msg, args...)
+	} else {
+		logger.Msg(msg)
 	}
-	logger.Msg(msg)
 }
