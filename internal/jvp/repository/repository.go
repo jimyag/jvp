@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/jimyag/jvp/internal/jvp/repository/model"
+	_ "modernc.org/sqlite" // 纯 Go SQLite 驱动，不需要 CGO（必须在 gorm.io/driver/sqlite 之前导入）
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -26,7 +27,9 @@ func New(dbPath string) (*Repository, error) {
 		return nil, fmt.Errorf("create database directory: %w", err)
 	}
 
-	// 连接数据库
+	// 连接数据库（使用纯 Go SQLite 驱动，不需要 CGO）
+	// modernc.org/sqlite 已通过 import _ "modernc.org/sqlite" 注册为 "sqlite" 驱动
+	// GORM 会自动检测并使用已注册的驱动
 	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent), // 生产环境可以设置为 Silent
 	})
