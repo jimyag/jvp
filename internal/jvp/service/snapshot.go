@@ -19,6 +19,7 @@ import (
 type SnapshotService struct {
 	storageService *StorageService
 	libvirtClient  libvirt.LibvirtClient
+	qemuImgClient  qemuimg.QemuImgClient
 	idGen          *idgen.Generator
 	snapshotRepo   repository.SnapshotRepository
 }
@@ -32,6 +33,7 @@ func NewSnapshotService(
 	return &SnapshotService{
 		storageService: storageService,
 		libvirtClient:  libvirtClient,
+		qemuImgClient:  qemuimg.New(""),
 		idGen:          idgen.New(),
 		snapshotRepo:   repository.NewSnapshotRepository(repo.DB()),
 	}
@@ -57,8 +59,7 @@ func (s *SnapshotService) CreateEBSSnapshot(ctx context.Context, req *entity.Cre
 	}
 
 	// 使用 qemu-img 创建快照
-	qemuImgClient := qemuimg.New("")
-	err = qemuImgClient.Snapshot(ctx, volume.Path, snapshotID)
+	err = s.qemuImgClient.Snapshot(ctx, volume.Path, snapshotID)
 	if err != nil {
 		return nil, fmt.Errorf("create snapshot: %w", err)
 	}
@@ -110,8 +111,7 @@ func (s *SnapshotService) DeleteEBSSnapshot(ctx context.Context, snapshotID stri
 		logger.Warn().Err(err).Str("volumeID", snapshotModel.VolumeID).Msg("Failed to get volume, skipping snapshot file deletion")
 	} else {
 		// 使用 qemu-img 删除卷内部的快照
-		qemuImgClient := qemuimg.New("")
-		err = qemuImgClient.DeleteSnapshot(ctx, volume.Path, snapshotID)
+		err = s.qemuImgClient.DeleteSnapshot(ctx, volume.Path, snapshotID)
 		if err != nil {
 			logger.Warn().Err(err).Str("snapshotID", snapshotID).Str("volumePath", volume.Path).Msg("Failed to delete snapshot from volume, continuing with database deletion")
 		} else {
@@ -262,8 +262,7 @@ func (s *SnapshotService) CopyEBSSnapshot(ctx context.Context, req *entity.CopyS
 	}
 
 	// 从源卷复制到新卷（这会包含快照状态）
-	qemuImgClient := qemuimg.New("")
-	err = qemuImgClient.Convert(ctx, "qcow2", "qcow2", sourceVolume.Path, tempVolume.Path)
+	err = s.qemuImgClient.Convert(ctx, "qcow2", "qcow2", sourceVolume.Path, tempVolume.Path)
 	if err != nil {
 		_ = s.storageService.DeleteVolume(ctx, newVolumeID)
 		return nil, fmt.Errorf("convert volume: %w", err)
@@ -277,7 +276,7 @@ func (s *SnapshotService) CopyEBSSnapshot(ctx context.Context, req *entity.CopyS
 	}
 
 	// 在新卷上创建快照（使用新的快照 ID）
-	err = qemuImgClient.Snapshot(ctx, tempVolume.Path, snapshotID)
+	err = s.qemuImgClient.Snapshot(ctx, tempVolume.Path, snapshotID)
 	if err != nil {
 		_ = s.storageService.DeleteVolume(ctx, newVolumeID)
 		return nil, fmt.Errorf("create snapshot on copied volume: %w", err)

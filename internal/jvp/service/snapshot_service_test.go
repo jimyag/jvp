@@ -2,22 +2,40 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
-	"fmt"
 	"testing"
 	"time"
 
 	"github.com/jimyag/jvp/internal/jvp/entity"
 	"github.com/jimyag/jvp/internal/jvp/repository"
 	"github.com/jimyag/jvp/internal/jvp/repository/model"
+	"github.com/jimyag/jvp/pkg/idgen"
 	"github.com/jimyag/jvp/pkg/libvirt"
+	"github.com/jimyag/jvp/pkg/qemuimg"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
-func setupTestSnapshotService(t *testing.T) (*SnapshotService, *repository.Repository, *libvirt.MockClient) {
+// NewSnapshotServiceWithQemuImg 创建带有 mock qemu-img client 的 SnapshotService（用于测试）
+func NewSnapshotServiceWithQemuImg(
+	storageService *StorageService,
+	libvirtClient libvirt.LibvirtClient,
+	qemuImgClient qemuimg.QemuImgClient,
+	repo *repository.Repository,
+) *SnapshotService {
+	return &SnapshotService{
+		storageService: storageService,
+		libvirtClient:  libvirtClient,
+		qemuImgClient:  qemuImgClient,
+		idGen:          idgen.New(),
+		snapshotRepo:   repository.NewSnapshotRepository(repo.DB()),
+	}
+}
+
+func setupTestSnapshotService(t *testing.T) (*SnapshotService, *repository.Repository, *libvirt.MockClient, *qemuimg.MockClient) {
 	t.Helper()
 
 	// 创建测试数据库
@@ -42,23 +60,26 @@ func setupTestSnapshotService(t *testing.T) (*SnapshotService, *repository.Repos
 	storageService, err := NewStorageService(mockLibvirtClient)
 	require.NoError(t, err)
 
-	// 创建 SnapshotService
-	snapshotService := NewSnapshotService(storageService, mockLibvirtClient, repo)
+	// 创建 mock qemu-img client
+	mockQemuImgClient := qemuimg.NewMockClient()
 
-	return snapshotService, repo, mockLibvirtClient
+	// 创建 SnapshotService
+	snapshotService := NewSnapshotServiceWithQemuImg(storageService, mockLibvirtClient, mockQemuImgClient, repo)
+
+	return snapshotService, repo, mockLibvirtClient, mockQemuImgClient
 }
 
 func TestSnapshotService_DeleteEBSSnapshot(t *testing.T) {
 	t.Parallel()
 
-	snapshotService, repo, mockClient := setupTestSnapshotService(t)
+	snapshotService, repo, mockClient, mockQemuImgClient := setupTestSnapshotService(t)
 	_ = mockClient // 用于后续设置 mock 行为
 	ctx := context.Background()
 
 	testcases := []struct {
 		name          string
 		setupSnapshot func() string
-		mockSetup     func(*libvirt.MockClient)
+		mockSetup     func(*libvirt.MockClient, *qemuimg.MockClient)
 		snapshotID    string
 		expectError   bool
 		errorContains string
@@ -82,7 +103,7 @@ func TestSnapshotService_DeleteEBSSnapshot(t *testing.T) {
 				require.NoError(t, err)
 				return snapshot.ID
 			},
-			mockSetup: func(m *libvirt.MockClient) {
+			mockSetup: func(m *libvirt.MockClient, q *qemuimg.MockClient) {
 				// Mock 获取卷（用于删除快照文件）
 				m.On("GetVolume", "default", "vol-test-123.qcow2").Return(&libvirt.VolumeInfo{
 					Name:        "vol-test-123.qcow2",
@@ -91,6 +112,8 @@ func TestSnapshotService_DeleteEBSSnapshot(t *testing.T) {
 					AllocationB: 10 * 1024 * 1024 * 1024,
 					Format:      "qcow2",
 				}, nil)
+				// Mock qemu-img DeleteSnapshot
+				q.On("DeleteSnapshot", mock.Anything, "/var/lib/jvp/images/vol-test-123.qcow2", "snap-delete-123").Return(nil)
 			},
 			snapshotID:  "snap-delete-123",
 			expectError: false,
@@ -100,6 +123,7 @@ func TestSnapshotService_DeleteEBSSnapshot(t *testing.T) {
 			setupSnapshot: func() string {
 				return ""
 			},
+			mockSetup:     nil,
 			snapshotID:    "snap-not-found",
 			expectError:   true,
 			errorContains: "not found",
@@ -123,7 +147,7 @@ func TestSnapshotService_DeleteEBSSnapshot(t *testing.T) {
 			}
 
 			if tc.mockSetup != nil {
-				tc.mockSetup(mockClient)
+				tc.mockSetup(mockClient, mockQemuImgClient)
 			}
 
 			err := snapshotService.DeleteEBSSnapshot(ctx, tc.snapshotID)
@@ -151,14 +175,13 @@ func TestSnapshotService_DeleteEBSSnapshot(t *testing.T) {
 func TestSnapshotService_CopyEBSSnapshot(t *testing.T) {
 	t.Parallel()
 
-	snapshotService, repo, mockClient := setupTestSnapshotService(t)
-	_ = mockClient // 用于后续设置 mock 行为
+	snapshotService, repo, mockClient, mockQemuImgClient := setupTestSnapshotService(t)
 	ctx := context.Background()
 
 	testcases := []struct {
 		name          string
 		setupSnapshot func() string
-		mockSetup     func(*libvirt.MockClient)
+		mockSetup     func(*libvirt.MockClient, *qemuimg.MockClient)
 		req           *entity.CopySnapshotRequest
 		expectError   bool
 		errorContains string
@@ -168,7 +191,7 @@ func TestSnapshotService_CopyEBSSnapshot(t *testing.T) {
 			setupSnapshot: func() string {
 				return ""
 			},
-			mockSetup: func(m *libvirt.MockClient) {
+			mockSetup: func(m *libvirt.MockClient, q *qemuimg.MockClient) {
 				// 这个测试需要 qemu-img 的 mock，暂时跳过
 			},
 			req: &entity.CopySnapshotRequest{
@@ -196,7 +219,7 @@ func TestSnapshotService_CopyEBSSnapshot(t *testing.T) {
 				require.NoError(t, err)
 				return snapshot.ID
 			},
-			mockSetup: func(m *libvirt.MockClient) {
+			mockSetup: func(m *libvirt.MockClient, q *qemuimg.MockClient) {
 				// Mock 获取源卷
 				m.On("GetVolume", "default", "vol-source-123.qcow2").Return(&libvirt.VolumeInfo{
 					Name:        "vol-source-123.qcow2",
@@ -213,8 +236,12 @@ func TestSnapshotService_CopyEBSSnapshot(t *testing.T) {
 					AllocationB: 0,
 					Format:      "qcow2",
 				}, nil)
+				// Mock qemu-img Convert
+				q.On("Convert", mock.Anything, "qcow2", "qcow2", "/var/lib/jvp/images/vol-source-123.qcow2", "/var/lib/jvp/images/vol-temp.qcow2").Return(nil)
+				// Mock qemu-img Snapshot
+				q.On("Snapshot", mock.Anything, "/var/lib/jvp/images/vol-temp.qcow2", mock.AnythingOfType("string")).Return(nil)
 				// Mock DeleteVolume（在错误清理时可能调用）
-				m.On("DeleteVolume", "default", mock.AnythingOfType("string")).Return(nil)
+				m.On("DeleteVolume", "default", mock.AnythingOfType("string")).Return(nil).Maybe()
 			},
 			req: &entity.CopySnapshotRequest{
 				SourceSnapshotID: "snap-copy-source",
@@ -271,13 +298,15 @@ func TestSnapshotService_CopyEBSSnapshot(t *testing.T) {
 				mockClient.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil),
 			}
 			mockClient.Calls = nil
+			mockQemuImgClient.ExpectedCalls = nil
+			mockQemuImgClient.Calls = nil
 
 			if tc.setupSnapshot != nil {
 				tc.setupSnapshot()
 			}
 
 			if tc.mockSetup != nil {
-				tc.mockSetup(mockClient)
+				tc.mockSetup(mockClient, mockQemuImgClient)
 			}
 
 			snapshot, err := snapshotService.CopyEBSSnapshot(ctx, tc.req)
@@ -306,7 +335,7 @@ func TestSnapshotService_CopyEBSSnapshot(t *testing.T) {
 func TestSnapshotService_DescribeEBSSnapshots_Pagination(t *testing.T) {
 	t.Parallel()
 
-	snapshotService, repo, mockClient := setupTestSnapshotService(t)
+	snapshotService, repo, mockClient, _ := setupTestSnapshotService(t)
 	_ = mockClient // 用于后续设置 mock 行为
 	ctx := context.Background()
 
@@ -408,4 +437,114 @@ func TestSnapshotService_DescribeEBSSnapshots_Pagination(t *testing.T) {
 			assert.LessOrEqual(t, len(snapshots), tc.expectCount+1) // 允许一些误差
 		})
 	}
+}
+
+func TestSnapshotService_CreateEBSSnapshot(t *testing.T) {
+	t.Parallel()
+
+	snapshotService, _, mockClient, mockQemuImgClient := setupTestSnapshotService(t)
+	ctx := context.Background()
+
+	testcases := []struct {
+		name          string
+		mockSetup     func(*libvirt.MockClient, *qemuimg.MockClient)
+		req           *entity.CreateSnapshotRequest
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name: "volume not found",
+			mockSetup: func(m *libvirt.MockClient, q *qemuimg.MockClient) {
+				m.On("GetVolume", "default", "vol-not-found.qcow2").Return(nil, fmt.Errorf("volume not found"))
+				m.On("GetVolume", "images", "vol-not-found.qcow2").Return(nil, fmt.Errorf("volume not found"))
+			},
+			req: &entity.CreateSnapshotRequest{
+				VolumeID: "vol-not-found",
+			},
+			expectError:   true,
+			errorContains: "not found",
+		},
+		{
+			name: "successful create - requires qemu-img, will fail",
+			mockSetup: func(m *libvirt.MockClient, q *qemuimg.MockClient) {
+				m.On("GetVolume", "default", "vol-snap-123.qcow2").Return(&libvirt.VolumeInfo{
+					Name:        "vol-snap-123.qcow2",
+					Path:        "/var/lib/jvp/images/vol-snap-123.qcow2",
+					CapacityB:   20 * 1024 * 1024 * 1024,
+					AllocationB: 10 * 1024 * 1024 * 1024,
+					Format:      "qcow2",
+				}, nil)
+				// Mock qemu-img Snapshot 调用失败（因为需要真实的 qemu-img）
+				// Snapshot 方法签名：Snapshot(ctx context.Context, imagePath, snapshotName string) error
+				q.On("Snapshot", mock.Anything, "/var/lib/jvp/images/vol-snap-123.qcow2", mock.AnythingOfType("string")).Return(fmt.Errorf("create snapshot failed"))
+			},
+			req: &entity.CreateSnapshotRequest{
+				VolumeID:    "vol-snap-123",
+				Description: "Test snapshot",
+			},
+			expectError:   true,
+			errorContains: "create snapshot",
+		},
+	}
+
+	for _, tc := range testcases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			mockClient.ExpectedCalls = []*mock.Call{
+				mockClient.On("EnsureStoragePool", "default", "dir", mock.AnythingOfType("string")).Return(nil),
+				mockClient.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil),
+			}
+			mockClient.Calls = nil
+
+			// 重置 qemu-img mock
+			mockQemuImgClient.ExpectedCalls = nil
+			mockQemuImgClient.Calls = nil
+
+			if tc.mockSetup != nil {
+				tc.mockSetup(mockClient, mockQemuImgClient)
+			}
+
+			snapshot, err := snapshotService.CreateEBSSnapshot(ctx, tc.req)
+
+			if tc.expectError {
+				assert.Error(t, err)
+				if tc.errorContains != "" {
+					assert.Contains(t, err.Error(), tc.errorContains)
+				}
+				assert.Nil(t, snapshot)
+			} else {
+				assert.NoError(t, err)
+				if snapshot != nil {
+					assert.NotEmpty(t, snapshot.SnapshotID)
+					assert.Equal(t, tc.req.VolumeID, snapshot.VolumeID)
+				}
+			}
+		})
+	}
+}
+
+func TestNewSnapshotService(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	repo, err := repository.New(dbPath)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		_ = repo.Close()
+		_ = os.RemoveAll(tmpDir)
+	})
+
+	mockLibvirtClient := libvirt.NewMockClient()
+	mockLibvirtClient.On("EnsureStoragePool", "default", "dir", mock.AnythingOfType("string")).Return(nil)
+	mockLibvirtClient.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil)
+
+	storageService, err := NewStorageService(mockLibvirtClient)
+	require.NoError(t, err)
+
+	snapshotService := NewSnapshotService(storageService, mockLibvirtClient, repo)
+	assert.NotNil(t, snapshotService)
 }

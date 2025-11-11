@@ -54,7 +54,7 @@ var DefaultImages = []DefaultImage{
 type ImageService struct {
 	storageService *StorageService
 	libvirtClient  libvirt.LibvirtClient
-	qemuImgClient  *qemuimg.Client
+	qemuImgClient  qemuimg.QemuImgClient
 	idGen          *idgen.Generator
 	httpClient     *http.Client
 	imageRepo      repository.ImageRepository

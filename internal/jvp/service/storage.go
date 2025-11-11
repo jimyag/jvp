@@ -18,7 +18,7 @@ import (
 // StorageService 存储服务，管理 libvirt storage pool 和 volume
 type StorageService struct {
 	libvirtClient libvirt.LibvirtClient
-	qemuImgClient *qemuimg.Client
+	qemuImgClient qemuimg.QemuImgClient
 	idGen         *idgen.Generator
 
 	// 默认 pool 配置
@@ -40,7 +40,7 @@ func NewStorageService(
 
 	service := &StorageService{
 		libvirtClient:   libvirtClient,
-		qemuImgClient:   qemuimg.New(""),
+		qemuImgClient:   qemuimg.New(""), // 默认使用真实客户端
 		idGen:           idgen.New(),
 		defaultPoolName: defaultPoolName,
 		defaultPoolPath: defaultPoolPath,

@@ -20,7 +20,7 @@ type VolumeService struct {
 	storageService  *StorageService
 	instanceService *InstanceService
 	libvirtClient   libvirt.LibvirtClient
-	qemuImgClient   *qemuimg.Client
+	qemuImgClient   qemuimg.QemuImgClient
 	idGen           *idgen.Generator
 	volumeRepo      repository.VolumeRepository
 	snapshotRepo    repository.SnapshotRepository

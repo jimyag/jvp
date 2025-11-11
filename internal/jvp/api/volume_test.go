@@ -1,15 +1,11 @@
 package api
 
 import (
-	"bytes"
-	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jimyag/jvp/internal/jvp/entity"
-	"github.com/jimyag/jvp/internal/jvp/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )

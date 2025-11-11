@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+
 	"github.com/gin-gonic/gin"
 	"github.com/jimyag/jvp/internal/jvp/entity"
 	"github.com/jimyag/jvp/internal/jvp/service"
@@ -8,8 +10,16 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// SnapshotServiceInterface 定义快照服务的接口
+type SnapshotServiceInterface interface {
+	CreateEBSSnapshot(ctx context.Context, req *entity.CreateSnapshotRequest) (*entity.EBSSnapshot, error)
+	DeleteEBSSnapshot(ctx context.Context, snapshotID string) error
+	DescribeEBSSnapshots(ctx context.Context, req *entity.DescribeSnapshotsRequest) ([]entity.EBSSnapshot, error)
+	CopyEBSSnapshot(ctx context.Context, req *entity.CopySnapshotRequest) (*entity.EBSSnapshot, error)
+}
+
 type Snapshot struct {
-	snapshotService *service.SnapshotService
+	snapshotService SnapshotServiceInterface
 }
 
 func NewSnapshot(snapshotService *service.SnapshotService) *Snapshot {

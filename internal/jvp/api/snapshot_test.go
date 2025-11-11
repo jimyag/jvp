@@ -2,14 +2,13 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"github.com/jimyag/jvp/internal/jvp/entity"
-	"github.com/jimyag/jvp/internal/jvp/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -19,7 +18,7 @@ type MockSnapshotService struct {
 	mock.Mock
 }
 
-func (m *MockSnapshotService) CreateEBSSnapshot(ctx *gin.Context, req *entity.CreateSnapshotRequest) (*entity.EBSSnapshot, error) {
+func (m *MockSnapshotService) CreateEBSSnapshot(ctx context.Context, req *entity.CreateSnapshotRequest) (*entity.EBSSnapshot, error) {
 	args := m.Called(ctx, req)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -27,12 +26,12 @@ func (m *MockSnapshotService) CreateEBSSnapshot(ctx *gin.Context, req *entity.Cr
 	return args.Get(0).(*entity.EBSSnapshot), args.Error(1)
 }
 
-func (m *MockSnapshotService) DeleteEBSSnapshot(ctx *gin.Context, snapshotID string) error {
+func (m *MockSnapshotService) DeleteEBSSnapshot(ctx context.Context, snapshotID string) error {
 	args := m.Called(ctx, snapshotID)
 	return args.Error(0)
 }
 
-func (m *MockSnapshotService) DescribeEBSSnapshots(ctx *gin.Context, req *entity.DescribeSnapshotsRequest) ([]entity.EBSSnapshot, error) {
+func (m *MockSnapshotService) DescribeEBSSnapshots(ctx context.Context, req *entity.DescribeSnapshotsRequest) ([]entity.EBSSnapshot, error) {
 	args := m.Called(ctx, req)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -40,7 +39,7 @@ func (m *MockSnapshotService) DescribeEBSSnapshots(ctx *gin.Context, req *entity
 	return args.Get(0).([]entity.EBSSnapshot), args.Error(1)
 }
 
-func (m *MockSnapshotService) CopyEBSSnapshot(ctx *gin.Context, req *entity.CopySnapshotRequest) (*entity.EBSSnapshot, error) {
+func (m *MockSnapshotService) CopyEBSSnapshot(ctx context.Context, req *entity.CopySnapshotRequest) (*entity.EBSSnapshot, error) {
 	args := m.Called(ctx, req)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -80,7 +79,7 @@ func TestSnapshot_DeleteSnapshot(t *testing.T) {
 			}
 
 			snapshotAPI := &Snapshot{
-				snapshotService: (*service.SnapshotService)(nil),
+				snapshotService: mockService,
 			}
 
 			router := setupTestRouter()
@@ -138,7 +137,7 @@ func TestSnapshot_CopySnapshot(t *testing.T) {
 			}
 
 			snapshotAPI := &Snapshot{
-				snapshotService: (*service.SnapshotService)(nil),
+				snapshotService: mockService,
 			}
 
 			router := setupTestRouter()
@@ -220,7 +219,7 @@ func TestSnapshot_DescribeSnapshots(t *testing.T) {
 			}
 
 			snapshotAPI := &Snapshot{
-				snapshotService: (*service.SnapshotService)(nil),
+				snapshotService: mockService,
 			}
 
 			router := setupTestRouter()

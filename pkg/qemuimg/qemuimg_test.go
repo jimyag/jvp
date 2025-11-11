@@ -289,5 +289,6 @@ func TestClient_ContextTimeout(t *testing.T) {
 	// 这个操作应该会因为超时而失败
 	err := client.CreateEmpty(ctx, "qcow2", imagePath, 1)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "timeout")
+	// Go 的 context 超时错误是 "context deadline exceeded"
+	assert.Contains(t, err.Error(), "deadline exceeded")
 }
