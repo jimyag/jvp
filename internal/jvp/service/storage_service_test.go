@@ -36,7 +36,6 @@ func setupTestStorageService(t *testing.T) (*StorageService, *libvirt.MockClient
 func TestStorageService_EnsurePool(t *testing.T) {
 	t.Parallel()
 
-	storageService, mockClient, _ := setupTestStorageService(t)
 	ctx := context.Background()
 
 	testcases := []struct {
@@ -76,18 +75,14 @@ func TestStorageService_EnsurePool(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			// 重置 mock
-			mockClient.ExpectedCalls = []*mock.Call{
-				mockClient.On("EnsureStoragePool", "default", "dir", mock.AnythingOfType("string")).Return(nil),
-				mockClient.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil),
-			}
-			mockClient.Calls = nil
+			// 使用统一的 setup 方法，每个测试用例都有独立的数据库和 mock
+			services := setupTestServices(t)
 
 			if tc.mockSetup != nil {
-				tc.mockSetup(mockClient)
+				tc.mockSetup(services.MockLibvirt)
 			}
 
-			err := storageService.EnsurePool(ctx, tc.poolName)
+			err := services.StorageService.EnsurePool(ctx, tc.poolName)
 
 			if tc.expectError {
 				assert.Error(t, err)
@@ -170,7 +165,6 @@ func TestStorageService_GetPool(t *testing.T) {
 func TestStorageService_CreateVolume(t *testing.T) {
 	t.Parallel()
 
-	storageService, mockClient, _ := setupTestStorageService(t)
 	ctx := context.Background()
 
 	testcases := []struct {
@@ -188,7 +182,6 @@ func TestStorageService_CreateVolume(t *testing.T) {
 				Format:   "qcow2",
 			},
 			mockSetup: func(m *libvirt.MockClient) {
-				m.On("EnsureStoragePool", "default", "dir", mock.AnythingOfType("string")).Return(nil)
 				m.On("CreateVolume", "default", mock.AnythingOfType("string"), uint64(20), "qcow2").Return(&libvirt.VolumeInfo{
 					Name:        "vol-123.qcow2",
 					Path:        "/var/lib/jvp/images/vol-123.qcow2",
@@ -208,7 +201,6 @@ func TestStorageService_CreateVolume(t *testing.T) {
 				Format:   "qcow2",
 			},
 			mockSetup: func(m *libvirt.MockClient) {
-				m.On("EnsureStoragePool", "default", "dir", mock.AnythingOfType("string")).Return(nil)
 				m.On("CreateVolume", "default", "vol-custom-123.qcow2", uint64(30), "qcow2").Return(&libvirt.VolumeInfo{
 					Name:        "vol-custom-123.qcow2",
 					Path:        "/var/lib/jvp/images/vol-custom-123.qcow2",
@@ -227,7 +219,6 @@ func TestStorageService_CreateVolume(t *testing.T) {
 				Format:   "qcow2",
 			},
 			mockSetup: func(m *libvirt.MockClient) {
-				m.On("EnsureStoragePool", "default", "dir", mock.AnythingOfType("string")).Return(nil)
 				m.On("CreateVolume", "default", mock.AnythingOfType("string"), uint64(20), "qcow2").Return(nil, fmt.Errorf("create volume failed"))
 			},
 			expectError:   true,
@@ -240,18 +231,14 @@ func TestStorageService_CreateVolume(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			// 重置 mock
-			mockClient.ExpectedCalls = []*mock.Call{
-				mockClient.On("EnsureStoragePool", "default", "dir", mock.AnythingOfType("string")).Return(nil),
-				mockClient.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil),
-			}
-			mockClient.Calls = nil
+			// 使用统一的 setup 方法，每个测试用例都有独立的数据库和 mock
+			services := setupTestServices(t)
 
 			if tc.mockSetup != nil {
-				tc.mockSetup(mockClient)
+				tc.mockSetup(services.MockLibvirt)
 			}
 
-			volume, err := storageService.CreateVolume(ctx, tc.req)
+			volume, err := services.StorageService.CreateVolume(ctx, tc.req)
 
 			if tc.expectError {
 				assert.Error(t, err)

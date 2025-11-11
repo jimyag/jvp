@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+
 	"github.com/gin-gonic/gin"
 	"github.com/jimyag/jvp/internal/jvp/entity"
 	"github.com/jimyag/jvp/internal/jvp/service"
@@ -8,8 +10,16 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// ImageServiceInterface 定义镜像服务的接口
+type ImageServiceInterface interface {
+	CreateImageFromInstance(ctx context.Context, req *entity.CreateImageFromInstanceRequest) (*entity.Image, error)
+	DescribeImages(ctx context.Context, req *entity.DescribeImagesRequest) ([]entity.Image, error)
+	RegisterImage(ctx context.Context, req *entity.RegisterImageRequest) (*entity.Image, error)
+	DeleteImage(ctx context.Context, imageID string) error
+}
+
 type Image struct {
-	imageService *service.ImageService
+	imageService ImageServiceInterface
 }
 
 func NewImage(imageService *service.ImageService) *Image {

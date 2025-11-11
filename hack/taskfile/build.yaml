@@ -82,3 +82,8 @@ tasks:
     run: once
     cmds:
       - time go mod tidy
+
+  test:
+    desc: 测试
+    cmds:
+      - go test -v -race -cover ./...

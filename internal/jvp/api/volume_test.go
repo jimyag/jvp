@@ -1,7 +1,11 @@
 package api
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -15,7 +19,7 @@ type MockVolumeService struct {
 	mock.Mock
 }
 
-func (m *MockVolumeService) CreateEBSVolume(ctx *gin.Context, req *entity.CreateVolumeRequest) (*entity.EBSVolume, error) {
+func (m *MockVolumeService) CreateEBSVolume(ctx context.Context, req *entity.CreateVolumeRequest) (*entity.EBSVolume, error) {
 	args := m.Called(ctx, req)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -23,12 +27,12 @@ func (m *MockVolumeService) CreateEBSVolume(ctx *gin.Context, req *entity.Create
 	return args.Get(0).(*entity.EBSVolume), args.Error(1)
 }
 
-func (m *MockVolumeService) DeleteEBSVolume(ctx *gin.Context, volumeID string) error {
+func (m *MockVolumeService) DeleteEBSVolume(ctx context.Context, volumeID string) error {
 	args := m.Called(ctx, volumeID)
 	return args.Error(0)
 }
 
-func (m *MockVolumeService) AttachEBSVolume(ctx *gin.Context, req *entity.AttachVolumeRequest) (*entity.VolumeAttachment, error) {
+func (m *MockVolumeService) AttachEBSVolume(ctx context.Context, req *entity.AttachVolumeRequest) (*entity.VolumeAttachment, error) {
 	args := m.Called(ctx, req)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -36,7 +40,7 @@ func (m *MockVolumeService) AttachEBSVolume(ctx *gin.Context, req *entity.Attach
 	return args.Get(0).(*entity.VolumeAttachment), args.Error(1)
 }
 
-func (m *MockVolumeService) DetachEBSVolume(ctx *gin.Context, req *entity.DetachVolumeRequest) (*entity.VolumeAttachment, error) {
+func (m *MockVolumeService) DetachEBSVolume(ctx context.Context, req *entity.DetachVolumeRequest) (*entity.VolumeAttachment, error) {
 	args := m.Called(ctx, req)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -44,7 +48,7 @@ func (m *MockVolumeService) DetachEBSVolume(ctx *gin.Context, req *entity.Detach
 	return args.Get(0).(*entity.VolumeAttachment), args.Error(1)
 }
 
-func (m *MockVolumeService) DescribeEBSVolumes(ctx *gin.Context, req *entity.DescribeVolumesRequest) ([]entity.EBSVolume, error) {
+func (m *MockVolumeService) DescribeEBSVolumes(ctx context.Context, req *entity.DescribeVolumesRequest) ([]entity.EBSVolume, error) {
 	args := m.Called(ctx, req)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -52,15 +56,7 @@ func (m *MockVolumeService) DescribeEBSVolumes(ctx *gin.Context, req *entity.Des
 	return args.Get(0).([]entity.EBSVolume), args.Error(1)
 }
 
-func (m *MockVolumeService) DescribeEBSVolume(ctx *gin.Context, volumeID string) (*entity.EBSVolume, error) {
-	args := m.Called(ctx, volumeID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*entity.EBSVolume), args.Error(1)
-}
-
-func (m *MockVolumeService) ModifyEBSVolume(ctx *gin.Context, req *entity.ModifyVolumeRequest) (*entity.VolumeModification, error) {
+func (m *MockVolumeService) ModifyEBSVolume(ctx context.Context, req *entity.ModifyVolumeRequest) (*entity.VolumeModification, error) {
 	args := m.Called(ctx, req)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -121,6 +117,19 @@ func TestVolume_CreateVolume(t *testing.T) {
 			expectStatus: http.StatusOK,
 			expectError:  false,
 		},
+		{
+			name: "create with error",
+			req: &entity.CreateVolumeRequest{
+				SizeGB:     20,
+				VolumeType: "gp2",
+			},
+			mockSetup: func(m *MockVolumeService) {
+				m.On("CreateEBSVolume", mock.Anything, mock.AnythingOfType("*entity.CreateVolumeRequest")).
+					Return(nil, assert.AnError)
+			},
+			expectStatus: http.StatusInternalServerError,
+			expectError:  true,
+		},
 	}
 
 	for _, tc := range testcases {
@@ -133,12 +142,23 @@ func TestVolume_CreateVolume(t *testing.T) {
 				tc.mockSetup(mockService)
 			}
 
-			// API 测试需要真实的 service 实例，这里我们跳过实际执行
-			// 因为 API 层主要是路由和参数绑定，核心逻辑在 service 层已测试
-			_ = mockService
-			_ = tc.req
-			// 验证 mock 设置成功
-			assert.NotNil(t, mockService)
+			volumeAPI := &Volume{
+				volumeService: mockService,
+			}
+
+			router := setupTestRouter()
+			apiGroup := router.Group("/api")
+			volumeAPI.RegisterRoutes(apiGroup)
+
+			reqBody, _ := json.Marshal(tc.req)
+			req := httptest.NewRequest(http.MethodPost, "/api/volumes/create", bytes.NewBuffer(reqBody))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tc.expectStatus, w.Code)
+			mockService.AssertExpectations(t)
 		})
 	}
 }
@@ -193,6 +213,15 @@ func TestVolume_DescribeVolumes(t *testing.T) {
 			},
 			expectStatus: http.StatusOK,
 		},
+		{
+			name: "describe with error",
+			req:  &entity.DescribeVolumesRequest{},
+			mockSetup: func(m *MockVolumeService) {
+				m.On("DescribeEBSVolumes", mock.Anything, mock.AnythingOfType("*entity.DescribeVolumesRequest")).
+					Return(nil, assert.AnError)
+			},
+			expectStatus: http.StatusInternalServerError,
+		},
 	}
 
 	for _, tc := range testcases {
@@ -205,13 +234,315 @@ func TestVolume_DescribeVolumes(t *testing.T) {
 				tc.mockSetup(mockService)
 			}
 
-			// API 测试需要真实的 service 实例，这里我们跳过实际执行
-			// 因为 API 层主要是路由和参数绑定，核心逻辑在 service 层已测试
-			// 如果需要完整的 API 测试，需要创建真实的 service 实例或使用接口
-			_ = mockService
-			_ = tc.req
-			// 验证 mock 设置成功
-			assert.NotNil(t, mockService)
+			volumeAPI := &Volume{
+				volumeService: mockService,
+			}
+
+			router := setupTestRouter()
+			apiGroup := router.Group("/api")
+			volumeAPI.RegisterRoutes(apiGroup)
+
+			reqBody, _ := json.Marshal(tc.req)
+			req := httptest.NewRequest(http.MethodPost, "/api/volumes/describe", bytes.NewBuffer(reqBody))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tc.expectStatus, w.Code)
+			mockService.AssertExpectations(t)
 		})
 	}
+}
+
+func TestVolume_DeleteVolume(t *testing.T) {
+	t.Parallel()
+
+	testcases := []struct {
+		name         string
+		req          *entity.DeleteVolumeRequest
+		mockSetup    func(*MockVolumeService)
+		expectStatus int
+	}{
+		{
+			name: "successful delete",
+			req: &entity.DeleteVolumeRequest{
+				VolumeID: "vol-123",
+			},
+			mockSetup: func(m *MockVolumeService) {
+				m.On("DeleteEBSVolume", mock.Anything, "vol-123").Return(nil)
+			},
+			expectStatus: http.StatusOK,
+		},
+		{
+			name: "delete with error",
+			req: &entity.DeleteVolumeRequest{
+				VolumeID: "vol-123",
+			},
+			mockSetup: func(m *MockVolumeService) {
+				m.On("DeleteEBSVolume", mock.Anything, "vol-123").Return(assert.AnError)
+			},
+			expectStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tc := range testcases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			mockService := new(MockVolumeService)
+			if tc.mockSetup != nil {
+				tc.mockSetup(mockService)
+			}
+
+			volumeAPI := &Volume{
+				volumeService: mockService,
+			}
+
+			router := setupTestRouter()
+			apiGroup := router.Group("/api")
+			volumeAPI.RegisterRoutes(apiGroup)
+
+			reqBody, _ := json.Marshal(tc.req)
+			req := httptest.NewRequest(http.MethodPost, "/api/volumes/delete", bytes.NewBuffer(reqBody))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tc.expectStatus, w.Code)
+			mockService.AssertExpectations(t)
+		})
+	}
+}
+
+func TestVolume_AttachVolume(t *testing.T) {
+	t.Parallel()
+
+	testcases := []struct {
+		name         string
+		req          *entity.AttachVolumeRequest
+		mockSetup    func(*MockVolumeService)
+		expectStatus int
+	}{
+		{
+			name: "successful attach",
+			req: &entity.AttachVolumeRequest{
+				VolumeID:   "vol-123",
+				InstanceID: "i-123",
+			},
+			mockSetup: func(m *MockVolumeService) {
+				m.On("AttachEBSVolume", mock.Anything, mock.AnythingOfType("*entity.AttachVolumeRequest")).
+					Return(&entity.VolumeAttachment{
+						VolumeID:   "vol-123",
+						InstanceID: "i-123",
+						State:      "attached",
+					}, nil)
+			},
+			expectStatus: http.StatusOK,
+		},
+		{
+			name: "attach with error",
+			req: &entity.AttachVolumeRequest{
+				VolumeID:   "vol-123",
+				InstanceID: "i-123",
+			},
+			mockSetup: func(m *MockVolumeService) {
+				m.On("AttachEBSVolume", mock.Anything, mock.AnythingOfType("*entity.AttachVolumeRequest")).
+					Return(nil, assert.AnError)
+			},
+			expectStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tc := range testcases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			mockService := new(MockVolumeService)
+			if tc.mockSetup != nil {
+				tc.mockSetup(mockService)
+			}
+
+			volumeAPI := &Volume{
+				volumeService: mockService,
+			}
+
+			router := setupTestRouter()
+			apiGroup := router.Group("/api")
+			volumeAPI.RegisterRoutes(apiGroup)
+
+			reqBody, _ := json.Marshal(tc.req)
+			req := httptest.NewRequest(http.MethodPost, "/api/volumes/attach", bytes.NewBuffer(reqBody))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tc.expectStatus, w.Code)
+			mockService.AssertExpectations(t)
+		})
+	}
+}
+
+func TestVolume_DetachVolume(t *testing.T) {
+	t.Parallel()
+
+	testcases := []struct {
+		name         string
+		req          *entity.DetachVolumeRequest
+		mockSetup    func(*MockVolumeService)
+		expectStatus int
+	}{
+		{
+			name: "successful detach",
+			req: &entity.DetachVolumeRequest{
+				VolumeID:   "vol-123",
+				InstanceID: "i-123",
+			},
+			mockSetup: func(m *MockVolumeService) {
+				m.On("DetachEBSVolume", mock.Anything, mock.AnythingOfType("*entity.DetachVolumeRequest")).
+					Return(&entity.VolumeAttachment{
+						VolumeID:   "vol-123",
+						InstanceID: "i-123",
+						State:      "detached",
+					}, nil)
+			},
+			expectStatus: http.StatusOK,
+		},
+		{
+			name: "detach with error",
+			req: &entity.DetachVolumeRequest{
+				VolumeID:   "vol-123",
+				InstanceID: "i-123",
+			},
+			mockSetup: func(m *MockVolumeService) {
+				m.On("DetachEBSVolume", mock.Anything, mock.AnythingOfType("*entity.DetachVolumeRequest")).
+					Return(nil, assert.AnError)
+			},
+			expectStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tc := range testcases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			mockService := new(MockVolumeService)
+			if tc.mockSetup != nil {
+				tc.mockSetup(mockService)
+			}
+
+			volumeAPI := &Volume{
+				volumeService: mockService,
+			}
+
+			router := setupTestRouter()
+			apiGroup := router.Group("/api")
+			volumeAPI.RegisterRoutes(apiGroup)
+
+			reqBody, _ := json.Marshal(tc.req)
+			req := httptest.NewRequest(http.MethodPost, "/api/volumes/detach", bytes.NewBuffer(reqBody))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tc.expectStatus, w.Code)
+			mockService.AssertExpectations(t)
+		})
+	}
+}
+
+func TestVolume_ModifyVolume(t *testing.T) {
+	t.Parallel()
+
+	testcases := []struct {
+		name         string
+		req          *entity.ModifyVolumeRequest
+		mockSetup    func(*MockVolumeService)
+		expectStatus int
+	}{
+		{
+			name: "successful modify",
+			req: &entity.ModifyVolumeRequest{
+				VolumeID: "vol-123",
+				SizeGB:   30,
+			},
+			mockSetup: func(m *MockVolumeService) {
+				m.On("ModifyEBSVolume", mock.Anything, mock.AnythingOfType("*entity.ModifyVolumeRequest")).
+					Return(&entity.VolumeModification{
+						VolumeID:          "vol-123",
+						ModificationState: "modifying",
+						TargetSizeGB:      30,
+					}, nil)
+			},
+			expectStatus: http.StatusOK,
+		},
+		{
+			name: "modify with error",
+			req: &entity.ModifyVolumeRequest{
+				VolumeID: "vol-123",
+				SizeGB:   30,
+			},
+			mockSetup: func(m *MockVolumeService) {
+				m.On("ModifyEBSVolume", mock.Anything, mock.AnythingOfType("*entity.ModifyVolumeRequest")).
+					Return(nil, assert.AnError)
+			},
+			expectStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tc := range testcases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			mockService := new(MockVolumeService)
+			if tc.mockSetup != nil {
+				tc.mockSetup(mockService)
+			}
+
+			volumeAPI := &Volume{
+				volumeService: mockService,
+			}
+
+			router := setupTestRouter()
+			apiGroup := router.Group("/api")
+			volumeAPI.RegisterRoutes(apiGroup)
+
+			reqBody, _ := json.Marshal(tc.req)
+			req := httptest.NewRequest(http.MethodPost, "/api/volumes/modify", bytes.NewBuffer(reqBody))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tc.expectStatus, w.Code)
+			mockService.AssertExpectations(t)
+		})
+	}
+}
+
+func TestNewVolume(t *testing.T) {
+	t.Parallel()
+
+	t.Run("create volume API with service", func(t *testing.T) {
+		t.Parallel()
+
+		mockService := new(MockVolumeService)
+		volumeAPI := NewVolume(nil)
+
+		assert.NotNil(t, volumeAPI)
+		assert.Nil(t, volumeAPI.volumeService)
+
+		volumeAPIWithMock := &Volume{
+			volumeService: mockService,
+		}
+		assert.NotNil(t, volumeAPIWithMock)
+		assert.Equal(t, mockService, volumeAPIWithMock.volumeService)
+	})
 }

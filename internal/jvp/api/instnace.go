@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+
 	"github.com/gin-gonic/gin"
 	"github.com/jimyag/jvp/internal/jvp/entity"
 	"github.com/jimyag/jvp/internal/jvp/service"
@@ -8,8 +10,19 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// InstanceServiceInterface 定义实例服务的接口
+type InstanceServiceInterface interface {
+	RunInstance(ctx context.Context, req *entity.RunInstanceRequest) (*entity.Instance, error)
+	DescribeInstances(ctx context.Context, req *entity.DescribeInstancesRequest) ([]entity.Instance, error)
+	TerminateInstances(ctx context.Context, req *entity.TerminateInstancesRequest) ([]entity.InstanceStateChange, error)
+	StopInstances(ctx context.Context, req *entity.StopInstancesRequest) ([]entity.InstanceStateChange, error)
+	StartInstances(ctx context.Context, req *entity.StartInstancesRequest) ([]entity.InstanceStateChange, error)
+	RebootInstances(ctx context.Context, req *entity.RebootInstancesRequest) ([]entity.InstanceStateChange, error)
+	ModifyInstanceAttribute(ctx context.Context, req *entity.ModifyInstanceAttributeRequest) (*entity.Instance, error)
+}
+
 type Instance struct {
-	instanceService *service.InstanceService
+	instanceService InstanceServiceInterface
 }
 
 func NewInstance(instanceService *service.InstanceService) *Instance {

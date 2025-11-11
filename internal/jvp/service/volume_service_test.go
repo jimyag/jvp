@@ -79,12 +79,11 @@ func setupTestVolumeService(t *testing.T) (*VolumeService, *repository.Repositor
 func TestVolumeService_CreateEBSVolume_FromSnapshot(t *testing.T) {
 	t.Parallel()
 
-	volumeService, repo, mockClient, mockQemuImgClient := setupTestVolumeService(t)
 	ctx := context.Background()
 
 	testcases := []struct {
 		name          string
-		setupSnapshot func() *model.Snapshot
+		setupSnapshot func(*repository.Repository) *model.Snapshot
 		mockSetup     func(*libvirt.MockClient, *qemuimg.MockClient)
 		req           *entity.CreateVolumeRequest
 		expectError   bool
@@ -92,7 +91,7 @@ func TestVolumeService_CreateEBSVolume_FromSnapshot(t *testing.T) {
 	}{
 		{
 			name: "successful create from snapshot",
-			setupSnapshot: func() *model.Snapshot {
+			setupSnapshot: func(repo *repository.Repository) *model.Snapshot {
 				snapshotRepo := repository.NewSnapshotRepository(repo.DB())
 				snapshot := &model.Snapshot{
 					ID:           "snap-test-123",
@@ -150,8 +149,11 @@ func TestVolumeService_CreateEBSVolume_FromSnapshot(t *testing.T) {
 		},
 		{
 			name: "snapshot not found",
-			setupSnapshot: func() *model.Snapshot {
+			setupSnapshot: func(*repository.Repository) *model.Snapshot {
 				return nil
+			},
+			mockSetup: func(m *libvirt.MockClient, q *qemuimg.MockClient) {
+				// 不需要设置 mock，因为会在 GetByID 时失败
 			},
 			req: &entity.CreateVolumeRequest{
 				SizeGB:     20,
@@ -163,7 +165,7 @@ func TestVolumeService_CreateEBSVolume_FromSnapshot(t *testing.T) {
 		},
 		{
 			name: "snapshot not completed",
-			setupSnapshot: func() *model.Snapshot {
+			setupSnapshot: func(repo *repository.Repository) *model.Snapshot {
 				snapshotRepo := repository.NewSnapshotRepository(repo.DB())
 				snapshot := &model.Snapshot{
 					ID:           "snap-pending-123",
@@ -180,6 +182,9 @@ func TestVolumeService_CreateEBSVolume_FromSnapshot(t *testing.T) {
 				require.NoError(t, err)
 				return snapshot
 			},
+			mockSetup: func(m *libvirt.MockClient, q *qemuimg.MockClient) {
+				// 不需要设置 mock，因为会在状态检查时失败
+			},
 			req: &entity.CreateVolumeRequest{
 				SizeGB:     20,
 				VolumeType: "gp2",
@@ -190,7 +195,7 @@ func TestVolumeService_CreateEBSVolume_FromSnapshot(t *testing.T) {
 		},
 		{
 			name: "create volume without snapshot",
-			setupSnapshot: func() *model.Snapshot {
+			setupSnapshot: func(*repository.Repository) *model.Snapshot {
 				return nil
 			},
 			mockSetup: func(m *libvirt.MockClient, q *qemuimg.MockClient) {
@@ -219,22 +224,18 @@ func TestVolumeService_CreateEBSVolume_FromSnapshot(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			// 重置 mock，但保留 EnsureStoragePool 的设置
-			mockClient.ExpectedCalls = []*mock.Call{
-				mockClient.On("EnsureStoragePool", "default", "dir", mock.AnythingOfType("string")).Return(nil),
-				mockClient.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil),
-			}
-			mockClient.Calls = nil
+			// 使用统一的 setup 方法，每个测试用例都有独立的数据库和 mock
+			services := setupTestServices(t)
 
 			if tc.setupSnapshot != nil {
-				tc.setupSnapshot()
+				tc.setupSnapshot(services.Repo)
 			}
 
 			if tc.mockSetup != nil {
-				tc.mockSetup(mockClient, mockQemuImgClient)
+				tc.mockSetup(services.MockLibvirt, services.MockQemuImg)
 			}
 
-			volume, err := volumeService.CreateEBSVolume(ctx, tc.req)
+			volume, err := services.VolumeService.CreateEBSVolume(ctx, tc.req)
 
 			if tc.expectError {
 				assert.Error(t, err)
@@ -378,12 +379,11 @@ func TestVolumeService_DescribeEBSVolumes_Pagination(t *testing.T) {
 func TestVolumeService_DeleteEBSVolume(t *testing.T) {
 	t.Parallel()
 
-	volumeService, repo, mockClient, mockQemuImgClient := setupTestVolumeService(t)
 	ctx := context.Background()
 
 	testcases := []struct {
 		name          string
-		setupVolume   func() string
+		setupVolume   func(*repository.Repository) string
 		mockSetup     func(*libvirt.MockClient, *qemuimg.MockClient)
 		volumeID      string
 		expectError   bool
@@ -391,7 +391,7 @@ func TestVolumeService_DeleteEBSVolume(t *testing.T) {
 	}{
 		{
 			name: "successful delete",
-			setupVolume: func() string {
+			setupVolume: func(repo *repository.Repository) string {
 				volumeRepo := repository.NewVolumeRepository(repo.DB())
 				volume := &model.Volume{
 					ID:         "vol-delete-123",
@@ -422,7 +422,7 @@ func TestVolumeService_DeleteEBSVolume(t *testing.T) {
 		},
 		{
 			name: "volume not found",
-			setupVolume: func() string {
+			setupVolume: func(*repository.Repository) string {
 				return ""
 			},
 			mockSetup: func(m *libvirt.MockClient, q *qemuimg.MockClient) {
@@ -440,24 +440,18 @@ func TestVolumeService_DeleteEBSVolume(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			mockClient.ExpectedCalls = []*mock.Call{
-				mockClient.On("EnsureStoragePool", "default", "dir", mock.AnythingOfType("string")).Return(nil),
-				mockClient.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil),
-			}
-			mockClient.Calls = nil
+			// 使用统一的 setup 方法，每个测试用例都有独立的数据库和 mock
+			services := setupTestServices(t)
 
 			if tc.setupVolume != nil {
-				tc.setupVolume()
+				tc.setupVolume(services.Repo)
 			}
 
 			if tc.mockSetup != nil {
-				tc.mockSetup(mockClient, mockQemuImgClient)
-			} else {
-				mockQemuImgClient.ExpectedCalls = nil
-				mockQemuImgClient.Calls = nil
+				tc.mockSetup(services.MockLibvirt, services.MockQemuImg)
 			}
 
-			err := volumeService.DeleteEBSVolume(ctx, tc.volumeID)
+			err := services.VolumeService.DeleteEBSVolume(ctx, tc.volumeID)
 
 			if tc.expectError {
 				assert.Error(t, err)
@@ -474,12 +468,11 @@ func TestVolumeService_DeleteEBSVolume(t *testing.T) {
 func TestVolumeService_AttachEBSVolume(t *testing.T) {
 	t.Parallel()
 
-	volumeService, repo, mockClient, mockQemuImgClient := setupTestVolumeService(t)
 	ctx := context.Background()
 
 	testcases := []struct {
 		name          string
-		setupVolume   func() string
+		setupVolume   func(*repository.Repository) string
 		mockSetup     func(*libvirt.MockClient, *qemuimg.MockClient)
 		req           *entity.AttachVolumeRequest
 		expectError   bool
@@ -487,7 +480,7 @@ func TestVolumeService_AttachEBSVolume(t *testing.T) {
 	}{
 		{
 			name: "successful attach",
-			setupVolume: func() string {
+			setupVolume: func(repo *repository.Repository) string {
 				volumeRepo := repository.NewVolumeRepository(repo.DB())
 				volume := &model.Volume{
 					ID:         "vol-attach-123",
@@ -522,7 +515,7 @@ func TestVolumeService_AttachEBSVolume(t *testing.T) {
 		},
 		{
 			name: "volume not available",
-			setupVolume: func() string {
+			setupVolume: func(repo *repository.Repository) string {
 				volumeRepo := repository.NewVolumeRepository(repo.DB())
 				volume := &model.Volume{
 					ID:         "vol-inuse-123",
@@ -561,24 +554,18 @@ func TestVolumeService_AttachEBSVolume(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			mockClient.ExpectedCalls = []*mock.Call{
-				mockClient.On("EnsureStoragePool", "default", "dir", mock.AnythingOfType("string")).Return(nil),
-				mockClient.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil),
-			}
-			mockClient.Calls = nil
+			// 使用统一的 setup 方法，每个测试用例都有独立的数据库和 mock
+			services := setupTestServices(t)
 
 			if tc.setupVolume != nil {
-				tc.setupVolume()
+				tc.setupVolume(services.Repo)
 			}
 
 			if tc.mockSetup != nil {
-				tc.mockSetup(mockClient, mockQemuImgClient)
-			} else {
-				mockQemuImgClient.ExpectedCalls = nil
-				mockQemuImgClient.Calls = nil
+				tc.mockSetup(services.MockLibvirt, services.MockQemuImg)
 			}
 
-			attachment, err := volumeService.AttachEBSVolume(ctx, tc.req)
+			attachment, err := services.VolumeService.AttachEBSVolume(ctx, tc.req)
 
 			if tc.expectError {
 				assert.Error(t, err)
@@ -600,12 +587,11 @@ func TestVolumeService_AttachEBSVolume(t *testing.T) {
 func TestVolumeService_DetachEBSVolume(t *testing.T) {
 	t.Parallel()
 
-	volumeService, repo, mockClient, mockQemuImgClient := setupTestVolumeService(t)
 	ctx := context.Background()
 
 	testcases := []struct {
 		name          string
-		setupVolume   func() string
+		setupVolume   func(*repository.Repository) string
 		mockSetup     func(*libvirt.MockClient, *qemuimg.MockClient)
 		req           *entity.DetachVolumeRequest
 		expectError   bool
@@ -613,7 +599,7 @@ func TestVolumeService_DetachEBSVolume(t *testing.T) {
 	}{
 		{
 			name: "successful detach",
-			setupVolume: func() string {
+			setupVolume: func(repo *repository.Repository) string {
 				volumeRepo := repository.NewVolumeRepository(repo.DB())
 				volume := &model.Volume{
 					ID:         "vol-detach-123",
@@ -660,24 +646,18 @@ func TestVolumeService_DetachEBSVolume(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			mockClient.ExpectedCalls = []*mock.Call{
-				mockClient.On("EnsureStoragePool", "default", "dir", mock.AnythingOfType("string")).Return(nil),
-				mockClient.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil),
-			}
-			mockClient.Calls = nil
+			// 使用统一的 setup 方法，每个测试用例都有独立的数据库和 mock
+			services := setupTestServices(t)
 
 			if tc.setupVolume != nil {
-				tc.setupVolume()
+				tc.setupVolume(services.Repo)
 			}
 
 			if tc.mockSetup != nil {
-				tc.mockSetup(mockClient, mockQemuImgClient)
-			} else {
-				mockQemuImgClient.ExpectedCalls = nil
-				mockQemuImgClient.Calls = nil
+				tc.mockSetup(services.MockLibvirt, services.MockQemuImg)
 			}
 
-			attachment, err := volumeService.DetachEBSVolume(ctx, tc.req)
+			attachment, err := services.VolumeService.DetachEBSVolume(ctx, tc.req)
 
 			if tc.expectError {
 				assert.Error(t, err)
@@ -698,12 +678,11 @@ func TestVolumeService_DetachEBSVolume(t *testing.T) {
 func TestVolumeService_DescribeEBSVolume(t *testing.T) {
 	t.Parallel()
 
-	volumeService, repo, mockClient, mockQemuImgClient := setupTestVolumeService(t)
 	ctx := context.Background()
 
 	testcases := []struct {
 		name          string
-		setupVolume   func() string
+		setupVolume   func(*repository.Repository) string
 		mockSetup     func(*libvirt.MockClient, *qemuimg.MockClient)
 		volumeID      string
 		expectError   bool
@@ -711,7 +690,7 @@ func TestVolumeService_DescribeEBSVolume(t *testing.T) {
 	}{
 		{
 			name: "successful describe from database",
-			setupVolume: func() string {
+			setupVolume: func(repo *repository.Repository) string {
 				volumeRepo := repository.NewVolumeRepository(repo.DB())
 				volume := &model.Volume{
 					ID:         "vol-desc-123",
@@ -741,7 +720,7 @@ func TestVolumeService_DescribeEBSVolume(t *testing.T) {
 		},
 		{
 			name: "describe from storage service",
-			setupVolume: func() string {
+			setupVolume: func(*repository.Repository) string {
 				return ""
 			},
 			mockSetup: func(m *libvirt.MockClient, q *qemuimg.MockClient) {
@@ -765,24 +744,18 @@ func TestVolumeService_DescribeEBSVolume(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			mockClient.ExpectedCalls = []*mock.Call{
-				mockClient.On("EnsureStoragePool", "default", "dir", mock.AnythingOfType("string")).Return(nil),
-				mockClient.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil),
-			}
-			mockClient.Calls = nil
+			// 使用统一的 setup 方法，每个测试用例都有独立的数据库和 mock
+			services := setupTestServices(t)
 
 			if tc.setupVolume != nil {
-				tc.setupVolume()
+				tc.setupVolume(services.Repo)
 			}
 
 			if tc.mockSetup != nil {
-				tc.mockSetup(mockClient, mockQemuImgClient)
-			} else {
-				mockQemuImgClient.ExpectedCalls = nil
-				mockQemuImgClient.Calls = nil
+				tc.mockSetup(services.MockLibvirt, services.MockQemuImg)
 			}
 
-			volume, err := volumeService.DescribeEBSVolume(ctx, tc.volumeID)
+			volume, err := services.VolumeService.DescribeEBSVolume(ctx, tc.volumeID)
 
 			if tc.expectError {
 				assert.Error(t, err)
@@ -803,12 +776,11 @@ func TestVolumeService_DescribeEBSVolume(t *testing.T) {
 func TestVolumeService_ModifyEBSVolume(t *testing.T) {
 	t.Parallel()
 
-	volumeService, repo, mockClient, mockQemuImgClient := setupTestVolumeService(t)
 	ctx := context.Background()
 
 	testcases := []struct {
 		name          string
-		setupVolume   func() string
+		setupVolume   func(*repository.Repository) string
 		mockSetup     func(*libvirt.MockClient, *qemuimg.MockClient)
 		req           *entity.ModifyVolumeRequest
 		expectError   bool
@@ -816,7 +788,7 @@ func TestVolumeService_ModifyEBSVolume(t *testing.T) {
 	}{
 		{
 			name: "modify volume type",
-			setupVolume: func() string {
+			setupVolume: func(repo *repository.Repository) string {
 				volumeRepo := repository.NewVolumeRepository(repo.DB())
 				volume := &model.Volume{
 					ID:         "vol-modify-123",
@@ -849,7 +821,7 @@ func TestVolumeService_ModifyEBSVolume(t *testing.T) {
 		},
 		{
 			name: "modify IOPS",
-			setupVolume: func() string {
+			setupVolume: func(repo *repository.Repository) string {
 				volumeRepo := repository.NewVolumeRepository(repo.DB())
 				volume := &model.Volume{
 					ID:         "vol-iops-123",
@@ -888,24 +860,18 @@ func TestVolumeService_ModifyEBSVolume(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			mockClient.ExpectedCalls = []*mock.Call{
-				mockClient.On("EnsureStoragePool", "default", "dir", mock.AnythingOfType("string")).Return(nil),
-				mockClient.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil),
-			}
-			mockClient.Calls = nil
+			// 使用统一的 setup 方法，每个测试用例都有独立的数据库和 mock
+			services := setupTestServices(t)
 
 			if tc.setupVolume != nil {
-				tc.setupVolume()
+				tc.setupVolume(services.Repo)
 			}
 
 			if tc.mockSetup != nil {
-				tc.mockSetup(mockClient, mockQemuImgClient)
-			} else {
-				mockQemuImgClient.ExpectedCalls = nil
-				mockQemuImgClient.Calls = nil
+				tc.mockSetup(services.MockLibvirt, services.MockQemuImg)
 			}
 
-			modification, err := volumeService.ModifyEBSVolume(ctx, tc.req)
+			modification, err := services.VolumeService.ModifyEBSVolume(ctx, tc.req)
 
 			if tc.expectError {
 				assert.Error(t, err)

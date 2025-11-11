@@ -216,39 +216,18 @@ func TestInstanceService_GetInstance(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			// 为每个测试用例创建独立的数据库和 repository
-			tmpDir := t.TempDir()
-			dbPath := filepath.Join(tmpDir, "test.db")
-			repo, err := repository.New(dbPath)
-			require.NoError(t, err)
-			t.Cleanup(func() {
-				_ = repo.Close()
-				_ = os.RemoveAll(tmpDir)
-			})
-
-			// 为每个测试用例创建新的 mock client
-			mockClientForTest := libvirt.NewMockClient()
-			mockClientForTest.On("EnsureStoragePool", "default", "dir", mock.AnythingOfType("string")).Return(nil)
-			mockClientForTest.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil)
-
-			// 创建独立的 StorageService
-			storageService, err := NewStorageService(mockClientForTest)
-			require.NoError(t, err)
-
-			// 创建新的 imageService 和 instanceService 实例用于此测试
-			mockQemuImgClient := qemuimg.NewMockClient()
-			imageServiceForTest := NewImageServiceWithQemuImg(storageService, mockClientForTest, mockQemuImgClient, repo)
-			instanceServiceForTest := NewInstanceServiceWithMocks(storageService, imageServiceForTest, mockClientForTest, repo)
+			// 使用统一的 setup 方法，每个测试用例都有独立的数据库和 mock
+			services := setupTestServices(t)
 
 			if tc.setupInstance != nil {
-				tc.setupInstance(repo)
+				tc.setupInstance(services.Repo)
 			}
 
 			if tc.mockSetup != nil {
-				tc.mockSetup(mockClientForTest)
+				tc.mockSetup(services.MockLibvirt)
 			}
 
-			instance, err := instanceServiceForTest.GetInstance(ctx, tc.instanceID)
+			instance, err := services.InstanceService.GetInstance(ctx, tc.instanceID)
 
 			if tc.expectError {
 				assert.Error(t, err)
@@ -505,39 +484,18 @@ func TestInstanceService_StartInstances(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			// 为每个测试用例创建独立的数据库和 repository
-			tmpDir := t.TempDir()
-			dbPath := filepath.Join(tmpDir, "test.db")
-			repo, err := repository.New(dbPath)
-			require.NoError(t, err)
-			t.Cleanup(func() {
-				_ = repo.Close()
-				_ = os.RemoveAll(tmpDir)
-			})
-
-			// 为每个测试用例创建新的 mock client
-			mockClientForTest := libvirt.NewMockClient()
-			mockClientForTest.On("EnsureStoragePool", "default", "dir", mock.AnythingOfType("string")).Return(nil)
-			mockClientForTest.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil)
-
-			// 创建独立的 StorageService
-			storageService, err := NewStorageService(mockClientForTest)
-			require.NoError(t, err)
-
-			// 创建新的 instanceService 实例用于此测试
-			mockQemuImgClient := qemuimg.NewMockClient()
-			imageServiceForTest := NewImageServiceWithQemuImg(storageService, mockClientForTest, mockQemuImgClient, repo)
-			instanceServiceForTest := NewInstanceServiceWithMocks(storageService, imageServiceForTest, mockClientForTest, repo)
+			// 使用统一的 setup 方法，每个测试用例都有独立的数据库和 mock
+			services := setupTestServices(t)
 
 			if tc.setupInstance != nil {
-				tc.setupInstance(repo)
+				tc.setupInstance(services.Repo)
 			}
 
 			if tc.mockSetup != nil {
-				tc.mockSetup(mockClientForTest)
+				tc.mockSetup(services.MockLibvirt)
 			}
 
-			changes, err := instanceServiceForTest.StartInstances(ctx, tc.req)
+			changes, err := services.InstanceService.StartInstances(ctx, tc.req)
 
 			if tc.expectError {
 				assert.Error(t, err)
@@ -607,39 +565,18 @@ func TestInstanceService_RebootInstances(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			// 为每个测试用例创建独立的数据库和 repository
-			tmpDir := t.TempDir()
-			dbPath := filepath.Join(tmpDir, "test.db")
-			repo, err := repository.New(dbPath)
-			require.NoError(t, err)
-			t.Cleanup(func() {
-				_ = repo.Close()
-				_ = os.RemoveAll(tmpDir)
-			})
-
-			// 为每个测试用例创建新的 mock client
-			mockClientForTest := libvirt.NewMockClient()
-			mockClientForTest.On("EnsureStoragePool", "default", "dir", mock.AnythingOfType("string")).Return(nil)
-			mockClientForTest.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil)
-
-			// 创建独立的 StorageService
-			storageService, err := NewStorageService(mockClientForTest)
-			require.NoError(t, err)
-
-			// 创建新的 instanceService 实例用于此测试
-			mockQemuImgClient := qemuimg.NewMockClient()
-			imageServiceForTest := NewImageServiceWithQemuImg(storageService, mockClientForTest, mockQemuImgClient, repo)
-			instanceServiceForTest := NewInstanceServiceWithMocks(storageService, imageServiceForTest, mockClientForTest, repo)
+			// 使用统一的 setup 方法，每个测试用例都有独立的数据库和 mock
+			services := setupTestServices(t)
 
 			if tc.setupInstance != nil {
-				tc.setupInstance(repo)
+				tc.setupInstance(services.Repo)
 			}
 
 			if tc.mockSetup != nil {
-				tc.mockSetup(mockClientForTest)
+				tc.mockSetup(services.MockLibvirt)
 			}
 
-			changes, err := instanceServiceForTest.RebootInstances(ctx, tc.req)
+			changes, err := services.InstanceService.RebootInstances(ctx, tc.req)
 
 			if tc.expectError {
 				assert.Error(t, err)

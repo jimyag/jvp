@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+
 	"github.com/gin-gonic/gin"
 	"github.com/jimyag/jvp/internal/jvp/entity"
 	"github.com/jimyag/jvp/internal/jvp/service"
@@ -8,8 +10,18 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// VolumeServiceInterface 定义卷服务的接口
+type VolumeServiceInterface interface {
+	CreateEBSVolume(ctx context.Context, req *entity.CreateVolumeRequest) (*entity.EBSVolume, error)
+	DeleteEBSVolume(ctx context.Context, volumeID string) error
+	AttachEBSVolume(ctx context.Context, req *entity.AttachVolumeRequest) (*entity.VolumeAttachment, error)
+	DetachEBSVolume(ctx context.Context, req *entity.DetachVolumeRequest) (*entity.VolumeAttachment, error)
+	DescribeEBSVolumes(ctx context.Context, req *entity.DescribeVolumesRequest) ([]entity.EBSVolume, error)
+	ModifyEBSVolume(ctx context.Context, req *entity.ModifyVolumeRequest) (*entity.VolumeModification, error)
+}
+
 type Volume struct {
-	volumeService *service.VolumeService
+	volumeService VolumeServiceInterface
 }
 
 func NewVolume(volumeService *service.VolumeService) *Volume {
