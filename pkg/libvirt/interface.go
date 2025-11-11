@@ -37,4 +37,8 @@ type LibvirtClient interface {
 	ListVolumes(poolName string) ([]*VolumeInfo, error)
 	CreateVolume(poolName, volumeName string, sizeGB uint64, format string) (*VolumeInfo, error)
 	DeleteVolume(poolName, volumeName string) error
+
+	// QEMU Guest Agent 操作
+	QemuAgentCommand(domain libvirt.Domain, command string, timeout uint32, flags uint32) (string, error)
+	CheckGuestAgentAvailable(domain libvirt.Domain) (bool, error)
 }

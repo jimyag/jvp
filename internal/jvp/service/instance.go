@@ -16,18 +16,20 @@ import (
 	"github.com/jimyag/jvp/pkg/cloudinit"
 	"github.com/jimyag/jvp/pkg/idgen"
 	"github.com/jimyag/jvp/pkg/libvirt"
+	"github.com/jimyag/jvp/pkg/virtcustomize"
 	"github.com/rs/zerolog"
 	"gopkg.in/yaml.v3"
 )
 
 // InstanceService 实例服务，管理虚拟机实例
 type InstanceService struct {
-	storageService *StorageService
-	imageService   *ImageService
-	keyPairService *KeyPairService
-	libvirtClient  libvirt.LibvirtClient
-	idGen          *idgen.Generator
-	instanceRepo   repository.InstanceRepository
+	storageService      *StorageService
+	imageService        *ImageService
+	keyPairService      *KeyPairService
+	libvirtClient       libvirt.LibvirtClient
+	virtCustomizeClient virtcustomize.VirtCustomizeClient
+	idGen               *idgen.Generator
+	instanceRepo        repository.InstanceRepository
 }
 
 // NewInstanceService 创建新的 Instance Service
@@ -38,13 +40,17 @@ func NewInstanceService(
 	libvirtClient libvirt.LibvirtClient,
 	repo *repository.Repository,
 ) (*InstanceService, error) {
+	// 创建 virt-customize 客户端（如果失败，返回 nil，后续使用时再处理）
+	virtCustomizeClient, _ := virtcustomize.NewClient()
+
 	return &InstanceService{
-		storageService: storageService,
-		imageService:   imageService,
-		keyPairService: keyPairService,
-		libvirtClient:  libvirtClient,
-		idGen:          idgen.New(),
-		instanceRepo:   repository.NewInstanceRepository(repo.DB()),
+		storageService:      storageService,
+		imageService:        imageService,
+		keyPairService:      keyPairService,
+		libvirtClient:       libvirtClient,
+		virtCustomizeClient: virtCustomizeClient,
+		idGen:               idgen.New(),
+		instanceRepo:        repository.NewInstanceRepository(repo.DB()),
 	}, nil
 }
 
@@ -854,4 +860,224 @@ func (s *InstanceService) ModifyInstanceAttribute(ctx context.Context, req *enti
 		Msg("Instance attribute modified successfully")
 
 	return updatedInstance, nil
+}
+
+// ResetPassword 重置实例密码
+// 按优先级尝试三种方案：
+// 1. qemu-guest-agent（优先，不需要停止实例）
+// 2. cloud-init（如果 guest agent 不可用，需要重启实例）
+// 3. virt-customize（最后选择，需要停止实例）
+func (s *InstanceService) ResetPassword(ctx context.Context, req *entity.ResetPasswordRequest) (*entity.ResetPasswordResponse, error) {
+	logger := zerolog.Ctx(ctx)
+	logger.Info().
+		Str("instance_id", req.InstanceID).
+		Int("user_count", len(req.Users)).
+		Msg("Resetting instance password")
+
+	// 1. 验证实例存在
+	instance, err := s.GetInstance(ctx, req.InstanceID)
+	if err != nil {
+		return nil, apierror.NewErrorWithStatus(
+			"ResourceNotFound",
+			fmt.Sprintf("Instance %s not found", req.InstanceID),
+			404,
+		)
+	}
+
+	// 2. 构建用户密码映射
+	usersMap := make(map[string]string)
+	userList := make([]string, 0, len(req.Users))
+	for _, user := range req.Users {
+		usersMap[user.Username] = user.NewPassword
+		userList = append(userList, user.Username)
+	}
+
+	// 3. 记录原始状态
+	wasRunning := instance.State == "running"
+
+	// 4. 按优先级尝试不同的密码重置策略
+	var strategyUsed string
+	var resetErr error
+
+	// 策略 1: qemu-guest-agent（优先，不需要停止实例，仅适用于运行中的实例）
+	if wasRunning {
+		logger.Info().
+			Str("instance_id", req.InstanceID).
+			Msg("Trying qemu-guest-agent strategy")
+
+		guestAgentStrategy := NewQemuGuestAgentStrategy(s.libvirtClient)
+		resetErr = guestAgentStrategy.ResetPassword(ctx, req.InstanceID, usersMap)
+		if resetErr == nil {
+			strategyUsed = guestAgentStrategy.Name()
+			logger.Info().
+				Str("instance_id", req.InstanceID).
+				Str("strategy", strategyUsed).
+				Msg("Password reset successful via qemu-guest-agent")
+		} else {
+			logger.Warn().
+				Err(resetErr).
+				Str("instance_id", req.InstanceID).
+				Msg("qemu-guest-agent strategy failed, trying cloud-init")
+		}
+	}
+
+	// 策略 2: cloud-init（如果 guest agent 失败，仅适用于运行中的实例）
+	if resetErr != nil && wasRunning {
+		logger.Info().
+			Str("instance_id", req.InstanceID).
+			Msg("Trying cloud-init strategy")
+
+		cloudInitStrategy := NewCloudInitStrategy(s.libvirtClient, "")
+		resetErr = cloudInitStrategy.ResetPassword(ctx, req.InstanceID, usersMap)
+		if resetErr == nil {
+			strategyUsed = cloudInitStrategy.Name()
+			logger.Info().
+				Str("instance_id", req.InstanceID).
+				Str("strategy", strategyUsed).
+				Msg("Password reset successful via cloud-init (requires restart)")
+			// 注意：cloud-init 需要重启实例才能生效
+			// 这里返回成功，但需要用户重启实例
+		} else {
+			logger.Warn().
+				Err(resetErr).
+				Str("instance_id", req.InstanceID).
+				Msg("cloud-init strategy failed, falling back to virt-customize")
+		}
+	}
+
+	// 策略 3: virt-customize（最后选择，需要停止实例）
+	// 如果实例是停止状态，或者前面的策略都失败了，使用 virt-customize
+	if resetErr != nil || !wasRunning {
+		logger.Info().
+			Str("instance_id", req.InstanceID).
+			Msg("Trying virt-customize strategy")
+
+		// 验证 virt-customize 客户端是否可用
+		if s.virtCustomizeClient == nil {
+			return nil, apierror.NewErrorWithStatus(
+				"ServiceUnavailable",
+				"virt-customize command not found, please install libguestfs-tools",
+				503,
+			)
+		}
+
+		// 如果实例正在运行，需要先停止
+		if wasRunning {
+			logger.Info().
+				Str("instance_id", req.InstanceID).
+				Msg("Stopping instance before virt-customize password reset")
+
+			stopReq := &entity.StopInstancesRequest{
+				InstanceIDs: []string{req.InstanceID},
+				Force:       false,
+			}
+			_, err := s.StopInstances(ctx, stopReq)
+			if err != nil {
+				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to stop instance", err)
+			}
+
+			// 等待实例完全停止
+			maxWait := 30 * time.Second
+			waitInterval := 1 * time.Second
+			waited := time.Duration(0)
+			for waited < maxWait {
+				instance, err := s.GetInstance(ctx, req.InstanceID)
+				if err == nil && instance.State == "stopped" {
+					break
+				}
+				time.Sleep(waitInterval)
+				waited += waitInterval
+			}
+
+			// 再次检查状态
+			instance, err = s.GetInstance(ctx, req.InstanceID)
+			if err != nil || instance.State != "stopped" {
+				return nil, apierror.NewErrorWithStatus(
+					"InternalError",
+					fmt.Sprintf("Instance %s failed to stop within timeout", req.InstanceID),
+					500,
+				)
+			}
+		}
+
+		// 获取实例的磁盘路径
+		disks, err := s.libvirtClient.GetDomainDisks(req.InstanceID)
+		if err != nil {
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get instance disks", err)
+		}
+
+		if len(disks) == 0 || disks[0].Source.File == "" {
+			return nil, apierror.NewErrorWithStatus(
+				"InvalidParameter",
+				fmt.Sprintf("Instance %s has no disk", req.InstanceID),
+				400,
+			)
+		}
+
+		diskPath := disks[0].Source.File
+
+		// 调用 virt-customize 重置密码（直接传入 diskPath，避免重复调用 GetDomainDisks 和 ValidateDiskPath）
+		virtCustomizeStrategy := NewVirtCustomizeStrategy(s.virtCustomizeClient, s.libvirtClient)
+		resetErr = virtCustomizeStrategy.ResetPassword(ctx, diskPath, usersMap)
+		if resetErr == nil {
+			strategyUsed = virtCustomizeStrategy.Name()
+			logger.Info().
+				Str("instance_id", req.InstanceID).
+				Str("strategy", strategyUsed).
+				Msg("Password reset successful via virt-customize")
+		}
+	}
+
+	// 5. 检查重置结果
+	if resetErr != nil {
+		logger.Error().
+			Err(resetErr).
+			Str("instance_id", req.InstanceID).
+			Msg("All password reset strategies failed")
+
+		// 如果之前是运行状态，尝试恢复
+		if wasRunning && req.AutoStart {
+			_, _ = s.StartInstances(ctx, &entity.StartInstancesRequest{
+				InstanceIDs: []string{req.InstanceID},
+			})
+		}
+
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to reset passwords", resetErr)
+	}
+
+	// 6. 如果之前是运行状态且 AutoStart=true，启动实例（仅 virt-customize 策略需要）
+	if wasRunning && req.AutoStart && strategyUsed == "virt-customize" {
+		logger.Info().
+			Str("instance_id", req.InstanceID).
+			Msg("Starting instance after password reset")
+
+		_, err := s.StartInstances(ctx, &entity.StartInstancesRequest{
+			InstanceIDs: []string{req.InstanceID},
+		})
+		if err != nil {
+			logger.Warn().
+				Err(err).
+				Str("instance_id", req.InstanceID).
+				Msg("Failed to start instance after password reset")
+			// 密码重置成功，但启动失败，返回警告但不失败
+		}
+	}
+
+	logger.Info().
+		Str("instance_id", req.InstanceID).
+		Str("strategy", strategyUsed).
+		Strs("users", userList).
+		Msg("Password reset successfully")
+
+	message := fmt.Sprintf("Password reset successfully via %s", strategyUsed)
+	if strategyUsed == "cloud-init" {
+		message += " (instance restart required)"
+	}
+
+	return &entity.ResetPasswordResponse{
+		InstanceID: req.InstanceID,
+		Success:    true,
+		Message:    message,
+		Users:      userList,
+	}, nil
 }

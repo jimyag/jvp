@@ -11,6 +11,7 @@ import (
 	"github.com/jimyag/jvp/pkg/idgen"
 	"github.com/jimyag/jvp/pkg/libvirt"
 	"github.com/jimyag/jvp/pkg/qemuimg"
+	"github.com/jimyag/jvp/pkg/virtcustomize"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -77,13 +78,21 @@ func setupTestServices(t *testing.T) *TestServices {
 	require.NoError(t, err)
 	imageService.imagesPoolPath = imagesDir
 
+	// 创建 virt-customize 客户端（mock，测试中会替换）
+	virtCustomizeClient, _ := virtcustomize.NewClient()
+	if virtCustomizeClient == nil {
+		// 如果 virt-customize 不存在，使用 mock path
+		virtCustomizeClient = virtcustomize.NewClientWithPath("/usr/bin/virt-customize")
+	}
+
 	// 创建 InstanceService
 	instanceService := &InstanceService{
-		storageService: storageService,
-		imageService:   imageService,
-		libvirtClient:  mockLibvirt,
-		idGen:          idgen.New(),
-		instanceRepo:   repository.NewInstanceRepository(repo.DB()),
+		storageService:      storageService,
+		imageService:        imageService,
+		libvirtClient:       mockLibvirt,
+		virtCustomizeClient: virtCustomizeClient,
+		idGen:               idgen.New(),
+		instanceRepo:        repository.NewInstanceRepository(repo.DB()),
 	}
 
 	// 创建 VolumeService

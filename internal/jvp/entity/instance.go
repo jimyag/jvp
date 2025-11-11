@@ -155,3 +155,24 @@ type ModifyInstanceAttributeRequest struct {
 type ModifyInstanceAttributeResponse struct {
 	Instance *Instance `json:"instance"`
 }
+
+// ResetPasswordRequest 重置密码请求
+type ResetPasswordRequest struct {
+	InstanceID string          `json:"instance_id"          binding:"required"` // 实例 ID
+	Users      []PasswordReset `json:"users"                binding:"required"` // 用户密码重置列表
+	AutoStart  bool            `json:"auto_start,omitempty"`                    // 重置后是否自动启动（如果之前是运行状态）
+}
+
+// PasswordReset 密码重置信息
+type PasswordReset struct {
+	Username    string `json:"username"     binding:"required"` // 用户名
+	NewPassword string `json:"new_password" binding:"required"` // 新密码（明文，传输时加密）
+}
+
+// ResetPasswordResponse 重置密码响应
+type ResetPasswordResponse struct {
+	InstanceID string   `json:"instance_id"` // 实例 ID
+	Success    bool     `json:"success"`     // 是否成功
+	Message    string   `json:"message"`     // 操作结果消息
+	Users      []string `json:"users"`       // 成功重置密码的用户列表
+}

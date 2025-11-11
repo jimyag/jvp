@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strconv"
@@ -914,4 +915,33 @@ func (c *Client) buildDisks(config *CreateVMConfig) []DomainDisk {
 	}
 
 	return disks
+}
+
+// QemuAgentCommand 执行 QEMU Guest Agent 命令
+// 使用 virsh qemu-agent-command 来执行命令
+func (c *Client) QemuAgentCommand(domain libvirt.Domain, command string, timeout uint32, flags uint32) (string, error) {
+	// 获取 domain 名称（domain 结构包含 Name 字段）
+	domainName := domain.Name
+	if domainName == "" {
+		return "", fmt.Errorf("domain name is empty")
+	}
+
+	// 使用 virsh 命令执行 qemu-agent-command
+	cmd := exec.Command("virsh", "qemu-agent-command", domainName, command)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("qemu agent command failed: %w, output: %s", err, string(output))
+	}
+	return string(output), nil
+}
+
+// CheckGuestAgentAvailable 检查 Guest Agent 是否可用
+func (c *Client) CheckGuestAgentAvailable(domain libvirt.Domain) (bool, error) {
+	// 尝试执行一个简单的 ping 命令来检查 guest agent 是否可用
+	pingCmd := `{"execute":"guest-ping"}`
+	_, err := c.QemuAgentCommand(domain, pingCmd, 5, 0)
+	if err != nil {
+		return false, nil // Guest agent 不可用，但不返回错误
+	}
+	return true, nil
 }

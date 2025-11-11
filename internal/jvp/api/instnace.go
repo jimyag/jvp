@@ -19,6 +19,7 @@ type InstanceServiceInterface interface {
 	StartInstances(ctx context.Context, req *entity.StartInstancesRequest) ([]entity.InstanceStateChange, error)
 	RebootInstances(ctx context.Context, req *entity.RebootInstancesRequest) ([]entity.InstanceStateChange, error)
 	ModifyInstanceAttribute(ctx context.Context, req *entity.ModifyInstanceAttributeRequest) (*entity.Instance, error)
+	ResetPassword(ctx context.Context, req *entity.ResetPasswordRequest) (*entity.ResetPasswordResponse, error)
 }
 
 type Instance struct {
@@ -40,6 +41,7 @@ func (i *Instance) RegisterRoutes(router *gin.RouterGroup) {
 	instanceRouter.POST("/start", ginx.Adapt5(i.StartInstances))
 	instanceRouter.POST("/reboot", ginx.Adapt5(i.RebootInstances))
 	instanceRouter.POST("/modify-attribute", ginx.Adapt5(i.ModifyInstanceAttribute))
+	instanceRouter.POST("/reset-password", ginx.Adapt5(i.ResetPassword))
 }
 
 func (i *Instance) RunInstances(ctx *gin.Context, req *entity.RunInstanceRequest) (*entity.RunInstanceResponse, error) {
@@ -204,4 +206,29 @@ func (i *Instance) ModifyInstanceAttribute(ctx *gin.Context, req *entity.ModifyI
 	return &entity.ModifyInstanceAttributeResponse{
 		Instance: instance,
 	}, nil
+}
+
+func (i *Instance) ResetPassword(ctx *gin.Context, req *entity.ResetPasswordRequest) (*entity.ResetPasswordResponse, error) {
+	logger := zerolog.Ctx(ctx)
+	logger.Info().
+		Str("instance_id", req.InstanceID).
+		Int("user_count", len(req.Users)).
+		Msg("ResetPassword called")
+
+	// 调用 Instance Service 重置密码
+	response, err := i.instanceService.ResetPassword(ctx, req)
+	if err != nil {
+		logger.Error().
+			Err(err).
+			Str("instance_id", req.InstanceID).
+			Msg("Failed to reset password")
+		return nil, err
+	}
+
+	logger.Info().
+		Str("instance_id", req.InstanceID).
+		Strs("users", response.Users).
+		Msg("Password reset successfully")
+
+	return response, nil
 }

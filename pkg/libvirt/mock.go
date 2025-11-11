@@ -160,6 +160,16 @@ func (m *MockClient) DeleteVolume(poolName, volumeName string) error {
 	return args.Error(0)
 }
 
+func (m *MockClient) QemuAgentCommand(domain libvirt.Domain, command string, timeout uint32, flags uint32) (string, error) {
+	args := m.Called(domain, command, timeout, flags)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockClient) CheckGuestAgentAvailable(domain libvirt.Domain) (bool, error) {
+	args := m.Called(domain)
+	return args.Bool(0), args.Error(1)
+}
+
 // NewMockClient 创建新的 MockClient
 // 这是一个便捷函数，用于在测试中创建 mock client
 func NewMockClient() *MockClient {
