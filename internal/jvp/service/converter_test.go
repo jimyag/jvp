@@ -116,8 +116,11 @@ func TestNewInstanceService(t *testing.T) {
 		imageService, err := NewImageService(storageService, mockLibvirtClient, repo)
 		require.NoError(t, err)
 
+		// 创建 KeyPairService
+		keyPairService := NewKeyPairService(repo)
+
 		// 创建 InstanceService
-		instanceService, err := NewInstanceService(storageService, imageService, mockLibvirtClient, repo)
+		instanceService, err := NewInstanceService(storageService, imageService, keyPairService, mockLibvirtClient, repo)
 		require.NoError(t, err)
 		assert.NotNil(t, instanceService)
 		assert.NotNil(t, instanceService.storageService)

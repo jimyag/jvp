@@ -19,6 +19,7 @@ type API struct {
 	volume   *Volume
 	snapshot *Snapshot
 	image    *Image
+	keypair  *KeyPair
 }
 
 func New(
@@ -26,6 +27,7 @@ func New(
 	volumeService *service.VolumeService,
 	snapshotService *service.SnapshotService,
 	imageService *service.ImageService,
+	keyPairService *service.KeyPairService,
 ) (*API, error) {
 	// 先禁用 Gin 的 debug 路由输出（避免打印带函数名的路由信息）
 	// 注意：这需要在创建 engine 之前设置
@@ -38,6 +40,7 @@ func New(
 		volume:   NewVolume(volumeService),
 		snapshot: NewSnapshot(snapshotService),
 		image:    NewImage(imageService),
+		keypair:  NewKeyPair(keyPairService),
 	}
 
 	apiGroup := engine.Group("/api")
@@ -45,6 +48,7 @@ func New(
 	api.volume.RegisterRoutes(apiGroup)
 	api.snapshot.RegisterRoutes(apiGroup)
 	api.image.RegisterRoutes(apiGroup)
+	api.keypair.RegisterRoutes(apiGroup)
 
 	// 打印路由信息（只显示方法和路径，不显示处理函数）
 	printRoutes(engine)

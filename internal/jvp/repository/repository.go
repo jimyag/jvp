@@ -56,6 +56,7 @@ func New(dbPath string) (*Repository, error) {
 		&model.Snapshot{},
 		&model.VolumeAttachment{},
 		&model.Tag{},
+		&model.KeyPair{},
 	); err != nil {
 		return nil, fmt.Errorf("auto migrate: %w", err)
 	}

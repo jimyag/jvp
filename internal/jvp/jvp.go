@@ -62,20 +62,23 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 	logger.Info().Msg("All default images are ready")
 
-	// 4. 创建 Instance Service
-	instanceService, err := service.NewInstanceService(storageService, imageService, libvirtClient, repo)
+	// 4. 创建 KeyPair Service（需要在 Instance Service 之前创建）
+	keyPairService := service.NewKeyPairService(repo)
+
+	// 5. 创建 Instance Service
+	instanceService, err := service.NewInstanceService(storageService, imageService, keyPairService, libvirtClient, repo)
 	if err != nil {
 		return nil, err
 	}
 
-	// 5. 创建 Volume Service
+	// 6. 创建 Volume Service
 	volumeService := service.NewVolumeService(storageService, instanceService, libvirtClient, repo)
 
-	// 6. 创建 Snapshot Service
+	// 7. 创建 Snapshot Service
 	snapshotService := service.NewSnapshotService(storageService, libvirtClient, repo)
 
-	// 7. 创建 API
-	apiInstance, err := api.New(instanceService, volumeService, snapshotService, imageService)
+	// 8. 创建 API
+	apiInstance, err := api.New(instanceService, volumeService, snapshotService, imageService, keyPairService)
 	if err != nil {
 		return nil, err
 	}

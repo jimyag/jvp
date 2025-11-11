@@ -24,6 +24,7 @@ import (
 type InstanceService struct {
 	storageService *StorageService
 	imageService   *ImageService
+	keyPairService *KeyPairService
 	libvirtClient  libvirt.LibvirtClient
 	idGen          *idgen.Generator
 	instanceRepo   repository.InstanceRepository
@@ -33,12 +34,14 @@ type InstanceService struct {
 func NewInstanceService(
 	storageService *StorageService,
 	imageService *ImageService,
+	keyPairService *KeyPairService,
 	libvirtClient libvirt.LibvirtClient,
 	repo *repository.Repository,
 ) (*InstanceService, error) {
 	return &InstanceService{
 		storageService: storageService,
 		imageService:   imageService,
+		keyPairService: keyPairService,
 		libvirtClient:  libvirtClient,
 		idGen:          idgen.New(),
 		instanceRepo:   repository.NewInstanceRepository(repo.DB()),
@@ -119,6 +122,45 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 		OSType:        "hvm",
 		Architecture:  "x86_64",
 		Autostart:     false,
+	}
+
+	// 处理密钥对（如果指定）
+	if len(req.KeyPairIDs) > 0 && s.keyPairService != nil {
+		var publicKeys []string
+		for _, keyPairID := range req.KeyPairIDs {
+			keyPair, err := s.keyPairService.GetKeyPairByID(ctx, keyPairID)
+			if err != nil {
+				// 清理已创建的 volume
+				_ = s.storageService.DeleteVolume(ctx, volume.ID)
+				return nil, fmt.Errorf("get keypair %s: %w", keyPairID, err)
+			}
+			publicKeys = append(publicKeys, keyPair.PublicKey)
+		}
+
+		// 将公钥注入到 UserData 配置中
+		if req.UserData == nil {
+			req.UserData = &entity.UserDataConfig{}
+		}
+		if req.UserData.StructuredUserData == nil {
+			req.UserData.StructuredUserData = &entity.StructuredUserData{}
+		}
+
+		// 合并公钥到现有用户配置
+		if len(req.UserData.StructuredUserData.Users) == 0 {
+			// 如果没有用户配置，创建默认用户
+			req.UserData.StructuredUserData.Users = []entity.User{
+				{
+					Name:              "ubuntu",
+					SSHAuthorizedKeys: publicKeys,
+				},
+			}
+		} else {
+			// 合并到第一个用户
+			req.UserData.StructuredUserData.Users[0].SSHAuthorizedKeys = append(
+				req.UserData.StructuredUserData.Users[0].SSHAuthorizedKeys,
+				publicKeys...,
+			)
+		}
 	}
 
 	// 处理 UserData（如果提供）

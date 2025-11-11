@@ -17,11 +17,12 @@ type Instance struct {
 
 // RunInstanceRequest 创建实例请求
 type RunInstanceRequest struct {
-	ImageID  string          `json:"image_id"`            // 镜像 ID（可选，默认使用 ubuntu-jammy）
-	SizeGB   uint64          `json:"size_gb"`             // 磁盘大小（GB）（可选，默认 20GB）
-	MemoryMB uint64          `json:"memory_mb"`           // 内存大小（MB）（可选，默认 2048MB）
-	VCPUs    uint16          `json:"vcpus"`               // 虚拟 CPU 数量（可选，默认 2）
-	UserData *UserDataConfig `json:"user_data,omitempty"` // UserData 配置（可选）
+	ImageID    string          `json:"image_id"`              // 镜像 ID（可选，默认使用 ubuntu-jammy）
+	SizeGB     uint64          `json:"size_gb"`               // 磁盘大小（GB）（可选，默认 20GB）
+	MemoryMB   uint64          `json:"memory_mb"`             // 内存大小（MB）（可选，默认 2048MB）
+	VCPUs      uint16          `json:"vcpus"`                 // 虚拟 CPU 数量（可选，默认 2）
+	UserData   *UserDataConfig `json:"user_data,omitempty"`   // UserData 配置（可选）
+	KeyPairIDs []string        `json:"keypair_ids,omitempty"` // 密钥对 ID 列表（可选）
 }
 
 // UserDataConfig UserData 配置

@@ -25,6 +25,7 @@ type TestServices struct {
 	InstanceService *InstanceService
 	VolumeService   *VolumeService
 	SnapshotService *SnapshotService
+	KeyPairService  *KeyPairService
 	TempDir         string
 }
 
@@ -105,6 +106,12 @@ func setupTestServices(t *testing.T) *TestServices {
 		snapshotRepo:   repository.NewSnapshotRepository(repo.DB()),
 	}
 
+	// 创建 KeyPairService
+	keyPairService := NewKeyPairService(repo)
+
+	// 更新 InstanceService 以包含 KeyPairService
+	instanceService.keyPairService = keyPairService
+
 	return &TestServices{
 		Repo:            repo,
 		MockLibvirt:     mockLibvirt,
@@ -114,6 +121,7 @@ func setupTestServices(t *testing.T) *TestServices {
 		InstanceService: instanceService,
 		VolumeService:   volumeService,
 		SnapshotService: snapshotService,
+		KeyPairService:  keyPairService,
 		TempDir:         tmpDir,
 	}
 }

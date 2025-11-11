@@ -78,6 +78,11 @@ func (g *Generator) GenerateSnapshotID() (string, error) {
 	return g.generateIDWithPrefix("snap", "generate snapshot ID")
 }
 
+// GenerateKeyPairID 生成密钥对 ID（格式：kp-{递增 ID}）
+func (g *Generator) GenerateKeyPairID() (string, error) {
+	return g.generateIDWithPrefix("kp", "generate keypair ID")
+}
+
 // GenerateID 生成通用递增 ID
 func (g *Generator) GenerateID() (uint64, error) {
 	return g.sf.NextID()
@@ -103,6 +108,11 @@ func GenerateInstanceID() (string, error) {
 // GenerateSnapshotID 使用默认生成器生成 Snapshot ID
 func GenerateSnapshotID() (string, error) {
 	return DefaultGenerator().GenerateSnapshotID()
+}
+
+// GenerateKeyPairID 使用默认生成器生成密钥对 ID
+func GenerateKeyPairID() (string, error) {
+	return DefaultGenerator().GenerateKeyPairID()
 }
 
 // GenerateID 使用默认生成器生成通用递增 ID
