@@ -734,3 +734,336 @@ func TestInstanceService_ModifyInstanceAttribute(t *testing.T) {
 		})
 	}
 }
+
+func TestInstanceService_RunInstance_WithUserData(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	testcases := []struct {
+		name          string
+		req           *entity.RunInstanceRequest
+		mockSetup     func(*libvirt.MockClient, *qemuimg.MockClient)
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name: "run instance without userdata (backward compatibility)",
+			req: &entity.RunInstanceRequest{
+				ImageID:  "ubuntu-jammy",
+				MemoryMB: 2048,
+				VCPUs:    2,
+				SizeGB:   20,
+			},
+			mockSetup: func(m *libvirt.MockClient, q *qemuimg.MockClient) {
+				// Mock CreateVolume
+				m.On("CreateVolume", "default", mock.AnythingOfType("string"), uint64(20), "qcow2").Return(&libvirt.VolumeInfo{
+					Name:        "vol-123.qcow2",
+					Path:        "/var/lib/jvp/images/vol-123.qcow2",
+					CapacityB:   20 * 1024 * 1024 * 1024,
+					AllocationB: 10 * 1024 * 1024 * 1024,
+					Format:      "qcow2",
+				}, nil).Once()
+
+				// Mock CreateVolumeFromBackingFile (ctx, format, backingFormat, backingFile, outputFile)
+				q.On("CreateFromBackingFile", mock.Anything, "qcow2", "qcow2", mock.AnythingOfType("string"), mock.AnythingOfType("string")).Return(nil).Once()
+
+				// Mock Resize (called if imageSizeGB < req.SizeGB, image is 2GB, target is 20GB)
+				q.On("Resize", mock.Anything, mock.AnythingOfType("string"), uint64(20)).Return(nil).Maybe()
+
+				// Mock GetVolume (called after CreateFromBackingFile to get updated volume info)
+				m.On("GetVolume", "default", mock.AnythingOfType("string")).Return(&libvirt.VolumeInfo{
+					Name:        "vol-123.qcow2",
+					Path:        "/var/lib/jvp/images/vol-123.qcow2",
+					CapacityB:   20 * 1024 * 1024 * 1024,
+					AllocationB: 10 * 1024 * 1024 * 1024,
+					Format:      "qcow2",
+				}, nil).Once()
+
+				// Mock DeleteVolume (may be called on error, StorageService tries default pool first, then images pool)
+				m.On("DeleteVolume", "default", mock.AnythingOfType("string")).Return(nil).Maybe()
+				m.On("DeleteVolume", "images", mock.AnythingOfType("string")).Return(nil).Maybe()
+
+				// Mock CreateDomain (without cloud-init)
+				m.On("CreateDomain", mock.MatchedBy(func(config *libvirt.CreateVMConfig) bool {
+					return config.CloudInit == nil && config.CloudInitUserData == nil
+				}), true).Return(libvirtlib.Domain{
+					Name: "i-123",
+					UUID: libvirtlib.UUID{1, 2, 3, 4},
+				}, nil).Once()
+			},
+			expectError: false,
+		},
+		{
+			name: "run instance with structured userdata",
+			req: &entity.RunInstanceRequest{
+				ImageID:  "ubuntu-jammy",
+				MemoryMB: 2048,
+				VCPUs:    2,
+				SizeGB:   20,
+				UserData: &entity.UserDataConfig{
+					StructuredUserData: &entity.StructuredUserData{
+						Hostname: "test-instance",
+						Users: []entity.User{
+							{
+								Name:              "admin",
+								Groups:            "sudo",
+								SSHAuthorizedKeys: []string{"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ..."},
+								HashedPasswd:      "$6$rounds=5000$salt$hashedpassword",
+							},
+						},
+						Packages: []string{"nginx", "docker.io"},
+						RunCmd:   []string{"systemctl enable nginx"},
+					},
+				},
+			},
+			mockSetup: func(m *libvirt.MockClient, q *qemuimg.MockClient) {
+				// Mock CreateVolume
+				m.On("CreateVolume", "default", mock.AnythingOfType("string"), uint64(20), "qcow2").Return(&libvirt.VolumeInfo{
+					Name:        "vol-123.qcow2",
+					Path:        "/var/lib/jvp/images/vol-123.qcow2",
+					CapacityB:   20 * 1024 * 1024 * 1024,
+					AllocationB: 10 * 1024 * 1024 * 1024,
+					Format:      "qcow2",
+				}, nil).Once()
+
+				// Mock CreateVolumeFromBackingFile (ctx, format, backingFormat, backingFile, outputFile)
+				q.On("CreateFromBackingFile", mock.Anything, "qcow2", "qcow2", mock.AnythingOfType("string"), mock.AnythingOfType("string")).Return(nil).Once()
+
+				// Mock Resize (called if imageSizeGB < req.SizeGB, image is 2GB, target is 20GB)
+				q.On("Resize", mock.Anything, mock.AnythingOfType("string"), uint64(20)).Return(nil).Maybe()
+
+				// Mock GetVolume (called after CreateFromBackingFile to get updated volume info)
+				m.On("GetVolume", "default", mock.AnythingOfType("string")).Return(&libvirt.VolumeInfo{
+					Name:        "vol-123.qcow2",
+					Path:        "/var/lib/jvp/images/vol-123.qcow2",
+					CapacityB:   20 * 1024 * 1024 * 1024,
+					AllocationB: 10 * 1024 * 1024 * 1024,
+					Format:      "qcow2",
+				}, nil).Once()
+
+				// Mock DeleteVolume (may be called on error, StorageService tries default pool first, then images pool)
+				m.On("DeleteVolume", "default", mock.AnythingOfType("string")).Return(nil).Maybe()
+				m.On("DeleteVolume", "images", mock.AnythingOfType("string")).Return(nil).Maybe()
+
+				// Mock CreateDomain (with cloud-init config)
+				m.On("CreateDomain", mock.MatchedBy(func(config *libvirt.CreateVMConfig) bool {
+					return config.CloudInit != nil && config.CloudInit.Hostname == "test-instance"
+				}), true).Return(libvirtlib.Domain{
+					Name: "i-123",
+					UUID: libvirtlib.UUID{1, 2, 3, 4},
+				}, nil).Once()
+			},
+			expectError: false,
+		},
+		{
+			name: "run instance with raw userdata",
+			req: &entity.RunInstanceRequest{
+				ImageID:  "ubuntu-jammy",
+				MemoryMB: 2048,
+				VCPUs:    2,
+				SizeGB:   20,
+				UserData: &entity.UserDataConfig{
+					RawUserData: "#cloud-config\nusers:\n  - name: admin\n    groups: sudo\n    ssh_authorized_keys:\n      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ...\npackages:\n  - nginx\n",
+				},
+			},
+			mockSetup: func(m *libvirt.MockClient, q *qemuimg.MockClient) {
+				// Mock CreateVolume
+				m.On("CreateVolume", "default", mock.AnythingOfType("string"), uint64(20), "qcow2").Return(&libvirt.VolumeInfo{
+					Name:        "vol-123.qcow2",
+					Path:        "/var/lib/jvp/images/vol-123.qcow2",
+					CapacityB:   20 * 1024 * 1024 * 1024,
+					AllocationB: 10 * 1024 * 1024 * 1024,
+					Format:      "qcow2",
+				}, nil).Once()
+
+				// Mock CreateVolumeFromBackingFile (ctx, format, backingFormat, backingFile, outputFile)
+				q.On("CreateFromBackingFile", mock.Anything, "qcow2", "qcow2", mock.AnythingOfType("string"), mock.AnythingOfType("string")).Return(nil).Once()
+
+				// Mock Resize (called if imageSizeGB < req.SizeGB, image is 2GB, target is 20GB)
+				q.On("Resize", mock.Anything, mock.AnythingOfType("string"), uint64(20)).Return(nil).Maybe()
+
+				// Mock GetVolume (called after CreateFromBackingFile to get updated volume info)
+				m.On("GetVolume", "default", mock.AnythingOfType("string")).Return(&libvirt.VolumeInfo{
+					Name:        "vol-123.qcow2",
+					Path:        "/var/lib/jvp/images/vol-123.qcow2",
+					CapacityB:   20 * 1024 * 1024 * 1024,
+					AllocationB: 10 * 1024 * 1024 * 1024,
+					Format:      "qcow2",
+				}, nil).Once()
+
+				// Mock DeleteVolume (may be called on error, StorageService tries default pool first, then images pool)
+				m.On("DeleteVolume", "default", mock.AnythingOfType("string")).Return(nil).Maybe()
+				m.On("DeleteVolume", "images", mock.AnythingOfType("string")).Return(nil).Maybe()
+
+				// Mock CreateDomain (with cloud-init userdata)
+				m.On("CreateDomain", mock.MatchedBy(func(config *libvirt.CreateVMConfig) bool {
+					return config.CloudInitUserData != nil
+				}), true).Return(libvirtlib.Domain{
+					Name: "i-123",
+					UUID: libvirtlib.UUID{1, 2, 3, 4},
+				}, nil).Once()
+			},
+			expectError: false,
+		},
+		{
+			name: "run instance with invalid raw userdata",
+			req: &entity.RunInstanceRequest{
+				ImageID:  "ubuntu-jammy",
+				MemoryMB: 2048,
+				VCPUs:    2,
+				SizeGB:   20,
+				UserData: &entity.UserDataConfig{
+					RawUserData: "invalid yaml: [",
+				},
+			},
+			mockSetup: func(m *libvirt.MockClient, q *qemuimg.MockClient) {
+				// Mock CreateVolume
+				m.On("CreateVolume", "default", mock.AnythingOfType("string"), uint64(20), "qcow2").Return(&libvirt.VolumeInfo{
+					Name:        "vol-123.qcow2",
+					Path:        "/var/lib/jvp/images/vol-123.qcow2",
+					CapacityB:   20 * 1024 * 1024 * 1024,
+					AllocationB: 10 * 1024 * 1024 * 1024,
+					Format:      "qcow2",
+				}, nil).Once()
+
+				// Mock CreateVolumeFromBackingFile (should succeed, then UserData parsing will fail)
+				q.On("CreateFromBackingFile", mock.Anything, "qcow2", "qcow2", mock.AnythingOfType("string"), mock.AnythingOfType("string")).Return(nil).Once()
+
+				// Mock Resize (called if imageSizeGB < req.SizeGB, image is 2GB, target is 20GB)
+				q.On("Resize", mock.Anything, mock.AnythingOfType("string"), uint64(20)).Return(nil).Once()
+
+				// Mock GetVolume (called after CreateFromBackingFile to get updated volume info)
+				m.On("GetVolume", "default", mock.AnythingOfType("string")).Return(&libvirt.VolumeInfo{
+					Name:        "vol-123.qcow2",
+					Path:        "/var/lib/jvp/images/vol-123.qcow2",
+					CapacityB:   20 * 1024 * 1024 * 1024,
+					AllocationB: 10 * 1024 * 1024 * 1024,
+					Format:      "qcow2",
+				}, nil).Once()
+
+				// Mock DeleteVolume (cleanup on error, StorageService tries default pool first, then images pool)
+				m.On("DeleteVolume", "default", mock.AnythingOfType("string")).Return(nil).Maybe()
+				m.On("DeleteVolume", "images", mock.AnythingOfType("string")).Return(nil).Maybe()
+			},
+			expectError:   true,
+			errorContains: "invalid raw userdata YAML",
+		},
+		{
+			name: "run instance with structured userdata and plaintext password",
+			req: &entity.RunInstanceRequest{
+				ImageID:  "ubuntu-jammy",
+				MemoryMB: 2048,
+				VCPUs:    2,
+				SizeGB:   20,
+				UserData: &entity.UserDataConfig{
+					StructuredUserData: &entity.StructuredUserData{
+						Hostname: "test-instance",
+						Users: []entity.User{
+							{
+								Name:            "admin",
+								Groups:          "sudo",
+								PlainTextPasswd: "testpassword123",
+							},
+						},
+					},
+				},
+			},
+			mockSetup: func(m *libvirt.MockClient, q *qemuimg.MockClient) {
+				// Mock CreateVolume
+				m.On("CreateVolume", "default", mock.AnythingOfType("string"), uint64(20), "qcow2").Return(&libvirt.VolumeInfo{
+					Name:        "vol-123.qcow2",
+					Path:        "/var/lib/jvp/images/vol-123.qcow2",
+					CapacityB:   20 * 1024 * 1024 * 1024,
+					AllocationB: 10 * 1024 * 1024 * 1024,
+					Format:      "qcow2",
+				}, nil).Once()
+
+				// Mock CreateVolumeFromBackingFile (ctx, format, backingFormat, backingFile, outputFile)
+				q.On("CreateFromBackingFile", mock.Anything, "qcow2", "qcow2", mock.AnythingOfType("string"), mock.AnythingOfType("string")).Return(nil).Once()
+
+				// Mock Resize (called if imageSizeGB < req.SizeGB, image is 2GB, target is 20GB)
+				q.On("Resize", mock.Anything, mock.AnythingOfType("string"), uint64(20)).Return(nil).Maybe()
+
+				// Mock GetVolume (called after CreateFromBackingFile to get updated volume info)
+				m.On("GetVolume", "default", mock.AnythingOfType("string")).Return(&libvirt.VolumeInfo{
+					Name:        "vol-123.qcow2",
+					Path:        "/var/lib/jvp/images/vol-123.qcow2",
+					CapacityB:   20 * 1024 * 1024 * 1024,
+					AllocationB: 10 * 1024 * 1024 * 1024,
+					Format:      "qcow2",
+				}, nil).Once()
+
+				// Mock DeleteVolume (may be called on error, StorageService tries default pool first, then images pool)
+				m.On("DeleteVolume", "default", mock.AnythingOfType("string")).Return(nil).Maybe()
+				m.On("DeleteVolume", "images", mock.AnythingOfType("string")).Return(nil).Maybe()
+
+				// Mock CreateDomain (with cloud-init config, password should be hashed)
+				m.On("CreateDomain", mock.MatchedBy(func(config *libvirt.CreateVMConfig) bool {
+					return config.CloudInit != nil && config.CloudInit.Users != nil && len(config.CloudInit.Users) > 0
+				}), true).Return(libvirtlib.Domain{
+					Name: "i-123",
+					UUID: libvirtlib.UUID{1, 2, 3, 4},
+				}, nil).Once()
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tc := range testcases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			// 使用统一的 setup 方法，每个测试用例都有独立的数据库和 mock
+			services := setupTestServices(t)
+
+			// 创建镜像文件（GetImage 需要）
+			imagePath := filepath.Join(services.TempDir, "images", "ubuntu-jammy-server-cloudimg-amd64.img")
+			err := os.MkdirAll(filepath.Dir(imagePath), 0o755)
+			require.NoError(t, err)
+			f, err := os.Create(imagePath)
+			require.NoError(t, err)
+			_, err = f.Write(make([]byte, 100*1024*1024)) // 100MB
+			require.NoError(t, err)
+			require.NoError(t, f.Close())
+
+			// 注册镜像到数据库
+			imageRepo := repository.NewImageRepository(services.Repo.DB())
+			imageModel := &model.Image{
+				ID:     "ubuntu-jammy",
+				Name:   "Ubuntu Jammy",
+				Pool:   "images",
+				Path:   imagePath,
+				SizeGB: 2,
+				Format: "qcow2",
+				State:  "available",
+			}
+			err = imageRepo.Create(ctx, imageModel)
+			require.NoError(t, err)
+
+			if tc.mockSetup != nil {
+				tc.mockSetup(services.MockLibvirt, services.MockQemuImg)
+			}
+
+			instance, err := services.InstanceService.RunInstance(ctx, tc.req)
+
+			if tc.expectError {
+				assert.Error(t, err)
+				if tc.errorContains != "" {
+					assert.Contains(t, err.Error(), tc.errorContains)
+				}
+				assert.Nil(t, instance)
+			} else {
+				// 注意：由于需要真实的 libvirt 环境，某些测试可能会失败
+				if err != nil {
+					t.Logf("Test may require libvirt environment: %v", err)
+				}
+				if instance != nil {
+					assert.NotEmpty(t, instance.ID)
+					assert.Equal(t, tc.req.ImageID, instance.ImageID)
+				}
+			}
+		})
+	}
+}

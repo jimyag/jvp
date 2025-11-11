@@ -55,6 +55,9 @@ func setupTestServices(t *testing.T) *TestServices {
 
 	// 创建 mock qemu-img client
 	mockQemuImg := qemuimg.NewMockClient()
+	
+	// 替换 StorageService 中的真实 qemu-img client 为 mock
+	storageService.qemuImgClient = mockQemuImg
 
 	// 创建 ImageService
 	imageService := &ImageService{

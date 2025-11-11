@@ -13,9 +13,11 @@ import (
 	"github.com/jimyag/jvp/internal/jvp/entity"
 	"github.com/jimyag/jvp/internal/jvp/repository"
 	"github.com/jimyag/jvp/pkg/apierror"
+	"github.com/jimyag/jvp/pkg/cloudinit"
 	"github.com/jimyag/jvp/pkg/idgen"
 	"github.com/jimyag/jvp/pkg/libvirt"
 	"github.com/rs/zerolog"
+	"gopkg.in/yaml.v3"
 )
 
 // InstanceService 实例服务，管理虚拟机实例
@@ -119,6 +121,25 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 		Autostart:     false,
 	}
 
+	// 处理 UserData（如果提供）
+	if req.UserData != nil {
+		cloudInitConfig, cloudInitUserData, err := s.convertUserDataToCloudInit(ctx, instanceID, req.UserData)
+		if err != nil {
+			// 清理已创建的 volume
+			_ = s.storageService.DeleteVolume(ctx, volume.ID)
+			return nil, fmt.Errorf("convert userdata to cloud-init: %w", err)
+		}
+
+		if cloudInitConfig != nil {
+			domainConfig.CloudInit = cloudInitConfig
+			logger.Info().Msg("Cloud-init config added to domain")
+		}
+		if cloudInitUserData != nil {
+			domainConfig.CloudInitUserData = cloudInitUserData
+			logger.Info().Msg("Cloud-init userdata added to domain")
+		}
+	}
+
 	domain, err := s.libvirtClient.CreateDomain(domainConfig, true) // true = 立即启动
 	if err != nil {
 		// 清理已创建的 volume
@@ -168,6 +189,124 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 // formatDomainUUID 格式化 Domain UUID
 func formatDomainUUID(uuid [16]byte) string {
 	return hex.EncodeToString(uuid[:])
+}
+
+// convertUserDataToCloudInit 将 entity.UserDataConfig 转换为 cloudinit 配置
+func (s *InstanceService) convertUserDataToCloudInit(
+	ctx context.Context,
+	instanceID string,
+	userDataConfig *entity.UserDataConfig,
+) (*cloudinit.Config, *cloudinit.UserData, error) {
+	if userDataConfig == nil {
+		return nil, nil, nil
+	}
+
+	// 如果提供了原始 YAML，直接使用 UserData
+	if userDataConfig.RawUserData != "" {
+		// 移除可能的 #cloud-config header（如果存在）
+		rawData := strings.TrimSpace(userDataConfig.RawUserData)
+		if strings.HasPrefix(rawData, "#cloud-config") {
+			// 移除 header
+			lines := strings.Split(rawData, "\n")
+			if len(lines) > 1 {
+				rawData = strings.Join(lines[1:], "\n")
+			} else {
+				rawData = ""
+			}
+		}
+
+		// 解析为 UserData 结构
+		var userData cloudinit.UserData
+		if err := yaml.Unmarshal([]byte(rawData), &userData); err != nil {
+			return nil, nil, fmt.Errorf("invalid raw userdata YAML: %w", err)
+		}
+
+		// 创建最小的 Config（仅用于 hostname）
+		config := &cloudinit.Config{
+			Hostname: instanceID,
+		}
+
+		return config, &userData, nil
+	}
+
+	// 使用结构化配置
+	if userDataConfig.StructuredUserData == nil {
+		return nil, nil, nil
+	}
+
+	structured := userDataConfig.StructuredUserData
+
+	// 转换为 cloudinit.Config
+	config := &cloudinit.Config{
+		Hostname:    structured.Hostname,
+		DisableRoot: structured.DisableRoot,
+		Timezone:    structured.Timezone,
+		Packages:    structured.Packages,
+		Commands:    structured.RunCmd,
+	}
+
+	// 转换 Groups
+	if len(structured.Groups) > 0 {
+		config.Groups = make([]cloudinit.Group, len(structured.Groups))
+		for i, g := range structured.Groups {
+			config.Groups[i] = cloudinit.Group{
+				Name:    g.Name,
+				Members: g.Members,
+			}
+		}
+	}
+
+	// 转换 Users
+	if len(structured.Users) > 0 {
+		config.Users = make([]cloudinit.User, len(structured.Users))
+		for i, u := range structured.Users {
+			user := cloudinit.User{
+				Name:              u.Name,
+				Groups:            u.Groups,
+				SSHAuthorizedKeys: u.SSHAuthorizedKeys,
+				Shell:             u.Shell,
+			}
+
+			// 处理密码
+			if u.HashedPasswd != "" {
+				user.Passwd = u.HashedPasswd
+			} else if u.PlainTextPasswd != "" {
+				// 如果提供了明文密码，需要 hash
+				hashed, err := cloudinit.HashPassword(u.PlainTextPasswd)
+				if err != nil {
+					return nil, nil, fmt.Errorf("hash password for user %s: %w", u.Name, err)
+				}
+				user.Passwd = hashed
+			}
+
+			// 处理 sudo
+			if u.Sudo != "" {
+				user.Sudo = u.Sudo
+			}
+
+			config.Users[i] = user
+		}
+	}
+
+	// 转换 WriteFiles
+	if len(structured.WriteFiles) > 0 {
+		config.WriteFiles = make([]cloudinit.File, len(structured.WriteFiles))
+		for i, f := range structured.WriteFiles {
+			config.WriteFiles[i] = cloudinit.File{
+				Path:        f.Path,
+				Content:     f.Content,
+				Owner:       f.Owner,
+				Permissions: f.Permissions,
+			}
+		}
+	}
+
+	// 设置默认 hostname（如果未设置）
+	if config.Hostname == "" {
+		config.Hostname = instanceID
+	}
+
+	return config, nil, nil
 }
 
 // DescribeInstances 描述实例

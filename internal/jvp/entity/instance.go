@@ -17,10 +17,61 @@ type Instance struct {
 
 // RunInstanceRequest 创建实例请求
 type RunInstanceRequest struct {
-	ImageID  string `json:"image_id"`  // 镜像 ID（可选，默认使用 ubuntu-jammy）
-	SizeGB   uint64 `json:"size_gb"`   // 磁盘大小（GB）（可选，默认 20GB）
-	MemoryMB uint64 `json:"memory_mb"` // 内存大小（MB）（可选，默认 2048MB）
-	VCPUs    uint16 `json:"vcpus"`     // 虚拟 CPU 数量（可选，默认 2）
+	ImageID  string          `json:"image_id"`            // 镜像 ID（可选，默认使用 ubuntu-jammy）
+	SizeGB   uint64          `json:"size_gb"`             // 磁盘大小（GB）（可选，默认 20GB）
+	MemoryMB uint64          `json:"memory_mb"`           // 内存大小（MB）（可选，默认 2048MB）
+	VCPUs    uint16          `json:"vcpus"`               // 虚拟 CPU 数量（可选，默认 2）
+	UserData *UserDataConfig `json:"user_data,omitempty"` // UserData 配置（可选）
+}
+
+// UserDataConfig UserData 配置
+// 支持两种方式：
+// 1. RawUserData: 直接提供原始 YAML 字符串（完全控制）
+// 2. StructuredUserData: 提供结构化配置（推荐，更安全）
+type UserDataConfig struct {
+	// 原始 YAML 字符串（如果提供，将优先使用，忽略其他字段）
+	RawUserData string `json:"raw_user_data,omitempty"`
+
+	// 结构化配置（如果 RawUserData 为空，则使用此配置）
+	StructuredUserData *StructuredUserData `json:"structured_user_data,omitempty"`
+}
+
+// StructuredUserData 结构化 UserData 配置
+// 对应 cloudinit.Config 的简化版本，只暴露常用字段
+type StructuredUserData struct {
+	Hostname    string   `json:"hostname,omitempty"`     // 主机名
+	Users       []User   `json:"users,omitempty"`        // 用户列表
+	Groups      []Group  `json:"groups,omitempty"`       // 组列表
+	Packages    []string `json:"packages,omitempty"`     // 要安装的软件包
+	RunCmd      []string `json:"run_cmd,omitempty"`      // 启动后执行的命令
+	WriteFiles  []File   `json:"write_files,omitempty"`  // 要写入的文件
+	Timezone    string   `json:"timezone,omitempty"`     // 时区
+	DisableRoot bool     `json:"disable_root,omitempty"` // 禁用 root 登录
+}
+
+// User 用户配置（简化版）
+type User struct {
+	Name              string   `json:"name,omitempty"`                // 用户名
+	Groups            string   `json:"groups,omitempty"`              // 附加组（逗号分隔）
+	SSHAuthorizedKeys []string `json:"ssh_authorized_keys,omitempty"` // SSH 公钥列表
+	PlainTextPasswd   string   `json:"plain_text_passwd,omitempty"`   // 明文密码（不推荐，但支持）
+	HashedPasswd      string   `json:"hashed_passwd,omitempty"`       // 密码哈希（推荐）
+	Sudo              string   `json:"sudo,omitempty"`                // sudo 规则（如："ALL=(ALL) NOPASSWD:ALL"）
+	Shell             string   `json:"shell,omitempty"`               // Shell（默认：/bin/bash）
+}
+
+// Group 组配置
+type Group struct {
+	Name    string   `json:"name"`    // 组名
+	Members []string `json:"members"` // 组成员列表
+}
+
+// File 文件配置
+type File struct {
+	Path        string `json:"path"`                  // 文件路径
+	Content     string `json:"content"`               // 文件内容
+	Owner       string `json:"owner,omitempty"`       // 文件所有者（默认：root:root）
+	Permissions string `json:"permissions,omitempty"` // 文件权限（默认：0644）
 }
 
 // RunInstanceResponse 创建实例响应
