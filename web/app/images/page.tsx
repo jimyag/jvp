@@ -6,6 +6,8 @@ import Header from "@/components/Header";
 import Table from "@/components/Table";
 import StatusBadge from "@/components/StatusBadge";
 import Modal from "@/components/Modal";
+import ConfirmDialog from "@/components/ConfirmDialog";
+import { useToast } from "@/components/ToastContainer";
 import { Plus, Trash2, Upload } from "lucide-react";
 
 interface Image {
@@ -21,9 +23,12 @@ interface Image {
 }
 
 export default function ImagesPage() {
+  const toast = useToast();
   const [images, setImages] = useState<Image[]>([]);
   const [loading, setLoading] = useState(true);
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [imageToDelete, setImageToDelete] = useState<string>("");
   const [formData, setFormData] = useState({
     name: "",
     url: "",
@@ -42,9 +47,12 @@ export default function ImagesPage() {
       if (response.ok) {
         const data = await response.json();
         setImages(data.images || []);
+      } else {
+        toast.error("Failed to load images");
       }
     } catch (error) {
       console.error("Failed to fetch images:", error);
+      toast.error("Failed to load images. Please check if backend is running.");
     } finally {
       setLoading(false);
     }
@@ -72,24 +80,40 @@ export default function ImagesPage() {
           os_type: "linux",
           description: "",
         });
+        toast.success("Image registered successfully!");
+      } else {
+        const error = await response.json();
+        toast.error(`Failed to register image: ${error.message || "Unknown error"}`);
       }
     } catch (error) {
       console.error("Failed to register image:", error);
+      toast.error("Failed to register image. Please try again.");
     }
   };
 
-  const handleDelete = async (imageId: string) => {
-    if (!confirm("Are you sure you want to delete this image?")) return;
+  const handleDeleteClick = (imageId: string) => {
+    setImageToDelete(imageId);
+    setIsDeleteDialogOpen(true);
+  };
 
+  const handleDeleteConfirm = async () => {
     try {
-      await fetch("/api/images/deregister", {
+      const response = await fetch("/api/images/deregister", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageID: imageId }),
+        body: JSON.stringify({ imageID: imageToDelete }),
       });
-      fetchImages();
+
+      if (response.ok) {
+        fetchImages();
+        toast.success("Image deleted successfully!");
+      } else {
+        const error = await response.json();
+        toast.error(`Failed to delete image: ${error.message || "Unknown error"}`);
+      }
     } catch (error) {
       console.error("Failed to delete image:", error);
+      toast.error("Failed to delete image. Please try again.");
     }
   };
 
@@ -143,7 +167,7 @@ export default function ImagesPage() {
         return (
           <div className="flex gap-2">
             <button
-              onClick={() => handleDelete(image.id)}
+              onClick={() => handleDeleteClick(image.id)}
               className="p-2 text-gray-600 hover:text-red-600 transition-colors"
               title="Delete"
             >
@@ -260,6 +284,17 @@ export default function ImagesPage() {
           </div>
         </form>
       </Modal>
+
+      <ConfirmDialog
+        isOpen={isDeleteDialogOpen}
+        onClose={() => setIsDeleteDialogOpen(false)}
+        onConfirm={handleDeleteConfirm}
+        title="Delete Image"
+        message="Are you sure you want to delete this image? This action cannot be undone."
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="danger"
+      />
     </DashboardLayout>
   );
 }

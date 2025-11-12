@@ -5,7 +5,9 @@ import { useParams, useRouter } from "next/navigation";
 import DashboardLayout from "@/components/DashboardLayout";
 import Header from "@/components/Header";
 import StatusBadge from "@/components/StatusBadge";
-import { Play, Square, RefreshCw, Trash2, ArrowLeft, Key } from "lucide-react";
+import ConfirmDialog from "@/components/ConfirmDialog";
+import { useToast } from "@/components/ToastContainer";
+import { Play, Square, RefreshCw, Trash2, ArrowLeft, Key, Edit } from "lucide-react";
 import { apiPost } from "@/lib/api";
 import Modal from "@/components/Modal";
 
@@ -26,6 +28,7 @@ interface Instance {
 }
 
 export default function InstanceDetailPage() {
+  const toast = useToast();
   const params = useParams();
   const router = useRouter();
   const instanceId = params.id as string;
@@ -33,7 +36,14 @@ export default function InstanceDetailPage() {
   const [instance, setInstance] = useState<Instance | null>(null);
   const [loading, setLoading] = useState(true);
   const [isResetPasswordModalOpen, setIsResetPasswordModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [newPassword, setNewPassword] = useState("");
+  const [editFormData, setEditFormData] = useState({
+    name: "",
+    vcpus: 2,
+    memory_mb: 2048,
+  });
 
   const fetchInstance = async () => {
     setLoading(true);
@@ -46,7 +56,7 @@ export default function InstanceDetailPage() {
       }
     } catch (error) {
       console.error("Failed to fetch instance:", error);
-      alert("Failed to load instance details");
+      toast.error("Failed to load instance details");
     } finally {
       setLoading(false);
     }
@@ -62,24 +72,33 @@ export default function InstanceDetailPage() {
       await apiPost(`/api/instances/${action}`, {
         instanceIDs: [instanceId],
       });
-      fetchInstance();
+      const actionName = action === "start" ? "started" : action === "stop" ? "stopped" : "rebooted";
+      toast.success(`Instance ${actionName} successfully!`);
+
+      // 延迟刷新以等待后端状态更新
+      setTimeout(() => {
+        fetchInstance();
+      }, 2000);
     } catch (error) {
       console.error(`Failed to ${action} instance:`, error);
-      alert(`Failed to ${action} instance`);
+      toast.error(`Failed to ${action} instance`);
     }
   };
 
-  const handleDelete = async () => {
-    if (!confirm("Are you sure you want to delete this instance?")) return;
+  const handleDeleteClick = () => {
+    setIsDeleteDialogOpen(true);
+  };
 
+  const handleDeleteConfirm = async () => {
     try {
       await apiPost("/api/instances/terminate", {
         instanceIDs: [instanceId],
       });
+      toast.success("Instance terminated successfully!");
       router.push("/instances");
     } catch (error) {
       console.error("Failed to delete instance:", error);
-      alert("Failed to delete instance");
+      toast.error("Failed to delete instance");
     }
   };
 
@@ -92,10 +111,43 @@ export default function InstanceDetailPage() {
       });
       setIsResetPasswordModalOpen(false);
       setNewPassword("");
-      alert("Password reset successfully!");
+      toast.success("Password reset successfully!");
     } catch (error) {
       console.error("Failed to reset password:", error);
-      alert("Failed to reset password");
+      toast.error("Failed to reset password");
+    }
+  };
+
+  const handleEditClick = () => {
+    if (instance) {
+      setEditFormData({
+        name: instance.name || "",
+        vcpus: instance.vcpus || 2,
+        memory_mb: instance.memory_mb || 2048,
+      });
+      setIsEditModalOpen(true);
+    }
+  };
+
+  const handleEditInstance = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const response = await apiPost("/api/instances/modify-attribute", {
+        instanceID: instanceId,
+        name: editFormData.name,
+        vcpus: editFormData.vcpus,
+        memoryMB: editFormData.memory_mb,
+        live: instance?.state === "running",
+      });
+
+      if (response) {
+        setIsEditModalOpen(false);
+        fetchInstance();
+        toast.success("Instance attributes updated successfully!");
+      }
+    } catch (error) {
+      console.error("Failed to update instance:", error);
+      toast.error("Failed to update instance attributes");
     }
   };
 
@@ -175,6 +227,14 @@ export default function InstanceDetailPage() {
               Reboot
             </button>
             <button
+              onClick={handleEditClick}
+              className="btn-secondary flex items-center gap-2"
+              title="Edit Instance"
+            >
+              <Edit size={16} />
+              Edit
+            </button>
+            <button
               onClick={() => setIsResetPasswordModalOpen(true)}
               className="btn-secondary flex items-center gap-2"
               title="Reset Password"
@@ -183,7 +243,7 @@ export default function InstanceDetailPage() {
               Reset Password
             </button>
             <button
-              onClick={handleDelete}
+              onClick={handleDeleteClick}
               className="btn-danger flex items-center gap-2"
               title="Delete"
             >
@@ -341,6 +401,96 @@ export default function InstanceDetailPage() {
           </div>
         </form>
       </Modal>
+
+      {/* Edit Instance Modal */}
+      <Modal
+        isOpen={isEditModalOpen}
+        onClose={() => setIsEditModalOpen(false)}
+        title="Edit Instance Attributes"
+      >
+        <form onSubmit={handleEditInstance} className="space-y-6">
+          {instance?.state === "running" && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <p className="text-sm text-blue-800">
+                This instance is currently running. Changes will be applied dynamically if supported.
+              </p>
+            </div>
+          )}
+
+          <div>
+            <label className="label">Instance Name</label>
+            <input
+              type="text"
+              className="input"
+              value={editFormData.name}
+              onChange={(e) =>
+                setEditFormData({ ...editFormData, name: e.target.value })
+              }
+              placeholder="my-instance"
+            />
+          </div>
+
+          <div>
+            <label className="label">vCPUs</label>
+            <input
+              type="number"
+              className="input"
+              value={editFormData.vcpus}
+              onChange={(e) =>
+                setEditFormData({ ...editFormData, vcpus: parseInt(e.target.value) })
+              }
+              min={1}
+              max={16}
+              required
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Number of virtual CPUs (1-16)
+            </p>
+          </div>
+
+          <div>
+            <label className="label">Memory (MB)</label>
+            <input
+              type="number"
+              className="input"
+              value={editFormData.memory_mb}
+              onChange={(e) =>
+                setEditFormData({ ...editFormData, memory_mb: parseInt(e.target.value) })
+              }
+              min={512}
+              step={512}
+              required
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Memory size in MB (minimum 512 MB)
+            </p>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-4">
+            <button
+              type="button"
+              onClick={() => setIsEditModalOpen(false)}
+              className="btn-secondary"
+            >
+              Cancel
+            </button>
+            <button type="submit" className="btn-primary">
+              Save Changes
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      <ConfirmDialog
+        isOpen={isDeleteDialogOpen}
+        onClose={() => setIsDeleteDialogOpen(false)}
+        onConfirm={handleDeleteConfirm}
+        title="Terminate Instance"
+        message="Are you sure you want to terminate this instance? This action cannot be undone and all data will be permanently lost."
+        confirmText="Terminate"
+        cancelText="Cancel"
+        variant="danger"
+      />
     </DashboardLayout>
   );
 }

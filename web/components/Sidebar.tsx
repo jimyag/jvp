@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Server, HardDrive, Image, Key, Menu, X } from "lucide-react";
+import { Server, HardDrive, Image, Key, Menu, X, Camera } from "lucide-react";
 import { useState } from "react";
 
 const navigation = [
   { name: "Instances", href: "/instances", icon: Server },
   { name: "Volumes", href: "/volumes", icon: HardDrive },
+  { name: "Snapshots", href: "/snapshots", icon: Camera },
   { name: "Images", href: "/images", icon: Image },
   { name: "Key Pairs", href: "/keypairs", icon: Key },
 ];

@@ -6,6 +6,8 @@ import Header from "@/components/Header";
 import Table from "@/components/Table";
 import StatusBadge from "@/components/StatusBadge";
 import Modal from "@/components/Modal";
+import ConfirmDialog from "@/components/ConfirmDialog";
+import { useToast } from "@/components/ToastContainer";
 import { Plus, Trash2, Link as LinkIcon, Unlink } from "lucide-react";
 import { apiPost } from "@/lib/api";
 
@@ -24,11 +26,14 @@ interface Volume {
 }
 
 export default function VolumesPage() {
+  const toast = useToast();
   const [volumes, setVolumes] = useState<Volume[]>([]);
   const [loading, setLoading] = useState(true);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isAttachModalOpen, setIsAttachModalOpen] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [selectedVolume, setSelectedVolume] = useState<string>("");
+  const [volumeToDelete, setVolumeToDelete] = useState<string>("");
   const [formData, setFormData] = useState({
     sizeGB: 10,
     snapshotID: "",
@@ -45,7 +50,7 @@ export default function VolumesPage() {
       setVolumes(data.volumes || []);
     } catch (error) {
       console.error("Failed to fetch volumes:", error);
-      alert("Failed to load volumes. Please check if backend is running.");
+      toast.error("Failed to load volumes. Please check if backend is running.");
     } finally {
       setLoading(false);
     }
@@ -68,16 +73,21 @@ export default function VolumesPage() {
         setIsCreateModalOpen(false);
         fetchVolumes();
         setFormData({ sizeGB: 10, snapshotID: "", volumeType: "gp2" });
+        toast.success("Volume created successfully!");
+      } else {
+        const error = await response.json();
+        toast.error(`Failed to create volume: ${error.message || "Unknown error"}`);
       }
     } catch (error) {
       console.error("Failed to create volume:", error);
+      toast.error("Failed to create volume. Please try again.");
     }
   };
 
   const handleAttachVolume = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await fetch("/api/volumes/attach", {
+      const response = await fetch("/api/volumes/attach", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -85,39 +95,66 @@ export default function VolumesPage() {
           instanceID: attachData.instance_id,
         }),
       });
-      setIsAttachModalOpen(false);
-      fetchVolumes();
-      setAttachData({ instance_id: "" });
+
+      if (response.ok) {
+        setIsAttachModalOpen(false);
+        fetchVolumes();
+        setAttachData({ instance_id: "" });
+        toast.success("Volume attached successfully!");
+      } else {
+        const error = await response.json();
+        toast.error(`Failed to attach volume: ${error.message || "Unknown error"}`);
+      }
     } catch (error) {
       console.error("Failed to attach volume:", error);
+      toast.error("Failed to attach volume. Please try again.");
     }
   };
 
   const handleDetachVolume = async (volumeId: string) => {
     try {
-      await fetch("/api/volumes/detach", {
+      const response = await fetch("/api/volumes/detach", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ volumeID: volumeId }),
       });
-      fetchVolumes();
+
+      if (response.ok) {
+        fetchVolumes();
+        toast.success("Volume detached successfully!");
+      } else {
+        const error = await response.json();
+        toast.error(`Failed to detach volume: ${error.message || "Unknown error"}`);
+      }
     } catch (error) {
       console.error("Failed to detach volume:", error);
+      toast.error("Failed to detach volume. Please try again.");
     }
   };
 
-  const handleDelete = async (volumeId: string) => {
-    if (!confirm("Are you sure you want to delete this volume?")) return;
+  const handleDeleteClick = (volumeId: string) => {
+    setVolumeToDelete(volumeId);
+    setIsDeleteDialogOpen(true);
+  };
 
+  const handleDeleteConfirm = async () => {
     try {
-      await fetch("/api/volumes/delete", {
+      const response = await fetch("/api/volumes/delete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ volumeID: volumeId }),
+        body: JSON.stringify({ volumeID: volumeToDelete }),
       });
-      fetchVolumes();
+
+      if (response.ok) {
+        fetchVolumes();
+        toast.success("Volume deleted successfully!");
+      } else {
+        const error = await response.json();
+        toast.error(`Failed to delete volume: ${error.message || "Unknown error"}`);
+      }
     } catch (error) {
       console.error("Failed to delete volume:", error);
+      toast.error("Failed to delete volume. Please try again.");
     }
   };
 
@@ -185,7 +222,7 @@ export default function VolumesPage() {
               </button>
             )}
             <button
-              onClick={() => handleDelete(volume.volumeID)}
+              onClick={() => handleDeleteClick(volume.volumeID)}
               className="p-2 text-gray-600 hover:text-red-600 transition-colors"
               title="Delete"
             >
@@ -324,6 +361,17 @@ export default function VolumesPage() {
           </div>
         </form>
       </Modal>
+
+      <ConfirmDialog
+        isOpen={isDeleteDialogOpen}
+        onClose={() => setIsDeleteDialogOpen(false)}
+        onConfirm={handleDeleteConfirm}
+        title="Delete Volume"
+        message="Are you sure you want to delete this volume? This action cannot be undone and all data will be permanently lost."
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="danger"
+      />
     </DashboardLayout>
   );
 }

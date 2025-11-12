@@ -5,6 +5,8 @@ import DashboardLayout from "@/components/DashboardLayout";
 import Header from "@/components/Header";
 import Table from "@/components/Table";
 import Modal from "@/components/Modal";
+import ConfirmDialog from "@/components/ConfirmDialog";
+import { useToast } from "@/components/ToastContainer";
 import { Plus, Trash2, Download, Upload } from "lucide-react";
 
 interface KeyPair {
@@ -16,10 +18,13 @@ interface KeyPair {
 }
 
 export default function KeyPairsPage() {
+  const toast = useToast();
   const [keypairs, setKeypairs] = useState<KeyPair[]>([]);
   const [loading, setLoading] = useState(true);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [keypairToDelete, setKeypairToDelete] = useState<string>("");
   const [privateKey, setPrivateKey] = useState("");
   const [createFormData, setCreateFormData] = useState({
     name: "",
@@ -41,9 +46,12 @@ export default function KeyPairsPage() {
       if (response.ok) {
         const data = await response.json();
         setKeypairs(data.keypairs || []);
+      } else {
+        toast.error("Failed to load key pairs");
       }
     } catch (error) {
       console.error("Failed to fetch keypairs:", error);
+      toast.error("Failed to load key pairs. Please check if backend is running.");
     } finally {
       setLoading(false);
     }
@@ -67,9 +75,14 @@ export default function KeyPairsPage() {
         setPrivateKey(data.private_key);
         fetchKeypairs();
         setCreateFormData({ name: "", key_type: "rsa" });
+        toast.success("Key pair created successfully!");
+      } else {
+        const error = await response.json();
+        toast.error(`Failed to create key pair: ${error.message || "Unknown error"}`);
       }
     } catch (error) {
       console.error("Failed to create keypair:", error);
+      toast.error("Failed to create key pair. Please try again.");
     }
   };
 
@@ -86,9 +99,14 @@ export default function KeyPairsPage() {
         setIsImportModalOpen(false);
         fetchKeypairs();
         setImportFormData({ name: "", public_key: "" });
+        toast.success("Key pair imported successfully!");
+      } else {
+        const error = await response.json();
+        toast.error(`Failed to import key pair: ${error.message || "Unknown error"}`);
       }
     } catch (error) {
       console.error("Failed to import keypair:", error);
+      toast.error("Failed to import key pair. Please try again.");
     }
   };
 
@@ -102,20 +120,32 @@ export default function KeyPairsPage() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    toast.success("Private key downloaded successfully!");
   };
 
-  const handleDelete = async (keypairName: string) => {
-    if (!confirm("Are you sure you want to delete this key pair?")) return;
+  const handleDeleteClick = (keypairName: string) => {
+    setKeypairToDelete(keypairName);
+    setIsDeleteDialogOpen(true);
+  };
 
+  const handleDeleteConfirm = async () => {
     try {
-      await fetch("/api/keypairs/delete", {
+      const response = await fetch("/api/keypairs/delete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ keypair_id: keypairName }),
+        body: JSON.stringify({ keypair_id: keypairToDelete }),
       });
-      fetchKeypairs();
+
+      if (response.ok) {
+        fetchKeypairs();
+        toast.success("Key pair deleted successfully!");
+      } else {
+        const error = await response.json();
+        toast.error(`Failed to delete key pair: ${error.message || "Unknown error"}`);
+      }
     } catch (error) {
       console.error("Failed to delete keypair:", error);
+      toast.error("Failed to delete key pair. Please try again.");
     }
   };
 
@@ -146,7 +176,7 @@ export default function KeyPairsPage() {
         return (
           <div className="flex gap-2">
             <button
-              onClick={() => handleDelete(keypair.name)}
+              onClick={() => handleDeleteClick(keypair.name)}
               className="p-2 text-gray-600 hover:text-red-600 transition-colors"
               title="Delete"
             >
@@ -342,6 +372,17 @@ export default function KeyPairsPage() {
           </div>
         </form>
       </Modal>
+
+      <ConfirmDialog
+        isOpen={isDeleteDialogOpen}
+        onClose={() => setIsDeleteDialogOpen(false)}
+        onConfirm={handleDeleteConfirm}
+        title="Delete Key Pair"
+        message="Are you sure you want to delete this key pair? This action cannot be undone and you will lose access to any instances using this key."
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="danger"
+      />
     </DashboardLayout>
   );
 }
