@@ -52,7 +52,8 @@ func setupTestServices(t *testing.T) *TestServices {
 	mockLibvirt.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil)
 
 	// 创建 StorageService
-	storageService, err := NewStorageService(mockLibvirt)
+	volumeRepo := repository.NewVolumeRepository(repo.DB())
+	storageService, err := NewStorageService(mockLibvirt, volumeRepo)
 	require.NoError(t, err)
 
 	// 创建 mock qemu-img client

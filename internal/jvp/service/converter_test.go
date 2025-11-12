@@ -109,7 +109,8 @@ func TestNewInstanceService(t *testing.T) {
 		mockLibvirtClient.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil)
 
 		// 创建 StorageService
-		storageService, err := NewStorageService(mockLibvirtClient)
+		volumeRepo := repository.NewVolumeRepository(repo.DB())
+		storageService, err := NewStorageService(mockLibvirtClient, volumeRepo)
 		require.NoError(t, err)
 
 		// 创建 ImageService

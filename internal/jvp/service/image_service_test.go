@@ -66,7 +66,8 @@ func setupTestImageService(t *testing.T) (*ImageService, *repository.Repository,
 	mockLibvirtClient.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil)
 
 	// 创建 StorageService
-	storageService, err := NewStorageService(mockLibvirtClient)
+	volumeRepo := repository.NewVolumeRepository(repo.DB())
+	storageService, err := NewStorageService(mockLibvirtClient, volumeRepo)
 	require.NoError(t, err)
 
 	// 创建 mock qemu-img client
@@ -240,7 +241,8 @@ func TestImageService_GetImage(t *testing.T) {
 			mockClientForTest.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil)
 
 			// 创建独立的 StorageService
-			storageService, err := NewStorageService(mockClientForTest)
+			volumeRepo := repository.NewVolumeRepository(repo.DB())
+			storageService, err := NewStorageService(mockClientForTest, volumeRepo)
 			require.NoError(t, err)
 
 			// 创建独立的 mock qemu-img client
@@ -514,7 +516,8 @@ func TestNewImageService(t *testing.T) {
 	mockLibvirtClient.On("EnsureStoragePool", "default", "dir", mock.AnythingOfType("string")).Return(nil)
 	mockLibvirtClient.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil)
 
-	storageService, err := NewStorageService(mockLibvirtClient)
+	volumeRepo := repository.NewVolumeRepository(repo.DB())
+	storageService, err := NewStorageService(mockLibvirtClient, volumeRepo)
 	require.NoError(t, err)
 
 	imageService, err := NewImageService(storageService, mockLibvirtClient, repo)
@@ -608,7 +611,8 @@ func TestImageService_CreateImageFromInstance(t *testing.T) {
 			mockClientForTest.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil)
 
 			// 创建独立的 StorageService
-			storageService, err := NewStorageService(mockClientForTest)
+			volumeRepo := repository.NewVolumeRepository(repo.DB())
+			storageService, err := NewStorageService(mockClientForTest, volumeRepo)
 			require.NoError(t, err)
 
 			// 创建独立的 mock qemu-img client
@@ -704,7 +708,8 @@ func TestImageService_DownloadImage(t *testing.T) {
 			mockClientForTest.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil)
 
 			// 创建独立的 StorageService
-			storageService, err := NewStorageService(mockClientForTest)
+			volumeRepo := repository.NewVolumeRepository(repo.DB())
+			storageService, err := NewStorageService(mockClientForTest, volumeRepo)
 			require.NoError(t, err)
 
 			// 创建独立的 mock qemu-img client
@@ -766,7 +771,8 @@ func TestImageService_EnsureDefaultImages(t *testing.T) {
 	mockClientForTest.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil)
 
 	// 创建独立的 StorageService
-	storageService, err := NewStorageService(mockClientForTest)
+	volumeRepo := repository.NewVolumeRepository(repo.DB())
+	storageService, err := NewStorageService(mockClientForTest, volumeRepo)
 	require.NoError(t, err)
 
 	// 创建独立的 mock qemu-img client

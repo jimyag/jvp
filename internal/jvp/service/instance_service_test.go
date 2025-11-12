@@ -58,7 +58,8 @@ func setupTestInstanceService(t *testing.T) (*InstanceService, *ImageService, *S
 	mockLibvirtClient.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil)
 
 	// 创建 StorageService
-	storageService, err := NewStorageService(mockLibvirtClient)
+	volumeRepo := repository.NewVolumeRepository(repo.DB())
+	storageService, err := NewStorageService(mockLibvirtClient, volumeRepo)
 	require.NoError(t, err)
 
 	// 创建 mock qemu-img client
@@ -373,7 +374,8 @@ func TestInstanceService_StopInstances(t *testing.T) {
 			mockClientForTest.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil)
 
 			// 创建独立的 StorageService
-			storageService, err := NewStorageService(mockClientForTest)
+			volumeRepo := repository.NewVolumeRepository(repo.DB())
+			storageService, err := NewStorageService(mockClientForTest, volumeRepo)
 			require.NoError(t, err)
 
 			// 创建新的 instanceService 实例用于此测试
@@ -698,7 +700,8 @@ func TestInstanceService_ModifyInstanceAttribute(t *testing.T) {
 			mockClientForTest.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil)
 
 			// 创建独立的 StorageService
-			storageService, err := NewStorageService(mockClientForTest)
+			volumeRepo := repository.NewVolumeRepository(repo.DB())
+			storageService, err := NewStorageService(mockClientForTest, volumeRepo)
 			require.NoError(t, err)
 
 			// 创建新的 instanceService 实例用于此测试

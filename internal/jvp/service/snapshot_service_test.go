@@ -57,7 +57,8 @@ func setupTestSnapshotService(t *testing.T) (*SnapshotService, *repository.Repos
 	mockLibvirtClient.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil)
 
 	// 创建 StorageService
-	storageService, err := NewStorageService(mockLibvirtClient)
+	volumeRepo := repository.NewVolumeRepository(repo.DB())
+	storageService, err := NewStorageService(mockLibvirtClient, volumeRepo)
 	require.NoError(t, err)
 
 	// 创建 mock qemu-img client
@@ -310,7 +311,8 @@ func TestSnapshotService_CopyEBSSnapshot(t *testing.T) {
 			testMockQemuImgClient := qemuimg.NewMockClient()
 
 			// 创建独立的 StorageService
-			testStorageService, err := NewStorageService(testMockClient)
+			volumeRepo := repository.NewVolumeRepository(testRepo.DB())
+			testStorageService, err := NewStorageService(testMockClient, volumeRepo)
 			require.NoError(t, err)
 
 			// 创建独立的 SnapshotService
@@ -557,7 +559,8 @@ func TestNewSnapshotService(t *testing.T) {
 	mockLibvirtClient.On("EnsureStoragePool", "default", "dir", mock.AnythingOfType("string")).Return(nil)
 	mockLibvirtClient.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil)
 
-	storageService, err := NewStorageService(mockLibvirtClient)
+	volumeRepo := repository.NewVolumeRepository(repo.DB())
+	storageService, err := NewStorageService(mockLibvirtClient, volumeRepo)
 	require.NoError(t, err)
 
 	snapshotService := NewSnapshotService(storageService, mockLibvirtClient, repo)

@@ -42,7 +42,8 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 
 	// 2. 创建 Storage Service
-	storageService, err := service.NewStorageService(libvirtClient)
+	volumeRepo := repository.NewVolumeRepository(repo.DB())
+	storageService, err := service.NewStorageService(libvirtClient, volumeRepo)
 	if err != nil {
 		return nil, err
 	}

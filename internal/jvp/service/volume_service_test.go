@@ -61,7 +61,8 @@ func setupTestVolumeService(t *testing.T) (*VolumeService, *repository.Repositor
 	mockLibvirtClient.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil)
 
 	// 创建 StorageService
-	storageService, err := NewStorageService(mockLibvirtClient)
+	volumeRepo := repository.NewVolumeRepository(repo.DB())
+	storageService, err := NewStorageService(mockLibvirtClient, volumeRepo)
 	require.NoError(t, err)
 
 	// 创建 InstanceService（简化版本，只用于测试）
@@ -906,7 +907,8 @@ func TestNewVolumeService(t *testing.T) {
 	mockLibvirtClient.On("EnsureStoragePool", "default", "dir", mock.AnythingOfType("string")).Return(nil)
 	mockLibvirtClient.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil)
 
-	storageService, err := NewStorageService(mockLibvirtClient)
+	volumeRepo := repository.NewVolumeRepository(repo.DB())
+	storageService, err := NewStorageService(mockLibvirtClient, volumeRepo)
 	require.NoError(t, err)
 
 	mockQemuImgClient := qemuimg.NewMockClient()

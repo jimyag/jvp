@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/jimyag/jvp/internal/jvp/entity"
+	"github.com/jimyag/jvp/internal/jvp/repository"
+	"github.com/jimyag/jvp/internal/jvp/repository/model"
 	"github.com/jimyag/jvp/pkg/idgen"
 	"github.com/jimyag/jvp/pkg/libvirt"
 	"github.com/jimyag/jvp/pkg/qemuimg"
@@ -20,6 +23,7 @@ type StorageService struct {
 	libvirtClient libvirt.LibvirtClient
 	qemuImgClient qemuimg.QemuImgClient
 	idGen         *idgen.Generator
+	volumeRepo    repository.VolumeRepository
 
 	// 默认 pool 配置
 	defaultPoolName string
@@ -31,6 +35,7 @@ type StorageService struct {
 // NewStorageService 创建新的 Storage Service
 func NewStorageService(
 	libvirtClient libvirt.LibvirtClient,
+	volumeRepo repository.VolumeRepository,
 ) (*StorageService, error) {
 	// 默认配置
 	defaultPoolName := "default"
@@ -42,6 +47,7 @@ func NewStorageService(
 		libvirtClient:   libvirtClient,
 		qemuImgClient:   qemuimg.New(""), // 默认使用真实客户端
 		idGen:           idgen.New(),
+		volumeRepo:      volumeRepo,
 		defaultPoolName: defaultPoolName,
 		defaultPoolPath: defaultPoolPath,
 		imagesPoolName:  imagesPoolName,
@@ -248,6 +254,27 @@ func (s *StorageService) CreateVolumeFromImage(
 		Str("volume_id", volumeID).
 		Str("path", volInfo.Path).
 		Msg("Volume created from image successfully")
+
+	// 保存到数据库
+	volumeModel := &model.Volume{
+		ID:         volumeID,
+		SizeGB:     req.SizeGB,
+		SnapshotID: req.ImageID, // 使用 ImageID 作为来源镜像记录
+		State:      "available",
+		VolumeType: "gp2", // 默认类型
+		CreateTime: time.Now(),
+		UpdatedAt:  time.Now(),
+	}
+
+	if err := s.volumeRepo.Create(ctx, volumeModel); err != nil {
+		// 保存失败时清理已创建的 libvirt volume
+		_ = s.libvirtClient.DeleteVolume(s.defaultPoolName, volumeName)
+		return nil, fmt.Errorf("save volume to database: %w", err)
+	}
+
+	logger.Info().
+		Str("volume_id", volumeID).
+		Msg("Volume saved to database")
 
 	return &entity.Volume{
 		ID:          volumeID,
