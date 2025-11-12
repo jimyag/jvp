@@ -575,17 +575,26 @@ func (s *InstanceService) StopInstances(ctx context.Context, req *entity.StopIns
 		Msg("Stopping instances")
 
 	var changes []entity.InstanceStateChange
+	var lastError error
 
 	for _, instanceID := range req.InstanceIDs {
 		// 获取当前状态
 		instance, err := s.GetInstance(ctx, instanceID)
 		if err != nil {
-			continue
+			logger.Error().
+				Str("instanceID", instanceID).
+				Err(err).
+				Msg("Failed to get instance")
+			lastError = err
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Instance not found", err)
 		}
 		previousState := instance.State
 
 		if instance.State == "stopped" {
 			// 已经停止，跳过
+			logger.Info().
+				Str("instanceID", instanceID).
+				Msg("Instance already stopped, skipping")
 			changes = append(changes, entity.InstanceStateChange{
 				InstanceID:    instanceID,
 				CurrentState:  "stopped",
@@ -597,34 +606,66 @@ func (s *InstanceService) StopInstances(ctx context.Context, req *entity.StopIns
 		// 获取 domain
 		domain, err := s.libvirtClient.GetDomainByName(instanceID)
 		if err != nil {
-			continue
+			logger.Error().
+				Str("instanceID", instanceID).
+				Err(err).
+				Msg("Failed to get domain from libvirt")
+			lastError = err
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get domain from libvirt", err)
 		}
 
 		// 停止 domain
 		if req.Force {
 			// 强制停止
+			logger.Info().
+				Str("instanceID", instanceID).
+				Msg("Force stopping domain")
 			err = s.libvirtClient.DestroyDomain(domain)
 		} else {
 			// 优雅停止
+			logger.Info().
+				Str("instanceID", instanceID).
+				Msg("Gracefully stopping domain")
 			err = s.libvirtClient.StopDomain(domain)
 		}
 
 		if err != nil {
 			logger.Error().
 				Str("instanceID", instanceID).
+				Bool("force", req.Force).
 				Err(err).
 				Msg("Failed to stop domain")
-			continue
+			lastError = err
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to stop domain", err)
 		}
+
+		logger.Info().
+			Str("instanceID", instanceID).
+			Msg("Domain stop command sent successfully")
 
 		// 更新数据库状态
 		instanceModel, err := s.instanceRepo.GetByID(ctx, instanceID)
-		if err == nil {
-			instanceModel.State = "stopped"
-			if err := s.instanceRepo.Update(ctx, instanceModel); err != nil {
-				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update instance state in database", err)
-			}
+		if err != nil {
+			logger.Error().
+				Str("instanceID", instanceID).
+				Err(err).
+				Msg("Failed to get instance from database")
+			lastError = err
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get instance from database", err)
 		}
+
+		instanceModel.State = "stopped"
+		if err := s.instanceRepo.Update(ctx, instanceModel); err != nil {
+			logger.Error().
+				Str("instanceID", instanceID).
+				Err(err).
+				Msg("Failed to update instance state in database")
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update instance state in database", err)
+		}
+
+		logger.Info().
+			Str("instanceID", instanceID).
+			Msg("Instance state updated in database")
 
 		changes = append(changes, entity.InstanceStateChange{
 			InstanceID:    instanceID,
@@ -634,8 +675,21 @@ func (s *InstanceService) StopInstances(ctx context.Context, req *entity.StopIns
 
 		logger.Info().
 			Str("instanceID", instanceID).
+			Str("previousState", previousState).
+			Str("currentState", "stopped").
 			Msg("Instance stopped successfully")
 	}
+
+	if lastError != nil {
+		logger.Error().
+			Err(lastError).
+			Msg("Some instances failed to stop")
+		return changes, lastError
+	}
+
+	logger.Info().
+		Int("successCount", len(changes)).
+		Msg("All instances stopped successfully")
 
 	return changes, nil
 }
@@ -648,17 +702,26 @@ func (s *InstanceService) StartInstances(ctx context.Context, req *entity.StartI
 		Msg("Starting instances")
 
 	var changes []entity.InstanceStateChange
+	var lastError error
 
 	for _, instanceID := range req.InstanceIDs {
 		// 获取当前状态
 		instance, err := s.GetInstance(ctx, instanceID)
 		if err != nil {
-			continue
+			logger.Error().
+				Str("instanceID", instanceID).
+				Err(err).
+				Msg("Failed to get instance")
+			lastError = err
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Instance not found", err)
 		}
 		previousState := instance.State
 
 		if instance.State == "running" {
 			// 已经运行，跳过
+			logger.Info().
+				Str("instanceID", instanceID).
+				Msg("Instance already running, skipping")
 			changes = append(changes, entity.InstanceStateChange{
 				InstanceID:    instanceID,
 				CurrentState:  "running",
@@ -670,27 +733,55 @@ func (s *InstanceService) StartInstances(ctx context.Context, req *entity.StartI
 		// 获取 domain
 		domain, err := s.libvirtClient.GetDomainByName(instanceID)
 		if err != nil {
-			continue
+			logger.Error().
+				Str("instanceID", instanceID).
+				Err(err).
+				Msg("Failed to get domain from libvirt")
+			lastError = err
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get domain from libvirt", err)
 		}
 
 		// 启动 domain
+		logger.Info().
+			Str("instanceID", instanceID).
+			Msg("Starting domain")
 		err = s.libvirtClient.StartDomain(domain)
 		if err != nil {
 			logger.Error().
 				Str("instanceID", instanceID).
 				Err(err).
 				Msg("Failed to start domain")
-			continue
+			lastError = err
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to start domain", err)
 		}
+
+		logger.Info().
+			Str("instanceID", instanceID).
+			Msg("Domain start command sent successfully")
 
 		// 更新数据库状态
 		instanceModel, err := s.instanceRepo.GetByID(ctx, instanceID)
-		if err == nil {
-			instanceModel.State = "running"
-			if err := s.instanceRepo.Update(ctx, instanceModel); err != nil {
-				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update instance state in database", err)
-			}
+		if err != nil {
+			logger.Error().
+				Str("instanceID", instanceID).
+				Err(err).
+				Msg("Failed to get instance from database")
+			lastError = err
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get instance from database", err)
 		}
+
+		instanceModel.State = "running"
+		if err := s.instanceRepo.Update(ctx, instanceModel); err != nil {
+			logger.Error().
+				Str("instanceID", instanceID).
+				Err(err).
+				Msg("Failed to update instance state in database")
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update instance state in database", err)
+		}
+
+		logger.Info().
+			Str("instanceID", instanceID).
+			Msg("Instance state updated in database")
 
 		changes = append(changes, entity.InstanceStateChange{
 			InstanceID:    instanceID,
@@ -700,8 +791,21 @@ func (s *InstanceService) StartInstances(ctx context.Context, req *entity.StartI
 
 		logger.Info().
 			Str("instanceID", instanceID).
+			Str("previousState", previousState).
+			Str("currentState", "running").
 			Msg("Instance started successfully")
 	}
+
+	if lastError != nil {
+		logger.Error().
+			Err(lastError).
+			Msg("Some instances failed to start")
+		return changes, lastError
+	}
+
+	logger.Info().
+		Int("successCount", len(changes)).
+		Msg("All instances started successfully")
 
 	return changes, nil
 }
@@ -714,22 +818,36 @@ func (s *InstanceService) RebootInstances(ctx context.Context, req *entity.Reboo
 		Msg("Rebooting instances")
 
 	var changes []entity.InstanceStateChange
+	var lastError error
 
 	for _, instanceID := range req.InstanceIDs {
 		// 获取当前状态
 		instance, err := s.GetInstance(ctx, instanceID)
 		if err != nil {
-			continue
+			logger.Error().
+				Str("instanceID", instanceID).
+				Err(err).
+				Msg("Failed to get instance")
+			lastError = err
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Instance not found", err)
 		}
 		previousState := instance.State
 
 		if instance.State == "stopped" {
 			// 如果已停止，先启动
+			logger.Info().
+				Str("instanceID", instanceID).
+				Msg("Instance is stopped, starting before reboot")
 			_, err = s.StartInstances(ctx, &entity.StartInstancesRequest{
 				InstanceIDs: []string{instanceID},
 			})
 			if err != nil {
-				continue
+				logger.Error().
+					Str("instanceID", instanceID).
+					Err(err).
+					Msg("Failed to start instance before reboot")
+				lastError = err
+				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to start instance before reboot", err)
 			}
 			previousState = "running"
 		}
@@ -737,27 +855,55 @@ func (s *InstanceService) RebootInstances(ctx context.Context, req *entity.Reboo
 		// 获取 domain
 		domain, err := s.libvirtClient.GetDomainByName(instanceID)
 		if err != nil {
-			continue
+			logger.Error().
+				Str("instanceID", instanceID).
+				Err(err).
+				Msg("Failed to get domain from libvirt")
+			lastError = err
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get domain from libvirt", err)
 		}
 
 		// 重启 domain
+		logger.Info().
+			Str("instanceID", instanceID).
+			Msg("Rebooting domain")
 		err = s.libvirtClient.RebootDomain(domain)
 		if err != nil {
 			logger.Error().
 				Str("instanceID", instanceID).
 				Err(err).
 				Msg("Failed to reboot domain")
-			continue
+			lastError = err
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to reboot domain", err)
 		}
+
+		logger.Info().
+			Str("instanceID", instanceID).
+			Msg("Domain reboot command sent successfully")
 
 		// 更新数据库状态
 		instanceModel, err := s.instanceRepo.GetByID(ctx, instanceID)
-		if err == nil {
-			instanceModel.State = "running" // 重启后状态为 running
-			if err := s.instanceRepo.Update(ctx, instanceModel); err != nil {
-				logger.Warn().Err(err).Str("instance_id", instanceID).Msg("Failed to update instance state in database")
-			}
+		if err != nil {
+			logger.Error().
+				Str("instanceID", instanceID).
+				Err(err).
+				Msg("Failed to get instance from database")
+			lastError = err
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get instance from database", err)
 		}
+
+		instanceModel.State = "running" // 重启后状态为 running
+		if err := s.instanceRepo.Update(ctx, instanceModel); err != nil {
+			logger.Error().
+				Str("instanceID", instanceID).
+				Err(err).
+				Msg("Failed to update instance state in database")
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update instance state in database", err)
+		}
+
+		logger.Info().
+			Str("instanceID", instanceID).
+			Msg("Instance state updated in database")
 
 		changes = append(changes, entity.InstanceStateChange{
 			InstanceID:    instanceID,
@@ -767,8 +913,21 @@ func (s *InstanceService) RebootInstances(ctx context.Context, req *entity.Reboo
 
 		logger.Info().
 			Str("instanceID", instanceID).
+			Str("previousState", previousState).
+			Str("currentState", "running").
 			Msg("Instance rebooted successfully")
 	}
+
+	if lastError != nil {
+		logger.Error().
+			Err(lastError).
+			Msg("Some instances failed to reboot")
+		return changes, lastError
+	}
+
+	logger.Info().
+		Int("successCount", len(changes)).
+		Msg("All instances rebooted successfully")
 
 	return changes, nil
 }
