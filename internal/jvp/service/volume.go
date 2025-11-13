@@ -354,11 +354,19 @@ func (s *VolumeService) DescribeEBSVolumes(ctx context.Context, req *entity.Desc
 			volume, err := s.DescribeEBSVolume(ctx, volumeID)
 			if err != nil {
 				// 如果卷不存在，跳过
-				logger.Warn().Err(err).Str("volumeID", volumeID).Msg("Volume not found, skipping")
+				logger.Warn().
+					Err(err).
+					Str("volumeID", volumeID).
+					Msg("Volume not found, skipping")
 				continue
 			}
 			volumes = append(volumes, *volume)
 		}
+
+		logger.Info().
+			Int("requested", len(req.VolumeIDs)).
+			Int("found", len(volumes)).
+			Msg("Describe volumes by IDs completed")
 	} else {
 		// 构建过滤器
 		filters := make(map[string]interface{})
@@ -384,23 +392,42 @@ func (s *VolumeService) DescribeEBSVolumes(ctx context.Context, req *entity.Desc
 		// 优先从数据库查询
 		volumeModels, err := s.volumeRepo.List(ctx, filters)
 		if err != nil {
+			logger.Error().
+				Err(err).
+				Msg("Failed to list volumes from database")
 			return nil, fmt.Errorf("list volumes from database: %w", err)
 		}
+
+		logger.Info().
+			Int("totalInDB", len(volumeModels)).
+			Msg("Retrieved volumes from database")
 
 		for _, volumeModel := range volumeModels {
 			volume, err := volumeModelToEntity(volumeModel)
 			if err != nil {
-				logger.Warn().Err(err).Str("volumeID", volumeModel.ID).Msg("Failed to convert volume model to entity")
+				logger.Warn().
+					Err(err).
+					Str("volumeID", volumeModel.ID).
+					Msg("Failed to convert volume model to entity, skipping")
 				continue
 			}
 			// 补充附加信息
 			volumeWithAttachments, err := s.enrichVolumeWithAttachments(ctx, volume)
 			if err != nil {
-				logger.Warn().Err(err).Str("volumeID", volumeModel.ID).Msg("Failed to enrich volume with attachments")
+				logger.Warn().
+					Err(err).
+					Str("volumeID", volumeModel.ID).
+					Msg("Failed to enrich volume with attachments, using basic info")
+				volumes = append(volumes, *volume)
 			} else {
 				volumes = append(volumes, *volumeWithAttachments)
 			}
 		}
+
+		logger.Info().
+			Int("totalInDB", len(volumeModels)).
+			Int("converted", len(volumes)).
+			Msg("Describe all volumes completed")
 	}
 
 	// 应用其他过滤器（不在数据库中的）
@@ -453,6 +480,8 @@ func (s *VolumeService) DescribeEBSVolume(ctx context.Context, volumeID string) 
 
 // enrichVolumeWithAttachments 补充卷的附加信息
 func (s *VolumeService) enrichVolumeWithAttachments(ctx context.Context, volume *entity.EBSVolume) (*entity.EBSVolume, error) {
+	logger := zerolog.Ctx(ctx)
+
 	// 获取卷的路径
 	internalVolume, err := s.storageService.GetVolume(ctx, volume.VolumeID)
 	if err != nil {
@@ -470,6 +499,11 @@ func (s *VolumeService) enrichVolumeWithAttachments(ctx context.Context, volume 
 		for _, domain := range domains {
 			disks, err := s.libvirtClient.GetDomainDisks(domain.Name)
 			if err != nil {
+				logger.Warn().
+					Str("volumeID", volume.VolumeID).
+					Str("domainName", domain.Name).
+					Err(err).
+					Msg("Failed to get domain disks, skipping")
 				continue
 			}
 			for _, disk := range disks {

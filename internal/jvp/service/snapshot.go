@@ -142,16 +142,27 @@ func (s *SnapshotService) DescribeEBSSnapshots(ctx context.Context, req *entity.
 		for _, snapshotID := range req.SnapshotIDs {
 			snapshotModel, err := s.snapshotRepo.GetByID(ctx, snapshotID)
 			if err != nil {
-				logger.Warn().Err(err).Str("snapshotID", snapshotID).Msg("Snapshot not found, skipping")
+				logger.Warn().
+					Err(err).
+					Str("snapshotID", snapshotID).
+					Msg("Snapshot not found, skipping")
 				continue
 			}
 			snapshot, err := snapshotModelToEntity(snapshotModel)
 			if err != nil {
-				logger.Warn().Err(err).Str("snapshotID", snapshotID).Msg("Failed to convert snapshot model to entity")
+				logger.Error().
+					Err(err).
+					Str("snapshotID", snapshotID).
+					Msg("Failed to convert snapshot model to entity, skipping")
 				continue
 			}
 			snapshots = append(snapshots, *snapshot)
 		}
+
+		logger.Info().
+			Int("requested", len(req.SnapshotIDs)).
+			Int("found", len(snapshots)).
+			Msg("Describe snapshots by IDs completed")
 	} else {
 		// 应用过滤器
 		if len(req.Filters) > 0 {
@@ -176,17 +187,32 @@ func (s *SnapshotService) DescribeEBSSnapshots(ctx context.Context, req *entity.
 		// 从数据库查询
 		snapshotModels, err := s.snapshotRepo.List(ctx, filters)
 		if err != nil {
+			logger.Error().
+				Err(err).
+				Msg("Failed to list snapshots from database")
 			return nil, fmt.Errorf("list snapshots from database: %w", err)
 		}
+
+		logger.Info().
+			Int("totalInDB", len(snapshotModels)).
+			Msg("Retrieved snapshots from database")
 
 		for _, snapshotModel := range snapshotModels {
 			snapshot, err := snapshotModelToEntity(snapshotModel)
 			if err != nil {
-				logger.Warn().Err(err).Str("snapshotID", snapshotModel.ID).Msg("Failed to convert snapshot model to entity")
+				logger.Warn().
+					Err(err).
+					Str("snapshotID", snapshotModel.ID).
+					Msg("Failed to convert snapshot model to entity, skipping")
 				continue
 			}
 			snapshots = append(snapshots, *snapshot)
 		}
+
+		logger.Info().
+			Int("totalInDB", len(snapshotModels)).
+			Int("converted", len(snapshots)).
+			Msg("Describe all snapshots completed")
 	}
 
 	// 应用分页

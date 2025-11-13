@@ -247,16 +247,28 @@ func (s *ImageService) DescribeImages(ctx context.Context, req *entity.DescribeI
 			}
 			images = append(images, *image)
 		}
+
+		logger.Info().
+			Int("requested", len(req.ImageIDs)).
+			Int("found", len(images)).
+			Msg("Describe images by IDs completed")
 	} else {
 		// 列出所有镜像
 		imageList, err := s.ListImages(ctx)
 		if err != nil {
+			logger.Error().
+				Err(err).
+				Msg("Failed to list images")
 			return nil, fmt.Errorf("list images: %w", err)
 		}
 
 		for _, img := range imageList {
 			images = append(images, *img)
 		}
+
+		logger.Info().
+			Int("total", len(images)).
+			Msg("Describe all images completed")
 	}
 
 	// TODO: 应用过滤器和分页
@@ -273,18 +285,33 @@ func (s *ImageService) ListImages(ctx context.Context) ([]*entity.Image, error) 
 	filters := make(map[string]interface{})
 	imageModels, err := s.imageRepo.List(ctx, filters)
 	if err != nil {
+		logger.Error().
+			Err(err).
+			Msg("Failed to list images from database")
 		return nil, fmt.Errorf("list images from database: %w", err)
 	}
+
+	logger.Info().
+		Int("totalInDB", len(imageModels)).
+		Msg("Retrieved images from database")
 
 	images := make([]*entity.Image, 0, len(imageModels))
 	for _, imageModel := range imageModels {
 		image, err := imageModelToEntity(imageModel)
 		if err != nil {
-			logger.Warn().Err(err).Str("image_id", imageModel.ID).Msg("Failed to convert image model to entity")
+			logger.Warn().
+				Err(err).
+				Str("image_id", imageModel.ID).
+				Msg("Failed to convert image model to entity, skipping")
 			continue
 		}
 		images = append(images, image)
 	}
+
+	logger.Info().
+		Int("totalInDB", len(imageModels)).
+		Int("converted", len(images)).
+		Msg("Converted images from database")
 
 	// 同时添加默认镜像（如果已下载但未注册到数据库）
 	// 确保目录存在

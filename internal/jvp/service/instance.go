@@ -371,37 +371,68 @@ func (s *InstanceService) DescribeInstances(ctx context.Context, req *entity.Des
 			instanceModel, err := s.instanceRepo.GetByID(ctx, instanceID)
 			if err != nil {
 				// 如果数据库中没有，尝试从 Libvirt 查询（兼容旧数据）
+				logger.Info().
+					Str("instanceID", instanceID).
+					Msg("Instance not found in database, trying to query from libvirt")
 				instance, err := s.GetInstance(ctx, instanceID)
 				if err != nil {
+					logger.Warn().
+						Str("instanceID", instanceID).
+						Err(err).
+						Msg("Failed to get instance from both database and libvirt, skipping")
 					continue
 				}
 				instances = append(instances, *instance)
 			} else {
 				instance, err := instanceModelToEntity(instanceModel)
 				if err != nil {
+					logger.Error().
+						Str("instanceID", instanceID).
+						Err(err).
+						Msg("Failed to convert instance model to entity, skipping")
 					continue
 				}
 				instances = append(instances, *instance)
 			}
 		}
+
+		logger.Info().
+			Int("requested", len(req.InstanceIDs)).
+			Int("found", len(instances)).
+			Msg("Describe instances by IDs completed")
 		return instances, nil
 	}
 
 	// 列出所有实例
 	instanceModels, err := s.instanceRepo.List(ctx, filters)
 	if err != nil {
+		logger.Error().
+			Err(err).
+			Msg("Failed to list instances from database")
 		return nil, fmt.Errorf("list instances from database: %w", err)
 	}
+
+	logger.Info().
+		Int("totalInDB", len(instanceModels)).
+		Msg("Retrieved instances from database")
 
 	instances := make([]entity.Instance, 0, len(instanceModels))
 	for _, instanceModel := range instanceModels {
 		instance, err := instanceModelToEntity(instanceModel)
 		if err != nil {
-			logger.Warn().Err(err).Str("instance_id", instanceModel.ID).Msg("Failed to convert instance model to entity")
+			logger.Warn().
+				Err(err).
+				Str("instance_id", instanceModel.ID).
+				Msg("Failed to convert instance model to entity, skipping")
 			continue
 		}
 		instances = append(instances, *instance)
 	}
+
+	logger.Info().
+		Int("totalInDB", len(instanceModels)).
+		Int("converted", len(instances)).
+		Msg("Describe all instances completed")
 
 	// TODO: 应用过滤器
 
@@ -504,53 +535,101 @@ func (s *InstanceService) TerminateInstances(ctx context.Context, req *entity.Te
 		Msg("Terminating instances")
 
 	var changes []entity.InstanceStateChange
+	var lastError error
 
 	for _, instanceID := range req.InstanceIDs {
 		// 获取当前状态
 		instance, err := s.GetInstance(ctx, instanceID)
 		if err != nil {
-			// 如果实例不存在，跳过
-			continue
+			logger.Error().
+				Str("instanceID", instanceID).
+				Err(err).
+				Msg("Failed to get instance")
+			lastError = err
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Instance not found", err)
 		}
 		previousState := instance.State
 
 		// 获取 domain
 		domain, err := s.libvirtClient.GetDomainByName(instanceID)
 		if err != nil {
-			logger.Warn().
+			logger.Error().
 				Str("instanceID", instanceID).
 				Err(err).
-				Msg("Failed to get domain, skipping")
-			continue
+				Msg("Failed to get domain from libvirt")
+			lastError = err
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get domain from libvirt", err)
 		}
 
 		// 删除 domain（会先停止运行中的实例）
+		logger.Info().
+			Str("instanceID", instanceID).
+			Msg("Deleting domain from libvirt")
 		err = s.libvirtClient.DeleteDomain(domain, libvirtlib.DomainUndefineFlagsValues(0))
 		if err != nil {
 			logger.Error().
 				Str("instanceID", instanceID).
 				Err(err).
 				Msg("Failed to delete domain")
-			continue
+			lastError = err
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to delete domain", err)
 		}
+
+		logger.Info().
+			Str("instanceID", instanceID).
+			Msg("Domain deleted successfully")
 
 		// 删除关联的 volume（可选，根据配置决定）
 		if instance.VolumeID != "" {
-			_ = s.storageService.DeleteVolume(ctx, instance.VolumeID)
+			logger.Info().
+				Str("instanceID", instanceID).
+				Str("volumeID", instance.VolumeID).
+				Msg("Deleting associated volume")
+			if err := s.storageService.DeleteVolume(ctx, instance.VolumeID); err != nil {
+				logger.Warn().
+					Str("instanceID", instanceID).
+					Str("volumeID", instance.VolumeID).
+					Err(err).
+					Msg("Failed to delete associated volume, continuing")
+			}
 		}
 
 		// 更新数据库状态（软删除）
 		instanceModel, err := s.instanceRepo.GetByID(ctx, instanceID)
-		if err == nil {
-			instanceModel.State = "terminated"
-			if err := s.instanceRepo.Update(ctx, instanceModel); err != nil {
-				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update instance state in database", err)
-			}
-			// 软删除
-			if err := s.instanceRepo.Delete(ctx, instanceID); err != nil {
-				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to delete instance from database", err)
-			}
+		if err != nil {
+			logger.Error().
+				Str("instanceID", instanceID).
+				Err(err).
+				Msg("Failed to get instance from database")
+			lastError = err
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get instance from database", err)
 		}
+
+		instanceModel.State = "terminated"
+		if err := s.instanceRepo.Update(ctx, instanceModel); err != nil {
+			logger.Error().
+				Str("instanceID", instanceID).
+				Err(err).
+				Msg("Failed to update instance state in database")
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update instance state in database", err)
+		}
+
+		logger.Info().
+			Str("instanceID", instanceID).
+			Msg("Instance state updated to terminated")
+
+		// 软删除
+		if err := s.instanceRepo.Delete(ctx, instanceID); err != nil {
+			logger.Error().
+				Str("instanceID", instanceID).
+				Err(err).
+				Msg("Failed to delete instance from database")
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to delete instance from database", err)
+		}
+
+		logger.Info().
+			Str("instanceID", instanceID).
+			Msg("Instance soft deleted from database")
 
 		changes = append(changes, entity.InstanceStateChange{
 			InstanceID:    instanceID,
@@ -560,8 +639,21 @@ func (s *InstanceService) TerminateInstances(ctx context.Context, req *entity.Te
 
 		logger.Info().
 			Str("instanceID", instanceID).
+			Str("previousState", previousState).
+			Str("currentState", "terminated").
 			Msg("Instance terminated successfully")
 	}
+
+	if lastError != nil {
+		logger.Error().
+			Err(lastError).
+			Msg("Some instances failed to terminate")
+		return changes, lastError
+	}
+
+	logger.Info().
+		Int("successCount", len(changes)).
+		Msg("All instances terminated successfully")
 
 	return changes, nil
 }
