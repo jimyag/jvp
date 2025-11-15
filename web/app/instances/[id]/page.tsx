@@ -7,7 +7,7 @@ import Header from "@/components/Header";
 import StatusBadge from "@/components/StatusBadge";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { useToast } from "@/components/ToastContainer";
-import { Play, Square, RefreshCw, Trash2, ArrowLeft, Key, Edit } from "lucide-react";
+import { Play, Square, RefreshCw, Trash2, ArrowLeft, Key, Edit, Monitor } from "lucide-react";
 import { apiPost } from "@/lib/api";
 import Modal from "@/components/Modal";
 
@@ -233,6 +233,14 @@ export default function InstanceDetailPage() {
             >
               <Edit size={16} />
               Edit
+            </button>
+            <button
+              onClick={() => router.push(`/instances/${instanceId}/console`)}
+              className="btn-secondary flex items-center gap-2"
+              title="Console"
+            >
+              <Monitor size={16} />
+              Console
             </button>
             <button
               onClick={() => setIsResetPasswordModalOpen(true)}

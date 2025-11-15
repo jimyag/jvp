@@ -15,11 +15,12 @@ type API struct {
 	engine *gin.Engine
 	server *http.Server
 
-	instance *Instance
-	volume   *Volume
-	snapshot *Snapshot
-	image    *Image
-	keypair  *KeyPair
+	instance  *Instance
+	volume    *Volume
+	snapshot  *Snapshot
+	image     *Image
+	keypair   *KeyPair
+	consoleWS *ConsoleWS
 }
 
 func New(
@@ -35,12 +36,13 @@ func New(
 
 	engine := gin.Default()
 	api := &API{
-		engine:   engine,
-		instance: NewInstance(instanceService),
-		volume:   NewVolume(volumeService),
-		snapshot: NewSnapshot(snapshotService),
-		image:    NewImage(imageService),
-		keypair:  NewKeyPair(keyPairService),
+		engine:    engine,
+		instance:  NewInstance(instanceService),
+		volume:    NewVolume(volumeService),
+		snapshot:  NewSnapshot(snapshotService),
+		image:     NewImage(imageService),
+		keypair:   NewKeyPair(keyPairService),
+		consoleWS: NewConsoleWS(instanceService),
 	}
 
 	apiGroup := engine.Group("/api")
@@ -49,6 +51,7 @@ func New(
 	api.snapshot.RegisterRoutes(apiGroup)
 	api.image.RegisterRoutes(apiGroup)
 	api.keypair.RegisterRoutes(apiGroup)
+	api.consoleWS.RegisterRoutes(apiGroup)
 
 	// 打印路由信息（只显示方法和路径，不显示处理函数）
 	printRoutes(engine)

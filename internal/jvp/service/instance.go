@@ -54,6 +54,11 @@ func NewInstanceService(
 	}, nil
 }
 
+// GetLibvirtClient 获取 libvirt 客户端（用于控制台访问）
+func (s *InstanceService) GetLibvirtClient() libvirt.LibvirtClient {
+	return s.libvirtClient
+}
+
 // RunInstance 创建并启动实例
 func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstanceRequest) (*entity.Instance, error) {
 	logger := zerolog.Ctx(ctx)

@@ -41,4 +41,7 @@ type LibvirtClient interface {
 	// QEMU Guest Agent 操作
 	QemuAgentCommand(domain libvirt.Domain, command string, timeout uint32, flags uint32) (string, error)
 	CheckGuestAgentAvailable(domain libvirt.Domain) (bool, error)
+
+	// Console 操作
+	GetDomainConsoleInfo(domain libvirt.Domain) (*ConsoleInfo, error)
 }

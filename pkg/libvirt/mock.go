@@ -170,6 +170,14 @@ func (m *MockClient) CheckGuestAgentAvailable(domain libvirt.Domain) (bool, erro
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *MockClient) GetDomainConsoleInfo(domain libvirt.Domain) (*ConsoleInfo, error) {
+	args := m.Called(domain)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*ConsoleInfo), args.Error(1)
+}
+
 // NewMockClient 创建新的 MockClient
 // 这是一个便捷函数，用于在测试中创建 mock client
 func NewMockClient() *MockClient {

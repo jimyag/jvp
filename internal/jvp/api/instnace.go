@@ -20,6 +20,7 @@ type InstanceServiceInterface interface {
 	RebootInstances(ctx context.Context, req *entity.RebootInstancesRequest) ([]entity.InstanceStateChange, error)
 	ModifyInstanceAttribute(ctx context.Context, req *entity.ModifyInstanceAttributeRequest) (*entity.Instance, error)
 	ResetPassword(ctx context.Context, req *entity.ResetPasswordRequest) (*entity.ResetPasswordResponse, error)
+	GetConsoleInfo(ctx context.Context, req *entity.GetConsoleRequest) (*entity.GetConsoleResponse, error)
 }
 
 type Instance struct {
@@ -42,6 +43,7 @@ func (i *Instance) RegisterRoutes(router *gin.RouterGroup) {
 	instanceRouter.POST("/reboot", ginx.Adapt5(i.RebootInstances))
 	instanceRouter.POST("/modify-attribute", ginx.Adapt5(i.ModifyInstanceAttribute))
 	instanceRouter.POST("/reset-password", ginx.Adapt5(i.ResetPassword))
+	instanceRouter.POST("/console", ginx.Adapt5(i.GetConsole))
 }
 
 func (i *Instance) RunInstances(ctx *gin.Context, req *entity.RunInstanceRequest) (*entity.RunInstanceResponse, error) {
@@ -229,6 +231,30 @@ func (i *Instance) ResetPassword(ctx *gin.Context, req *entity.ResetPasswordRequ
 		Str("instance_id", req.InstanceID).
 		Strs("users", response.Users).
 		Msg("Password reset successfully")
+
+	return response, nil
+}
+
+func (i *Instance) GetConsole(ctx *gin.Context, req *entity.GetConsoleRequest) (*entity.GetConsoleResponse, error) {
+	logger := zerolog.Ctx(ctx)
+	logger.Info().
+		Str("instance_id", req.InstanceID).
+		Str("type", req.Type).
+		Msg("Getting instance console info")
+
+	response, err := i.instanceService.GetConsoleInfo(ctx, req)
+	if err != nil {
+		logger.Error().
+			Err(err).
+			Str("instance_id", req.InstanceID).
+			Msg("Failed to get console info")
+		return nil, err
+	}
+
+	logger.Info().
+		Str("instance_id", req.InstanceID).
+		Str("type", response.Type).
+		Msg("Console info retrieved successfully")
 
 	return response, nil
 }
