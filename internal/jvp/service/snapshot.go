@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/jimyag/jvp/internal/jvp/entity"
-	"github.com/jimyag/jvp/internal/jvp/repository"
+	"github.com/jimyag/jvp/internal/jvp/metadata"
 	"github.com/jimyag/jvp/pkg/apierror"
 	"github.com/jimyag/jvp/pkg/idgen"
 	"github.com/jimyag/jvp/pkg/libvirt"
@@ -21,21 +21,21 @@ type SnapshotService struct {
 	libvirtClient  libvirt.LibvirtClient
 	qemuImgClient  qemuimg.QemuImgClient
 	idGen          *idgen.Generator
-	snapshotRepo   repository.SnapshotRepository
+	metadataStore  metadata.SnapshotStore
 }
 
 // NewSnapshotService 创建新的 Snapshot Service
 func NewSnapshotService(
 	storageService *StorageService,
 	libvirtClient libvirt.LibvirtClient,
-	repo *repository.Repository,
+	metadataStore metadata.SnapshotStore,
 ) *SnapshotService {
 	return &SnapshotService{
 		storageService: storageService,
 		libvirtClient:  libvirtClient,
 		qemuImgClient:  qemuimg.New(""),
 		idGen:          idgen.New(),
-		snapshotRepo:   repository.NewSnapshotRepository(repo.DB()),
+		metadataStore:  metadataStore,
 	}
 }
 
@@ -77,15 +77,11 @@ func (s *SnapshotService) CreateEBSSnapshot(ctx context.Context, req *entity.Cre
 		Tags:         extractTags(req.TagSpecifications, "snapshot"),
 	}
 
-	// 保存到数据库
-	snapshotModel, err := snapshotEntityToModel(snapshot)
-	if err != nil {
-		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to convert snapshot to model", err)
+	// 保存到 metadata store
+	if err := s.metadataStore.SaveSnapshot(ctx, snapshot); err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to save snapshot to metadata store", err)
 	}
-	if err := s.snapshotRepo.Create(ctx, snapshotModel); err != nil {
-		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to save snapshot to database", err)
-	}
-	logger.Info().Str("snapshotID", snapshotID).Msg("Snapshot saved to database")
+	logger.Info().Str("snapshotID", snapshotID).Msg("Snapshot saved to metadata store")
 
 	logger.Info().
 		Str("snapshotID", snapshotID).
@@ -100,28 +96,28 @@ func (s *SnapshotService) DeleteEBSSnapshot(ctx context.Context, snapshotID stri
 	logger.Info().Str("snapshotID", snapshotID).Msg("Deleting EBS snapshot")
 
 	// 获取快照信息
-	snapshotModel, err := s.snapshotRepo.GetByID(ctx, snapshotID)
+	snapshot, err := s.metadataStore.GetSnapshot(ctx, snapshotID)
 	if err != nil {
 		return fmt.Errorf("snapshot %s not found: %w", snapshotID, err)
 	}
 
 	// 获取源卷信息
-	volume, err := s.storageService.GetVolume(ctx, snapshotModel.VolumeID)
+	volume, err := s.storageService.GetVolume(ctx, snapshot.VolumeID)
 	if err != nil {
-		logger.Warn().Err(err).Str("volumeID", snapshotModel.VolumeID).Msg("Failed to get volume, skipping snapshot file deletion")
+		logger.Warn().Err(err).Str("volumeID", snapshot.VolumeID).Msg("Failed to get volume, skipping snapshot file deletion")
 	} else {
 		// 使用 qemu-img 删除卷内部的快照
 		err = s.qemuImgClient.DeleteSnapshot(ctx, volume.Path, snapshotID)
 		if err != nil {
-			logger.Warn().Err(err).Str("snapshotID", snapshotID).Str("volumePath", volume.Path).Msg("Failed to delete snapshot from volume, continuing with database deletion")
+			logger.Warn().Err(err).Str("snapshotID", snapshotID).Str("volumePath", volume.Path).Msg("Failed to delete snapshot from volume, continuing with metadata deletion")
 		} else {
 			logger.Info().Str("snapshotID", snapshotID).Str("volumePath", volume.Path).Msg("Snapshot deleted from volume")
 		}
 	}
 
-	// 从数据库软删除
-	if err := s.snapshotRepo.Delete(ctx, snapshotID); err != nil {
-		return apierror.WrapError(apierror.ErrInternalError, "Failed to delete snapshot from database", err)
+	// 从 metadata store 删除
+	if err := s.metadataStore.DeleteSnapshot(ctx, snapshotID); err != nil {
+		return apierror.WrapError(apierror.ErrInternalError, "Failed to delete snapshot from metadata store", err)
 	}
 
 	logger.Info().Str("snapshotID", snapshotID).Msg("EBS snapshot deleted successfully")
@@ -133,86 +129,25 @@ func (s *SnapshotService) DescribeEBSSnapshots(ctx context.Context, req *entity.
 	logger := zerolog.Ctx(ctx)
 	logger.Info().Msg("Describing EBS snapshots")
 
-	var snapshots []entity.EBSSnapshot
+	// 从 metadata store 查询
+	snapshotPtrs, err := s.metadataStore.DescribeSnapshots(ctx, req)
+	if err != nil {
+		logger.Error().
+			Err(err).
+			Msg("Failed to describe snapshots from metadata store")
+		return nil, fmt.Errorf("describe snapshots from metadata store: %w", err)
+	}
 
-	// 构建过滤器
-	filters := make(map[string]interface{})
-	if len(req.SnapshotIDs) > 0 {
-		// 如果指定了 SnapshotIDs，逐个查询
-		for _, snapshotID := range req.SnapshotIDs {
-			snapshotModel, err := s.snapshotRepo.GetByID(ctx, snapshotID)
-			if err != nil {
-				logger.Warn().
-					Err(err).
-					Str("snapshotID", snapshotID).
-					Msg("Snapshot not found, skipping")
-				continue
-			}
-			snapshot, err := snapshotModelToEntity(snapshotModel)
-			if err != nil {
-				logger.Error().
-					Err(err).
-					Str("snapshotID", snapshotID).
-					Msg("Failed to convert snapshot model to entity, skipping")
-				continue
-			}
-			snapshots = append(snapshots, *snapshot)
+	logger.Info().
+		Int("total", len(snapshotPtrs)).
+		Msg("Retrieved snapshots from metadata store")
+
+	// 转换为值类型
+	snapshots := make([]entity.EBSSnapshot, 0, len(snapshotPtrs))
+	for _, snapshotPtr := range snapshotPtrs {
+		if snapshotPtr != nil {
+			snapshots = append(snapshots, *snapshotPtr)
 		}
-
-		logger.Info().
-			Int("requested", len(req.SnapshotIDs)).
-			Int("found", len(snapshots)).
-			Msg("Describe snapshots by IDs completed")
-	} else {
-		// 应用过滤器
-		if len(req.Filters) > 0 {
-			for _, filter := range req.Filters {
-				switch filter.Name {
-				case "state":
-					if len(filter.Values) > 0 {
-						filters["state"] = filter.Values[0]
-					}
-				case "volume-id":
-					if len(filter.Values) > 0 {
-						filters["volume_id"] = filter.Values[0]
-					}
-				case "owner-id":
-					if len(filter.Values) > 0 {
-						filters["owner_id"] = filter.Values[0]
-					}
-				}
-			}
-		}
-
-		// 从数据库查询
-		snapshotModels, err := s.snapshotRepo.List(ctx, filters)
-		if err != nil {
-			logger.Error().
-				Err(err).
-				Msg("Failed to list snapshots from database")
-			return nil, fmt.Errorf("list snapshots from database: %w", err)
-		}
-
-		logger.Info().
-			Int("totalInDB", len(snapshotModels)).
-			Msg("Retrieved snapshots from database")
-
-		for _, snapshotModel := range snapshotModels {
-			snapshot, err := snapshotModelToEntity(snapshotModel)
-			if err != nil {
-				logger.Warn().
-					Err(err).
-					Str("snapshotID", snapshotModel.ID).
-					Msg("Failed to convert snapshot model to entity, skipping")
-				continue
-			}
-			snapshots = append(snapshots, *snapshot)
-		}
-
-		logger.Info().
-			Int("totalInDB", len(snapshotModels)).
-			Int("converted", len(snapshots)).
-			Msg("Describe all snapshots completed")
 	}
 
 	// 应用分页
@@ -234,6 +169,10 @@ func (s *SnapshotService) DescribeEBSSnapshots(ctx context.Context, req *entity.
 		snapshots = snapshots[startIndex:endIndex]
 	}
 
+	logger.Info().
+		Int("total", len(snapshots)).
+		Msg("Describe snapshots completed")
+
 	return snapshots, nil
 }
 
@@ -246,18 +185,18 @@ func (s *SnapshotService) CopyEBSSnapshot(ctx context.Context, req *entity.CopyS
 		Msg("Copying EBS snapshot")
 
 	// 获取源快照信息
-	sourceSnapshotModel, err := s.snapshotRepo.GetByID(ctx, req.SourceSnapshotID)
+	sourceSnapshot, err := s.metadataStore.GetSnapshot(ctx, req.SourceSnapshotID)
 	if err != nil {
 		return nil, fmt.Errorf("source snapshot %s not found: %w", req.SourceSnapshotID, err)
 	}
-	if sourceSnapshotModel.State != "completed" {
-		return nil, fmt.Errorf("source snapshot %s is not completed (state: %s)", req.SourceSnapshotID, sourceSnapshotModel.State)
+	if sourceSnapshot.State != "completed" {
+		return nil, fmt.Errorf("source snapshot %s is not completed (state: %s)", req.SourceSnapshotID, sourceSnapshot.State)
 	}
 
 	// 获取源卷信息
-	sourceVolume, err := s.storageService.GetVolume(ctx, sourceSnapshotModel.VolumeID)
+	sourceVolume, err := s.storageService.GetVolume(ctx, sourceSnapshot.VolumeID)
 	if err != nil {
-		return nil, fmt.Errorf("get source volume %s: %w", sourceSnapshotModel.VolumeID, err)
+		return nil, fmt.Errorf("get source volume %s: %w", sourceSnapshot.VolumeID, err)
 	}
 
 	// 生成新的 Volume ID 用于复制
@@ -272,7 +211,7 @@ func (s *SnapshotService) CopyEBSSnapshot(ctx context.Context, req *entity.CopyS
 	internalReq := &entity.CreateInternalVolumeRequest{
 		PoolName: "default",
 		VolumeID: newVolumeID,
-		SizeGB:   sourceSnapshotModel.VolumeSizeGB,
+		SizeGB:   sourceSnapshot.VolumeSizeGB,
 		Format:   "qcow2",
 	}
 
@@ -317,21 +256,16 @@ func (s *SnapshotService) CopyEBSSnapshot(ctx context.Context, req *entity.CopyS
 		OwnerID:      "default",
 		Description:  req.Description,
 		Encrypted:    req.Encrypted,
-		VolumeSizeGB: sourceSnapshotModel.VolumeSizeGB,
+		VolumeSizeGB: sourceSnapshot.VolumeSizeGB,
 		Tags:         extractTags(req.TagSpecifications, "snapshot"),
 	}
 
-	// 保存到数据库
-	snapshotModel, err := snapshotEntityToModel(snapshot)
-	if err != nil {
+	// 保存到 metadata store
+	if err := s.metadataStore.SaveSnapshot(ctx, snapshot); err != nil {
 		_ = s.storageService.DeleteVolume(ctx, newVolumeID)
-		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to convert snapshot to model", err)
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to save snapshot to metadata store", err)
 	}
-	if err := s.snapshotRepo.Create(ctx, snapshotModel); err != nil {
-		_ = s.storageService.DeleteVolume(ctx, newVolumeID)
-		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to save snapshot to database", err)
-	}
-	logger.Info().Str("snapshotID", snapshotID).Msg("Snapshot saved to database")
+	logger.Info().Str("snapshotID", snapshotID).Msg("Snapshot saved to metadata store")
 
 	logger.Info().
 		Str("snapshotID", snapshotID).

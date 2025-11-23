@@ -5,35 +5,45 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/jimmicro/grace"
 	"github.com/jimyag/jvp/internal/jvp/api"
 	"github.com/jimyag/jvp/internal/jvp/config"
-	"github.com/jimyag/jvp/internal/jvp/repository"
+	"github.com/jimyag/jvp/internal/jvp/metadata"
 	"github.com/jimyag/jvp/internal/jvp/service"
 	"github.com/jimyag/jvp/pkg/libvirt"
 	"github.com/rs/zerolog"
 )
 
 type Server struct {
-	cfg        *config.Config
-	api        *api.API
-	repository *repository.Repository
+	cfg           *config.Config
+	api           *api.API
+	metadataStore metadata.MetadataStore
 }
 
 func New(cfg *config.Config) (*Server, error) {
 	logger := zerolog.New(os.Stdout).With().Timestamp().Logger()
 	zerolog.DefaultContextLogger = &logger
 
-	// 0. 创建 Repository（数据库）
-	dbPath := filepath.Join("/var/lib/jvp", "jvp.db")
-	repo, err := repository.New(dbPath)
+	// 0. 创建 Metadata Store（基于 Libvirt API，替代 SQLite）
+	metadataStore, err := metadata.NewLibvirtMetadataStore(&metadata.StoreConfig{
+		BasePath:             "/var/lib/jvp",
+		LibvirtURI:           "qemu:///system",
+		EnableIndexCache:     true,
+		IndexRefreshInterval: 5 * time.Minute,
+		LockTimeout:          30 * time.Second,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("create repository: %w", err)
+		return nil, fmt.Errorf("create metadata store: %w", err)
 	}
-	logger.Info().Str("db_path", dbPath).Msg("Database initialized")
+
+	// 初始化 Metadata Store
+	ctx := context.Background()
+	if err := metadataStore.Initialize(ctx); err != nil {
+		return nil, fmt.Errorf("initialize metadata store: %w", err)
+	}
+	logger.Info().Msg("Metadata store initialized")
 
 	// 1. 创建 Libvirt Client
 	libvirtClient, err := libvirt.New()
@@ -42,41 +52,39 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 
 	// 2. 创建 Storage Service
-	volumeRepo := repository.NewVolumeRepository(repo.DB())
-	storageService, err := service.NewStorageService(libvirtClient, volumeRepo)
+	storageService, err := service.NewStorageService(libvirtClient)
 	if err != nil {
 		return nil, err
 	}
 
-	// 3. 创建 Image Service
-	imageService, err := service.NewImageService(storageService, libvirtClient, repo)
+	// 3. 创建 Image Service（使用 metadataStore）
+	imageService, err := service.NewImageService(storageService, libvirtClient, metadataStore)
 	if err != nil {
 		return nil, err
 	}
 
 	// 3.1. 确保默认镜像存在（如果不存在则下载）
 	// 阻塞启动，等待镜像下载完成
-	ctx := context.Background()
 	logger.Info().Msg("Ensuring default images exist...")
 	if err := imageService.EnsureDefaultImages(ctx); err != nil {
 		return nil, fmt.Errorf("ensure default images: %w", err)
 	}
 	logger.Info().Msg("All default images are ready")
 
-	// 4. 创建 KeyPair Service（需要在 Instance Service 之前创建）
-	keyPairService := service.NewKeyPairService(repo)
+	// 4. 创建 KeyPair Service（使用 metadataStore）
+	keyPairService := service.NewKeyPairService(metadataStore)
 
-	// 5. 创建 Instance Service
-	instanceService, err := service.NewInstanceService(storageService, imageService, keyPairService, libvirtClient, repo)
+	// 5. 创建 Instance Service（使用 metadataStore）
+	instanceService, err := service.NewInstanceService(storageService, imageService, keyPairService, libvirtClient, metadataStore)
 	if err != nil {
 		return nil, err
 	}
 
-	// 6. 创建 Volume Service
-	volumeService := service.NewVolumeService(storageService, instanceService, libvirtClient, repo)
+	// 6. 创建 Volume Service（使用 metadataStore）
+	volumeService := service.NewVolumeService(storageService, instanceService, libvirtClient, metadataStore)
 
-	// 7. 创建 Snapshot Service
-	snapshotService := service.NewSnapshotService(storageService, libvirtClient, repo)
+	// 7. 创建 Snapshot Service（使用 metadataStore）
+	snapshotService := service.NewSnapshotService(storageService, libvirtClient, metadataStore)
 
 	// 8. 创建 API
 	apiInstance, err := api.New(instanceService, volumeService, snapshotService, imageService, keyPairService)
@@ -85,9 +93,9 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 
 	server := &Server{
-		cfg:        cfg,
-		api:        apiInstance,
-		repository: repo,
+		cfg:           cfg,
+		api:           apiInstance,
+		metadataStore: metadataStore,
 	}
 	return server, nil
 }

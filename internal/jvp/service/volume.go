@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/jimyag/jvp/internal/jvp/entity"
-	"github.com/jimyag/jvp/internal/jvp/repository"
+	"github.com/jimyag/jvp/internal/jvp/metadata"
 	"github.com/jimyag/jvp/pkg/apierror"
 	"github.com/jimyag/jvp/pkg/idgen"
 	"github.com/jimyag/jvp/pkg/libvirt"
@@ -22,8 +22,8 @@ type VolumeService struct {
 	libvirtClient   libvirt.LibvirtClient
 	qemuImgClient   qemuimg.QemuImgClient
 	idGen           *idgen.Generator
-	volumeRepo      repository.VolumeRepository
-	snapshotRepo    repository.SnapshotRepository
+	metadataStore   metadata.VolumeStore
+	snapshotStore   metadata.SnapshotStore
 }
 
 // NewVolumeService 创建新的 Volume Service
@@ -31,7 +31,7 @@ func NewVolumeService(
 	storageService *StorageService,
 	instanceService *InstanceService,
 	libvirtClient libvirt.LibvirtClient,
-	repo *repository.Repository,
+	metadataStore metadata.MetadataStore,
 ) *VolumeService {
 	return &VolumeService{
 		storageService:  storageService,
@@ -39,8 +39,8 @@ func NewVolumeService(
 		libvirtClient:   libvirtClient,
 		qemuImgClient:   qemuimg.New(""),
 		idGen:           idgen.New(),
-		volumeRepo:      repository.NewVolumeRepository(repo.DB()),
-		snapshotRepo:    repository.NewSnapshotRepository(repo.DB()),
+		metadataStore:   metadataStore,
+		snapshotStore:   metadataStore,
 	}
 }
 
@@ -64,23 +64,23 @@ func (s *VolumeService) CreateEBSVolume(ctx context.Context, req *entity.CreateV
 	if req.SnapshotID != "" {
 		// 从快照创建卷
 		// 获取快照信息
-		snapshotModel, err := s.snapshotRepo.GetByID(ctx, req.SnapshotID)
+		snapshot, err := s.snapshotStore.GetSnapshot(ctx, req.SnapshotID)
 		if err != nil {
 			return nil, fmt.Errorf("snapshot %s not found: %w", req.SnapshotID, err)
 		}
-		if snapshotModel.State != "completed" {
-			return nil, fmt.Errorf("snapshot %s is not completed (state: %s)", req.SnapshotID, snapshotModel.State)
+		if snapshot.State != "completed" {
+			return nil, fmt.Errorf("snapshot %s is not completed (state: %s)", req.SnapshotID, snapshot.State)
 		}
 
 		// 如果未指定大小，使用快照大小
 		if sizeGB == 0 {
-			sizeGB = snapshotModel.VolumeSizeGB
+			sizeGB = snapshot.VolumeSizeGB
 		}
 
 		// 获取源卷信息
-		sourceVolume, err := s.storageService.GetVolume(ctx, snapshotModel.VolumeID)
+		sourceVolume, err := s.storageService.GetVolume(ctx, snapshot.VolumeID)
 		if err != nil {
-			return nil, fmt.Errorf("get source volume %s: %w", snapshotModel.VolumeID, err)
+			return nil, fmt.Errorf("get source volume %s: %w", snapshot.VolumeID, err)
 		}
 		sourceVolumePath = sourceVolume.Path
 	}
@@ -149,15 +149,11 @@ func (s *VolumeService) CreateEBSVolume(ctx context.Context, req *entity.CreateV
 		Tags:             extractTags(req.TagSpecifications, "volume"),
 	}
 
-	// 保存到数据库
-	volumeModel, err := volumeEntityToModel(ebsVolume)
-	if err != nil {
-		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to convert volume to model", err)
+	// 保存到 metadata store
+	if err := s.metadataStore.SaveVolume(ctx, ebsVolume); err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to save volume to metadata store", err)
 	}
-	if err := s.volumeRepo.Create(ctx, volumeModel); err != nil {
-		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to save volume to database", err)
-	}
-	logger.Info().Str("volumeID", volumeID).Msg("Volume saved to database")
+	logger.Info().Str("volumeID", volumeID).Msg("Volume saved to metadata store")
 
 	logger.Info().
 		Str("volumeID", volumeID).
@@ -187,9 +183,9 @@ func (s *VolumeService) DeleteEBSVolume(ctx context.Context, volumeID string) er
 		return fmt.Errorf("delete volume: %w", err)
 	}
 
-	// 从数据库软删除
-	if err := s.volumeRepo.Delete(ctx, volumeID); err != nil {
-		return apierror.WrapError(apierror.ErrInternalError, "Failed to delete volume from database", err)
+	// 从 metadata store 删除
+	if err := s.metadataStore.DeleteVolume(ctx, volumeID); err != nil {
+		return apierror.WrapError(apierror.ErrInternalError, "Failed to delete volume from metadata store", err)
 	}
 
 	logger.Info().Str("volumeID", volumeID).Msg("EBS volume deleted successfully")
@@ -263,12 +259,8 @@ func (s *VolumeService) AttachEBSVolume(ctx context.Context, req *entity.AttachV
 	}
 
 	// 更新卷状态为 in-use
-	volumeModel, err := s.volumeRepo.GetByID(ctx, req.VolumeID)
-	if err == nil {
-		volumeModel.State = "in-use"
-		if err := s.volumeRepo.Update(ctx, volumeModel); err != nil {
-			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update volume state in database", err)
-		}
+	if err := s.metadataStore.UpdateVolumeState(ctx, req.VolumeID, "in-use"); err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update volume state in metadata store", err)
 	}
 
 	attachment := &entity.VolumeAttachment{
@@ -323,12 +315,8 @@ func (s *VolumeService) DetachEBSVolume(ctx context.Context, req *entity.DetachV
 	}
 
 	// 更新卷状态为 available
-	volumeModel, err := s.volumeRepo.GetByID(ctx, req.VolumeID)
-	if err == nil {
-		volumeModel.State = "available"
-		if err := s.volumeRepo.Update(ctx, volumeModel); err != nil {
-			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update volume state in database", err)
-		}
+	if err := s.metadataStore.UpdateVolumeState(ctx, req.VolumeID, "available"); err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update volume state in metadata store", err)
 	}
 
 	attachment.State = "detached"
@@ -346,136 +334,43 @@ func (s *VolumeService) DescribeEBSVolumes(ctx context.Context, req *entity.Desc
 	logger := zerolog.Ctx(ctx)
 	logger.Info().Msg("Describing EBS volumes")
 
-	var volumes []entity.EBSVolume
-
-	if len(req.VolumeIDs) > 0 {
-		// 查询指定的卷
-		for _, volumeID := range req.VolumeIDs {
-			volume, err := s.DescribeEBSVolume(ctx, volumeID)
-			if err != nil {
-				// 如果卷不存在，跳过
-				logger.Warn().
-					Err(err).
-					Str("volumeID", volumeID).
-					Msg("Volume not found, skipping")
-				continue
-			}
-			volumes = append(volumes, *volume)
-		}
-
-		logger.Info().
-			Int("requested", len(req.VolumeIDs)).
-			Int("found", len(volumes)).
-			Msg("Describe volumes by IDs completed")
-	} else {
-		// 构建过滤器
-		filters := make(map[string]interface{})
-		if len(req.Filters) > 0 {
-			for _, filter := range req.Filters {
-				switch filter.Name {
-				case "state":
-					if len(filter.Values) > 0 {
-						filters["state"] = filter.Values[0]
-					}
-				case "volume-type":
-					if len(filter.Values) > 0 {
-						filters["volume_type"] = filter.Values[0]
-					}
-				case "snapshot-id":
-					if len(filter.Values) > 0 {
-						filters["snapshot_id"] = filter.Values[0]
-					}
-				}
-			}
-		}
-
-		// 优先从数据库查询
-		volumeModels, err := s.volumeRepo.List(ctx, filters)
-		if err != nil {
-			logger.Error().
-				Err(err).
-				Msg("Failed to list volumes from database")
-			return nil, fmt.Errorf("list volumes from database: %w", err)
-		}
-
-		logger.Info().
-			Int("totalInDB", len(volumeModels)).
-			Msg("Retrieved volumes from database")
-
-		for _, volumeModel := range volumeModels {
-			volume, err := volumeModelToEntity(volumeModel)
-			if err != nil {
-				logger.Warn().
-					Err(err).
-					Str("volumeID", volumeModel.ID).
-					Msg("Failed to convert volume model to entity, skipping")
-				continue
-			}
-			// 补充附加信息
-			volumeWithAttachments, err := s.enrichVolumeWithAttachments(ctx, volume)
-			if err != nil {
-				logger.Warn().
-					Err(err).
-					Str("volumeID", volumeModel.ID).
-					Msg("Failed to enrich volume with attachments, using basic info")
-				volumes = append(volumes, *volume)
-			} else {
-				volumes = append(volumes, *volumeWithAttachments)
-			}
-		}
-
-		logger.Info().
-			Int("totalInDB", len(volumeModels)).
-			Int("converted", len(volumes)).
-			Msg("Describe all volumes completed")
+	// 从 metadata store 查询
+	volumePtrs, err := s.metadataStore.DescribeVolumes(ctx, req)
+	if err != nil {
+		logger.Error().
+			Err(err).
+			Msg("Failed to describe volumes from metadata store")
+		return nil, fmt.Errorf("describe volumes from metadata store: %w", err)
 	}
 
-	// 应用其他过滤器（不在数据库中的）
-	if len(req.Filters) > 0 {
-		volumes = s.applyFilters(volumes, req.Filters)
+	logger.Info().
+		Int("total", len(volumePtrs)).
+		Msg("Retrieved volumes from metadata store")
+
+	// 转换为值类型
+	volumes := make([]entity.EBSVolume, 0, len(volumePtrs))
+	for _, volumePtr := range volumePtrs {
+		if volumePtr != nil {
+			volumes = append(volumes, *volumePtr)
+		}
 	}
+
+	logger.Info().
+		Int("total", len(volumes)).
+		Msg("Describe volumes completed")
 
 	return volumes, nil
 }
 
 // DescribeEBSVolume 描述单个 EBS 卷
 func (s *VolumeService) DescribeEBSVolume(ctx context.Context, volumeID string) (*entity.EBSVolume, error) {
-	// 优先从数据库查询
-	volumeModel, err := s.volumeRepo.GetByID(ctx, volumeID)
-	if err == nil {
-		volume, err := volumeModelToEntity(volumeModel)
-		if err != nil {
-			return nil, fmt.Errorf("convert volume model to entity: %w", err)
-		}
-		// 补充附加信息
-		return s.enrichVolumeWithAttachments(ctx, volume)
-	}
-
-	// 如果数据库中没有，从 storage service 查询（兼容旧数据）
-	volume, err := s.storageService.GetVolume(ctx, volumeID)
+	// 从 metadata store 查询
+	volume, err := s.metadataStore.GetVolume(ctx, volumeID)
 	if err != nil {
-		return nil, fmt.Errorf("get volume: %w", err)
+		return nil, fmt.Errorf("get volume from metadata store: %w", err)
 	}
 
-	// 获取文件创建时间
-	var createTime string
-	if fileInfo, err := os.Stat(volume.Path); err == nil {
-		createTime = fileInfo.ModTime().Format(time.RFC3339)
-	}
-
-	ebsVolume := &entity.EBSVolume{
-		VolumeID:         volume.ID,
-		SizeGB:           volume.CapacityB / (1024 * 1024 * 1024),
-		AvailabilityZone: "default",
-		State:            "available",
-		VolumeType:       "gp2",
-		Attachments:      []entity.VolumeAttachment{},
-		CreateTime:       createTime,
-		Tags:             []entity.Tag{},
-	}
-
-	// 补充附加信息
-	return s.enrichVolumeWithAttachments(ctx, ebsVolume)
+	return volume, nil
 }
 
 // enrichVolumeWithAttachments 补充卷的附加信息
@@ -571,36 +466,30 @@ func (s *VolumeService) ModifyEBSVolume(ctx context.Context, req *entity.ModifyV
 			Uint64("newSizeGB", req.SizeGB).
 			Msg("Volume resized successfully")
 
-		// 更新数据库中的大小
-		volumeModel, err := s.volumeRepo.GetByID(ctx, req.VolumeID)
+		// 更新 metadata store 中的卷信息
+		volume, err := s.metadataStore.GetVolume(ctx, req.VolumeID)
 		if err == nil {
-			volumeModel.SizeGB = req.SizeGB
-			if err := s.volumeRepo.Update(ctx, volumeModel); err != nil {
-				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update volume size in database", err)
+			volume.SizeGB = req.SizeGB
+			if err := s.metadataStore.SaveVolume(ctx, volume); err != nil {
+				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update volume size in metadata store", err)
 			}
 		}
 	}
 
 	// 如果修改类型或 IOPS
-	if req.VolumeType != "" {
-		modification.TargetVolumeType = req.VolumeType
-		// 更新数据库
-		volumeModel, err := s.volumeRepo.GetByID(ctx, req.VolumeID)
+	if req.VolumeType != "" || req.Iops > 0 {
+		volume, err := s.metadataStore.GetVolume(ctx, req.VolumeID)
 		if err == nil {
-			volumeModel.VolumeType = req.VolumeType
-			if err := s.volumeRepo.Update(ctx, volumeModel); err != nil {
-				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update volume type in database", err)
+			if req.VolumeType != "" {
+				modification.TargetVolumeType = req.VolumeType
+				volume.VolumeType = req.VolumeType
 			}
-		}
-	}
-	if req.Iops > 0 {
-		modification.TargetIops = req.Iops
-		// 更新数据库
-		volumeModel, err := s.volumeRepo.GetByID(ctx, req.VolumeID)
-		if err == nil {
-			volumeModel.Iops = int(req.Iops)
-			if err := s.volumeRepo.Update(ctx, volumeModel); err != nil {
-				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update volume IOPS in database", err)
+			if req.Iops > 0 {
+				modification.TargetIops = req.Iops
+				volume.Iops = req.Iops
+			}
+			if err := s.metadataStore.SaveVolume(ctx, volume); err != nil {
+				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update volume in metadata store", err)
 			}
 		}
 	}

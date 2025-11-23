@@ -3,6 +3,7 @@ package metadata
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -27,6 +28,15 @@ type LibvirtMetadataStore struct {
 	stopCh chan struct{}
 }
 
+// parseLibvirtURI 解析 libvirt URI 字符串
+func parseLibvirtURI(uriStr string) (*url.URL, error) {
+	// 如果是空字符串或默认值，使用 QEMU system URI
+	if uriStr == "" || uriStr == "qemu:///system" {
+		return url.Parse(string(libvirt.QEMUSystem))
+	}
+	return url.Parse(uriStr)
+}
+
 // NewLibvirtMetadataStore 创建新的 LibvirtMetadataStore
 func NewLibvirtMetadataStore(config *StoreConfig) (*LibvirtMetadataStore, error) {
 	if config == nil {
@@ -34,12 +44,15 @@ func NewLibvirtMetadataStore(config *StoreConfig) (*LibvirtMetadataStore, error)
 	}
 
 	// 连接 libvirt
-	// Note: go-libvirt requires a network connection, not a URI
-	// For local connections, use unix socket: /var/run/libvirt/libvirt-sock
-	// This is a simplified implementation - production code should handle URI parsing
-	//lint:ignore SA1019 待实现:需要迁移到 NewWithDialer
-	conn := libvirt.New(nil) // This needs to be properly connected via net.Conn
-	// TODO: Implement proper libvirt connection via unix socket or TCP
+	uri, err := parseLibvirtURI(config.LibvirtURI)
+	if err != nil {
+		return nil, fmt.Errorf("parse libvirt URI: %w", err)
+	}
+
+	conn, err := libvirt.ConnectToURI(uri)
+	if err != nil {
+		return nil, fmt.Errorf("connect to libvirt: %w", err)
+	}
 
 	store := &LibvirtMetadataStore{
 		config: config,

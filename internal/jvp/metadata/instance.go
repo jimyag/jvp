@@ -223,20 +223,24 @@ func (s *LibvirtMetadataStore) UpdateInstanceState(ctx context.Context, instance
 
 // buildInstanceFromDomain 从 libvirt domain 构建实例对象
 func (s *LibvirtMetadataStore) buildInstanceFromDomain(ctx context.Context, domain libvirt.Domain) (*entity.Instance, error) {
-	// 1. 读取 JVP 元数据
+	// 1. 尝试读取 JVP 元数据（可能不存在）
 	metaXML, err := s.conn.DomainGetMetadata(
 		domain,
 		int32(libvirt.DomainMetadataElement),
 		libvirt.OptString{JVPNamespace},
 		libvirt.DomainAffectConfig,
 	)
-	if err != nil {
-		return nil, fmt.Errorf("get domain metadata: %w", err)
-	}
 
 	var jvpMeta JVPInstanceMetadata
-	if err := xml.Unmarshal([]byte(metaXML), &jvpMeta); err != nil {
-		return nil, fmt.Errorf("unmarshal metadata: %w", err)
+	hasJVPMetadata := err == nil && metaXML != ""
+	if hasJVPMetadata {
+		if err := xml.Unmarshal([]byte(metaXML), &jvpMeta); err != nil {
+			log.Warn().
+				Str("domain_name", domain.Name).
+				Err(err).
+				Msg("Failed to unmarshal JVP metadata, will use domain name as ID")
+			hasJVPMetadata = false
+		}
 	}
 
 	// 2. 读取 domain 基本信息
@@ -268,15 +272,30 @@ func (s *LibvirtMetadataStore) buildInstanceFromDomain(ctx context.Context, doma
 	stateStr := mapDomainState(state)
 
 	// 6. 构建实例对象
+	// 如果没有 JVP 元数据，使用 domain name 作为 ID
+	instanceID := domain.Name
+	instanceName := domain.Name
+	imageID := ""
+	volumeID := ""
+	createdAt := time.Now().Format(time.RFC3339)
+
+	if hasJVPMetadata {
+		instanceID = jvpMeta.ID
+		instanceName = jvpMeta.Name
+		imageID = jvpMeta.ImageID
+		volumeID = jvpMeta.VolumeID
+		createdAt = jvpMeta.CreatedAt
+	}
+
 	instance := &entity.Instance{
-		ID:         jvpMeta.ID,
-		Name:       jvpMeta.Name,
+		ID:         instanceID,
+		Name:       instanceName,
 		State:      stateStr,
-		ImageID:    jvpMeta.ImageID,
-		VolumeID:   jvpMeta.VolumeID,
+		ImageID:    imageID,
+		VolumeID:   volumeID,
 		MemoryMB:   domainDef.Memory.Value / 1024, // 转换为 MB
 		VCPUs:      uint16(domainDef.VCPU),
-		CreatedAt:  jvpMeta.CreatedAt,
+		CreatedAt:  createdAt,
 		DomainUUID: uuidToString(domain.UUID),
 		DomainName: domain.Name,
 	}

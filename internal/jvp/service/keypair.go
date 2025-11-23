@@ -13,8 +13,7 @@ import (
 	"time"
 
 	"github.com/jimyag/jvp/internal/jvp/entity"
-	"github.com/jimyag/jvp/internal/jvp/repository"
-	"github.com/jimyag/jvp/internal/jvp/repository/model"
+	"github.com/jimyag/jvp/internal/jvp/metadata"
 	"github.com/jimyag/jvp/pkg/apierror"
 	"github.com/jimyag/jvp/pkg/idgen"
 	"github.com/rs/zerolog"
@@ -24,17 +23,17 @@ import (
 
 // KeyPairService 密钥对服务
 type KeyPairService struct {
-	keyPairRepo repository.KeyPairRepository
-	idGen       *idgen.Generator
+	metadataStore metadata.KeyPairStore
+	idGen         *idgen.Generator
 }
 
 // NewKeyPairService 创建密钥对服务
 func NewKeyPairService(
-	repo *repository.Repository,
+	metadataStore metadata.KeyPairStore,
 ) *KeyPairService {
 	return &KeyPairService{
-		keyPairRepo: repository.NewKeyPairRepository(repo.DB()),
-		idGen:       idgen.New(),
+		metadataStore: metadataStore,
+		idGen:         idgen.New(),
 	}
 }
 
@@ -92,31 +91,20 @@ func (s *KeyPairService) CreateKeyPair(ctx context.Context, req *entity.CreateKe
 		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to generate keypair ID", err)
 	}
 
-	// 创建数据库模型
-	keyPairModel := &model.KeyPair{
+	// 创建 entity
+	keyPair := &entity.KeyPair{
 		ID:          keyPairID,
 		Name:        req.Name,
 		Algorithm:   algorithm,
 		PublicKey:   publicKeyStr,
 		Fingerprint: fingerprint,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		CreatedAt:   time.Now().Format(time.RFC3339),
 	}
 
-	// 保存到数据库
-	if err := s.keyPairRepo.Create(ctx, keyPairModel); err != nil {
-		logger.Error().Err(err).Msg("Failed to save keypair to database")
-		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to save keypair to database", err)
-	}
-
-	// 转换为 entity
-	keyPair := &entity.KeyPair{
-		ID:          keyPairModel.ID,
-		Name:        keyPairModel.Name,
-		Algorithm:   keyPairModel.Algorithm,
-		PublicKey:   keyPairModel.PublicKey,
-		Fingerprint: keyPairModel.Fingerprint,
-		CreatedAt:   keyPairModel.CreatedAt.Format(time.RFC3339),
+	// 保存到 metadata store
+	if err := s.metadataStore.SaveKeyPair(ctx, keyPair); err != nil {
+		logger.Error().Err(err).Msg("Failed to save keypair to metadata store")
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to save keypair to metadata store", err)
 	}
 
 	logger.Info().
@@ -175,31 +163,20 @@ func (s *KeyPairService) ImportKeyPair(ctx context.Context, req *entity.ImportKe
 		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to generate keypair ID", err)
 	}
 
-	// 创建数据库模型
-	keyPairModel := &model.KeyPair{
+	// 创建 entity
+	keyPair := &entity.KeyPair{
 		ID:          keyPairID,
 		Name:        req.Name,
 		Algorithm:   algorithm,
 		PublicKey:   publicKeyStr,
 		Fingerprint: fingerprint,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		CreatedAt:   time.Now().Format(time.RFC3339),
 	}
 
-	// 保存到数据库
-	if err := s.keyPairRepo.Create(ctx, keyPairModel); err != nil {
-		logger.Error().Err(err).Msg("Failed to save keypair to database")
-		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to save keypair to database", err)
-	}
-
-	// 转换为 entity
-	keyPair := &entity.KeyPair{
-		ID:          keyPairModel.ID,
-		Name:        keyPairModel.Name,
-		Algorithm:   keyPairModel.Algorithm,
-		PublicKey:   keyPairModel.PublicKey,
-		Fingerprint: keyPairModel.Fingerprint,
-		CreatedAt:   keyPairModel.CreatedAt.Format(time.RFC3339),
+	// 保存到 metadata store
+	if err := s.metadataStore.SaveKeyPair(ctx, keyPair); err != nil {
+		logger.Error().Err(err).Msg("Failed to save keypair to metadata store")
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to save keypair to metadata store", err)
 	}
 
 	logger.Info().
@@ -218,7 +195,7 @@ func (s *KeyPairService) DeleteKeyPair(ctx context.Context, keyPairID string) er
 	logger := zerolog.Ctx(ctx)
 
 	// 检查密钥对是否存在
-	_, err := s.keyPairRepo.GetByID(ctx, keyPairID)
+	_, err := s.metadataStore.GetKeyPair(ctx, keyPairID)
 	if err != nil {
 		logger.Error().Err(err).Str("keypair_id", keyPairID).Msg("Key pair not found")
 		return apierror.NewErrorWithStatus(
@@ -228,8 +205,8 @@ func (s *KeyPairService) DeleteKeyPair(ctx context.Context, keyPairID string) er
 		)
 	}
 
-	// 软删除
-	if err := s.keyPairRepo.Delete(ctx, keyPairID); err != nil {
+	// 删除
+	if err := s.metadataStore.DeleteKeyPair(ctx, keyPairID); err != nil {
 		logger.Error().Err(err).Str("keypair_id", keyPairID).Msg("Failed to delete keypair")
 		return apierror.WrapError(apierror.ErrInternalError, "Failed to delete keypair", err)
 	}
@@ -242,48 +219,19 @@ func (s *KeyPairService) DeleteKeyPair(ctx context.Context, keyPairID string) er
 func (s *KeyPairService) DescribeKeyPairs(ctx context.Context, req *entity.DescribeKeyPairsRequest) ([]entity.KeyPair, error) {
 	logger := zerolog.Ctx(ctx)
 
-	// 构建过滤器
-	filters := make(map[string]interface{})
-
-	// 如果指定了 KeyPairIDs，需要特殊处理（因为 List 方法不支持 ID 列表）
-	var keyPairs []*model.KeyPair
-	if req.KeyPairIDs != nil {
-		// 如果 KeyPairIDs 不为 nil，说明用户明确指定了要查询的 ID 列表
-		if len(req.KeyPairIDs) > 0 {
-			// 逐个查询
-			for _, id := range req.KeyPairIDs {
-				kp, err := s.keyPairRepo.GetByID(ctx, id)
-				if err != nil {
-					// 忽略不存在的密钥对
-					continue
-				}
-				keyPairs = append(keyPairs, kp)
-			}
-		}
-		// 如果 KeyPairIDs 为空数组，返回空结果（用户明确指定了空列表）
-	} else {
-		// KeyPairIDs 为 nil，表示查询所有密钥对
-		// 应用其他过滤器
-		// 注意：这里简化处理，实际可以根据 Filters 字段扩展
-		var err error
-		keyPairs, err = s.keyPairRepo.List(ctx, filters)
-		if err != nil {
-			logger.Error().Err(err).Msg("Failed to list keypairs")
-			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to list keypairs", err)
-		}
+	// 从 metadata store 查询
+	keyPairPtrs, err := s.metadataStore.DescribeKeyPairs(ctx, req)
+	if err != nil {
+		logger.Error().Err(err).Msg("Failed to describe keypairs from metadata store")
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to describe keypairs from metadata store", err)
 	}
 
-	// 转换为 entity
-	result := make([]entity.KeyPair, 0, len(keyPairs))
-	for _, kp := range keyPairs {
-		result = append(result, entity.KeyPair{
-			ID:          kp.ID,
-			Name:        kp.Name,
-			Algorithm:   kp.Algorithm,
-			PublicKey:   kp.PublicKey,
-			Fingerprint: kp.Fingerprint,
-			CreatedAt:   kp.CreatedAt.Format(time.RFC3339),
-		})
+	// 转换为值类型
+	result := make([]entity.KeyPair, 0, len(keyPairPtrs))
+	for _, kp := range keyPairPtrs {
+		if kp != nil {
+			result = append(result, *kp)
+		}
 	}
 
 	logger.Info().Int("count", len(result)).Msg("Key pairs described successfully")
@@ -292,7 +240,7 @@ func (s *KeyPairService) DescribeKeyPairs(ctx context.Context, req *entity.Descr
 
 // GetKeyPairByID 根据 ID 获取密钥对（内部方法）
 func (s *KeyPairService) GetKeyPairByID(ctx context.Context, keyPairID string) (*entity.KeyPair, error) {
-	kp, err := s.keyPairRepo.GetByID(ctx, keyPairID)
+	kp, err := s.metadataStore.GetKeyPair(ctx, keyPairID)
 	if err != nil {
 		return nil, apierror.NewErrorWithStatus(
 			"ResourceNotFound",
@@ -301,14 +249,7 @@ func (s *KeyPairService) GetKeyPairByID(ctx context.Context, keyPairID string) (
 		)
 	}
 
-	return &entity.KeyPair{
-		ID:          kp.ID,
-		Name:        kp.Name,
-		Algorithm:   kp.Algorithm,
-		PublicKey:   kp.PublicKey,
-		Fingerprint: kp.Fingerprint,
-		CreatedAt:   kp.CreatedAt.Format(time.RFC3339),
-	}, nil
+	return kp, nil
 }
 
 // generateED25519KeyPair 生成 ED25519 密钥对

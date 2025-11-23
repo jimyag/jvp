@@ -15,31 +15,21 @@ import (
 func (s *LibvirtMetadataStore) indexInstances(ctx context.Context, index *MemoryIndex) error {
 	log.Debug().Msg("Indexing instances")
 
-	// 1. 获取所有 domains
-	domains, _, err := s.conn.ConnectListAllDomains(1, 0)
+	// 1. 获取所有 domains (包括运行和停止的)
+	flags := libvirt.ConnectListDomainsActive | libvirt.ConnectListDomainsInactive
+	domains, _, err := s.conn.ConnectListAllDomains(1, flags)
 	if err != nil {
 		return fmt.Errorf("list domains: %w", err)
 	}
 
 	// 2. 遍历 domains
 	for _, domain := range domains {
-		// 检查是否有 JVP 元数据
-		metaXML, err := s.conn.DomainGetMetadata(
-			domain,
-			int32(libvirt.DomainMetadataElement),
-			libvirt.OptString{JVPNamespace},
-			libvirt.DomainAffectConfig,
-		)
-		if err != nil || metaXML == "" {
-			// 没有 JVP 元数据,跳过
-			continue
-		}
-
-		// 解析实例
+		// 尝试解析实例（无论是否有 JVP 元数据）
 		instance, err := s.buildInstanceFromDomain(ctx, domain)
 		if err != nil {
 			log.Warn().
 				Str("domain_uuid", uuidToString(domain.UUID)).
+				Str("domain_name", domain.Name).
 				Err(err).
 				Msg("Failed to build instance from domain")
 			continue
@@ -82,40 +72,140 @@ func (s *LibvirtMetadataStore) indexInstances(ctx context.Context, index *Memory
 func (s *LibvirtMetadataStore) indexVolumes(ctx context.Context, index *MemoryIndex) error {
 	log.Debug().Msg("Indexing volumes")
 
+	// 1. 从 libvirt 获取所有存储池
+	pools, _, err := s.conn.ConnectListAllStoragePools(1, 0)
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to list storage pools, falling back to file scan")
+		return s.indexVolumesFromFiles(ctx, index)
+	}
+
+	// 2. 遍历每个存储池
+	for _, pool := range pools {
+		// 获取存储池中的所有卷
+		volumes, _, err := s.conn.StoragePoolListAllVolumes(pool, 0, 0)
+		if err != nil {
+			log.Warn().
+				Str("pool_name", pool.Name).
+				Err(err).
+				Msg("Failed to list volumes in pool")
+			continue
+		}
+
+		// 3. 遍历卷
+		for _, vol := range volumes {
+			// 获取卷路径
+			volPath, err := s.conn.StorageVolGetPath(vol)
+			if err != nil {
+				log.Warn().
+					Str("vol_name", vol.Name).
+					Err(err).
+					Msg("Failed to get volume path")
+				continue
+			}
+
+			// 获取卷信息
+			volType, capacity, _, err := s.conn.StorageVolGetInfo(vol)
+			if err != nil {
+				log.Warn().
+					Str("vol_name", vol.Name).
+					Err(err).
+					Msg("Failed to get volume info")
+				continue
+			}
+
+			// 只处理文件类型的卷
+			if volType != 0 { // 0 = VIR_STORAGE_VOL_FILE
+				continue
+			}
+
+			// 尝试读取 JVP 元数据
+			metaPath := getSidecarPath(volPath)
+			var meta VolumeMetadata
+			hasMetadata := false
+			if fileExists(metaPath) {
+				if err := loadJSONFile(metaPath, &meta); err == nil {
+					hasMetadata = true
+				}
+			}
+
+			// 构建索引
+			volumeID := vol.Name
+			volumeState := "available"
+			volumeType := "gp2"
+			var tags map[string]string
+
+			if hasMetadata {
+				volumeID = meta.ID
+				volumeState = meta.State
+				volumeType = meta.VolumeType
+				tags = meta.Tags
+			}
+
+			idx := &VolumeIndex{
+				ID:         volumeID,
+				Path:       volPath,
+				State:      volumeState,
+				VolumeType: volumeType,
+				SizeGB:     capacity / (1024 * 1024 * 1024),
+				Tags:       tags,
+			}
+
+			index.Volumes[volumeID] = idx
+
+			// 添加到类型索引
+			index.VolumesByType[volumeType] = append(
+				index.VolumesByType[volumeType],
+				volumeID,
+			)
+
+			// 添加到状态索引
+			index.VolumesByState[volumeState] = append(
+				index.VolumesByState[volumeState],
+				volumeID,
+			)
+
+			// 添加到标签索引
+			for k, v := range tags {
+				tagPair := fmt.Sprintf("%s=%s", k, v)
+				index.VolumesByTag[tagPair] = append(
+					index.VolumesByTag[tagPair],
+					volumeID,
+				)
+			}
+		}
+	}
+
+	log.Debug().Int("count", len(index.Volumes)).Msg("Volumes indexed")
+	return nil
+}
+
+// indexVolumesFromFiles 从文件系统索引卷（备用方案）
+func (s *LibvirtMetadataStore) indexVolumesFromFiles(ctx context.Context, index *MemoryIndex) error {
 	volumesDir := filepath.Join(s.config.BasePath, "volumes")
 
-	// 1. 查找所有 qcow2 文件
+	// 查找所有 qcow2 文件
 	pattern := filepath.Join(volumesDir, "*.qcow2")
 	volumeFiles, err := filepath.Glob(pattern)
 	if err != nil {
 		return fmt.Errorf("glob volume files: %w", err)
 	}
 
-	// 2. 遍历卷文件
 	for _, volumePath := range volumeFiles {
-		// 读取边车元数据文件
 		metaPath := getSidecarPath(volumePath)
 		if !fileExists(metaPath) {
-			log.Warn().Str("volume_path", volumePath).Msg("Volume metadata file not found")
 			continue
 		}
 
 		var meta VolumeMetadata
 		if err := loadJSONFile(metaPath, &meta); err != nil {
-			log.Warn().
-				Str("meta_path", metaPath).
-				Err(err).
-				Msg("Failed to load volume metadata")
 			continue
 		}
 
-		// 获取卷大小
 		sizeGB := uint64(0)
 		if info, err := getQCOW2Info(volumePath); err == nil {
 			sizeGB = info.VirtualSize / (1024 * 1024 * 1024)
 		}
 
-		// 添加到索引
 		idx := &VolumeIndex{
 			ID:         meta.ID,
 			Path:       volumePath,
@@ -126,30 +216,15 @@ func (s *LibvirtMetadataStore) indexVolumes(ctx context.Context, index *MemoryIn
 		}
 
 		index.Volumes[meta.ID] = idx
+		index.VolumesByType[meta.VolumeType] = append(index.VolumesByType[meta.VolumeType], meta.ID)
+		index.VolumesByState[meta.State] = append(index.VolumesByState[meta.State], meta.ID)
 
-		// 添加到类型索引
-		index.VolumesByType[meta.VolumeType] = append(
-			index.VolumesByType[meta.VolumeType],
-			meta.ID,
-		)
-
-		// 添加到状态索引
-		index.VolumesByState[meta.State] = append(
-			index.VolumesByState[meta.State],
-			meta.ID,
-		)
-
-		// 添加到标签索引
 		for k, v := range meta.Tags {
 			tagPair := fmt.Sprintf("%s=%s", k, v)
-			index.VolumesByTag[tagPair] = append(
-				index.VolumesByTag[tagPair],
-				meta.ID,
-			)
+			index.VolumesByTag[tagPair] = append(index.VolumesByTag[tagPair], meta.ID)
 		}
 	}
 
-	log.Debug().Int("count", len(index.Volumes)).Msg("Volumes indexed")
 	return nil
 }
 

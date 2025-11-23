@@ -11,7 +11,7 @@ import (
 
 	libvirtlib "github.com/digitalocean/go-libvirt"
 	"github.com/jimyag/jvp/internal/jvp/entity"
-	"github.com/jimyag/jvp/internal/jvp/repository"
+	"github.com/jimyag/jvp/internal/jvp/metadata"
 	"github.com/jimyag/jvp/pkg/apierror"
 	"github.com/jimyag/jvp/pkg/cloudinit"
 	"github.com/jimyag/jvp/pkg/idgen"
@@ -29,7 +29,7 @@ type InstanceService struct {
 	libvirtClient       libvirt.LibvirtClient
 	virtCustomizeClient virtcustomize.VirtCustomizeClient
 	idGen               *idgen.Generator
-	instanceRepo        repository.InstanceRepository
+	metadataStore       metadata.InstanceStore
 }
 
 // NewInstanceService 创建新的 Instance Service
@@ -38,7 +38,7 @@ func NewInstanceService(
 	imageService *ImageService,
 	keyPairService *KeyPairService,
 	libvirtClient libvirt.LibvirtClient,
-	repo *repository.Repository,
+	metadataStore metadata.InstanceStore,
 ) (*InstanceService, error) {
 	// 创建 virt-customize 客户端（如果失败，返回 nil，后续使用时再处理）
 	virtCustomizeClient, _ := virtcustomize.NewClient()
@@ -50,7 +50,7 @@ func NewInstanceService(
 		libvirtClient:       libvirtClient,
 		virtCustomizeClient: virtCustomizeClient,
 		idGen:               idgen.New(),
-		instanceRepo:        repository.NewInstanceRepository(repo.DB()),
+		metadataStore:       metadataStore,
 	}, nil
 }
 
@@ -226,15 +226,11 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 		Str("domain_name", domain.Name).
 		Msg("Instance created successfully")
 
-	// 8. 保存到数据库
-	instanceModel, err := instanceEntityToModel(instance)
-	if err != nil {
-		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to convert instance to model", err)
+	// 8. 保存到 metadata store
+	if err := s.metadataStore.SaveInstance(ctx, instance); err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to save instance to metadata store", err)
 	}
-	if err := s.instanceRepo.Create(ctx, instanceModel); err != nil {
-		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to save instance to database", err)
-	}
-	logger.Info().Str("instance_id", instanceID).Msg("Instance saved to database")
+	logger.Info().Str("instance_id", instanceID).Msg("Instance saved to metadata store")
 
 	return instance, nil
 }
@@ -367,98 +363,43 @@ func (s *InstanceService) DescribeInstances(ctx context.Context, req *entity.Des
 	logger := zerolog.Ctx(ctx)
 	logger.Info().Msg("Describing instances")
 
-	// 从数据库查询
-	filters := make(map[string]interface{})
-	if len(req.InstanceIDs) > 0 {
-		// 如果指定了 InstanceIDs，逐个查询
-		var instances []entity.Instance
-		for _, instanceID := range req.InstanceIDs {
-			instanceModel, err := s.instanceRepo.GetByID(ctx, instanceID)
-			if err != nil {
-				// 如果数据库中没有，尝试从 Libvirt 查询（兼容旧数据）
-				logger.Info().
-					Str("instanceID", instanceID).
-					Msg("Instance not found in database, trying to query from libvirt")
-				instance, err := s.GetInstance(ctx, instanceID)
-				if err != nil {
-					logger.Warn().
-						Str("instanceID", instanceID).
-						Err(err).
-						Msg("Failed to get instance from both database and libvirt, skipping")
-					continue
-				}
-				instances = append(instances, *instance)
-			} else {
-				instance, err := instanceModelToEntity(instanceModel)
-				if err != nil {
-					logger.Error().
-						Str("instanceID", instanceID).
-						Err(err).
-						Msg("Failed to convert instance model to entity, skipping")
-					continue
-				}
-				instances = append(instances, *instance)
-			}
-		}
-
-		logger.Info().
-			Int("requested", len(req.InstanceIDs)).
-			Int("found", len(instances)).
-			Msg("Describe instances by IDs completed")
-		return instances, nil
-	}
-
-	// 列出所有实例
-	instanceModels, err := s.instanceRepo.List(ctx, filters)
+	// 从 metadata store 查询
+	instancePtrs, err := s.metadataStore.DescribeInstances(ctx, req)
 	if err != nil {
 		logger.Error().
 			Err(err).
-			Msg("Failed to list instances from database")
-		return nil, fmt.Errorf("list instances from database: %w", err)
+			Msg("Failed to describe instances from metadata store")
+		return nil, fmt.Errorf("describe instances from metadata store: %w", err)
 	}
 
 	logger.Info().
-		Int("totalInDB", len(instanceModels)).
-		Msg("Retrieved instances from database")
+		Int("total", len(instancePtrs)).
+		Msg("Retrieved instances from metadata store")
 
-	instances := make([]entity.Instance, 0, len(instanceModels))
-	for _, instanceModel := range instanceModels {
-		instance, err := instanceModelToEntity(instanceModel)
-		if err != nil {
-			logger.Warn().
-				Err(err).
-				Str("instance_id", instanceModel.ID).
-				Msg("Failed to convert instance model to entity, skipping")
-			continue
+	// 转换为值类型
+	instances := make([]entity.Instance, 0, len(instancePtrs))
+	for _, instancePtr := range instancePtrs {
+		if instancePtr != nil {
+			instances = append(instances, *instancePtr)
 		}
-		instances = append(instances, *instance)
 	}
 
 	logger.Info().
-		Int("totalInDB", len(instanceModels)).
-		Int("converted", len(instances)).
-		Msg("Describe all instances completed")
-
-	// TODO: 应用过滤器
+		Int("total", len(instances)).
+		Msg("Describe instances completed")
 
 	return instances, nil
 }
 
 // GetInstance 获取单个实例信息
 func (s *InstanceService) GetInstance(ctx context.Context, instanceID string) (*entity.Instance, error) {
-	// 优先从数据库查询
-	instanceModel, err := s.instanceRepo.GetByID(ctx, instanceID)
-	if err == nil {
-		return instanceModelToEntity(instanceModel)
-	}
-
-	// 如果数据库中没有，从 Libvirt 查询（兼容旧数据）
-	domain, err := s.libvirtClient.GetDomainByName(instanceID)
+	// 从 metadata store 查询
+	instance, err := s.metadataStore.GetInstance(ctx, instanceID)
 	if err != nil {
-		return nil, fmt.Errorf("get domain: %w", err)
+		return nil, fmt.Errorf("get instance from metadata store: %w", err)
 	}
 
-	return s.domainToInstance(ctx, domain)
+	return instance, nil
 }
 
 // domainToInstance 将 libvirt Domain 转换为 Instance
@@ -599,42 +540,31 @@ func (s *InstanceService) TerminateInstances(ctx context.Context, req *entity.Te
 			}
 		}
 
-		// 更新数据库状态（软删除）
-		instanceModel, err := s.instanceRepo.GetByID(ctx, instanceID)
-		if err != nil {
+		// 更新状态为 terminated 并删除元数据
+		if err := s.metadataStore.UpdateInstanceState(ctx, instanceID, "terminated"); err != nil {
 			logger.Error().
 				Str("instanceID", instanceID).
 				Err(err).
-				Msg("Failed to get instance from database")
-			lastError = err
-			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get instance from database", err)
-		}
-
-		instanceModel.State = "terminated"
-		if err := s.instanceRepo.Update(ctx, instanceModel); err != nil {
-			logger.Error().
-				Str("instanceID", instanceID).
-				Err(err).
-				Msg("Failed to update instance state in database")
-			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update instance state in database", err)
+				Msg("Failed to update instance state in metadata store")
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update instance state in metadata store", err)
 		}
 
 		logger.Info().
 			Str("instanceID", instanceID).
 			Msg("Instance state updated to terminated")
 
-		// 软删除
-		if err := s.instanceRepo.Delete(ctx, instanceID); err != nil {
+		// 删除元数据
+		if err := s.metadataStore.DeleteInstance(ctx, instanceID); err != nil {
 			logger.Error().
 				Str("instanceID", instanceID).
 				Err(err).
-				Msg("Failed to delete instance from database")
-			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to delete instance from database", err)
+				Msg("Failed to delete instance from metadata store")
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to delete instance from metadata store", err)
 		}
 
 		logger.Info().
 			Str("instanceID", instanceID).
-			Msg("Instance soft deleted from database")
+			Msg("Instance deleted from metadata store")
 
 		changes = append(changes, entity.InstanceStateChange{
 			InstanceID:    instanceID,
@@ -740,29 +670,18 @@ func (s *InstanceService) StopInstances(ctx context.Context, req *entity.StopIns
 			Str("instanceID", instanceID).
 			Msg("Domain stop command sent successfully")
 
-		// 更新数据库状态
-		instanceModel, err := s.instanceRepo.GetByID(ctx, instanceID)
-		if err != nil {
+		// 更新元数据状态
+		if err := s.metadataStore.UpdateInstanceState(ctx, instanceID, "stopped"); err != nil {
 			logger.Error().
 				Str("instanceID", instanceID).
 				Err(err).
-				Msg("Failed to get instance from database")
-			lastError = err
-			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get instance from database", err)
-		}
-
-		instanceModel.State = "stopped"
-		if err := s.instanceRepo.Update(ctx, instanceModel); err != nil {
-			logger.Error().
-				Str("instanceID", instanceID).
-				Err(err).
-				Msg("Failed to update instance state in database")
-			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update instance state in database", err)
+				Msg("Failed to update instance state in metadata store")
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update instance state in metadata store", err)
 		}
 
 		logger.Info().
 			Str("instanceID", instanceID).
-			Msg("Instance state updated in database")
+			Msg("Instance state updated in metadata store")
 
 		changes = append(changes, entity.InstanceStateChange{
 			InstanceID:    instanceID,
@@ -856,29 +775,18 @@ func (s *InstanceService) StartInstances(ctx context.Context, req *entity.StartI
 			Str("instanceID", instanceID).
 			Msg("Domain start command sent successfully")
 
-		// 更新数据库状态
-		instanceModel, err := s.instanceRepo.GetByID(ctx, instanceID)
-		if err != nil {
+		// 更新元数据状态
+		if err := s.metadataStore.UpdateInstanceState(ctx, instanceID, "running"); err != nil {
 			logger.Error().
 				Str("instanceID", instanceID).
 				Err(err).
-				Msg("Failed to get instance from database")
-			lastError = err
-			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get instance from database", err)
-		}
-
-		instanceModel.State = "running"
-		if err := s.instanceRepo.Update(ctx, instanceModel); err != nil {
-			logger.Error().
-				Str("instanceID", instanceID).
-				Err(err).
-				Msg("Failed to update instance state in database")
-			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update instance state in database", err)
+				Msg("Failed to update instance state in metadata store")
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update instance state in metadata store", err)
 		}
 
 		logger.Info().
 			Str("instanceID", instanceID).
-			Msg("Instance state updated in database")
+			Msg("Instance state updated in metadata store")
 
 		changes = append(changes, entity.InstanceStateChange{
 			InstanceID:    instanceID,
@@ -978,29 +886,18 @@ func (s *InstanceService) RebootInstances(ctx context.Context, req *entity.Reboo
 			Str("instanceID", instanceID).
 			Msg("Domain reboot command sent successfully")
 
-		// 更新数据库状态
-		instanceModel, err := s.instanceRepo.GetByID(ctx, instanceID)
-		if err != nil {
+		// 更新元数据状态
+		if err := s.metadataStore.UpdateInstanceState(ctx, instanceID, "running"); err != nil {
 			logger.Error().
 				Str("instanceID", instanceID).
 				Err(err).
-				Msg("Failed to get instance from database")
-			lastError = err
-			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get instance from database", err)
-		}
-
-		instanceModel.State = "running" // 重启后状态为 running
-		if err := s.instanceRepo.Update(ctx, instanceModel); err != nil {
-			logger.Error().
-				Str("instanceID", instanceID).
-				Err(err).
-				Msg("Failed to update instance state in database")
-			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update instance state in database", err)
+				Msg("Failed to update instance state in metadata store")
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update instance state in metadata store", err)
 		}
 
 		logger.Info().
 			Str("instanceID", instanceID).
-			Msg("Instance state updated in database")
+			Msg("Instance state updated in metadata store")
 
 		changes = append(changes, entity.InstanceStateChange{
 			InstanceID:    instanceID,
@@ -1086,22 +983,9 @@ func (s *InstanceService) ModifyInstanceAttribute(ctx context.Context, req *enti
 			Msg("Instance name modified")
 	}
 
-	// 更新数据库
-	instanceModel, err := s.instanceRepo.GetByID(ctx, req.InstanceID)
-	if err == nil {
-		// 更新修改的属性
-		if req.MemoryMB != nil {
-			instanceModel.MemoryMB = *req.MemoryMB
-		}
-		if req.VCPUs != nil {
-			instanceModel.VCPUs = *req.VCPUs
-		}
-		if req.Name != nil {
-			instanceModel.Name = *req.Name
-		}
-		if err := s.instanceRepo.Update(ctx, instanceModel); err != nil {
-			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update instance in database", err)
-		}
+	// 更新元数据（保存完整的实例对象）
+	if err := s.metadataStore.SaveInstance(ctx, instance); err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update instance in metadata store", err)
 	}
 
 	// 重新获取实例信息以获取最新状态
