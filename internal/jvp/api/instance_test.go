@@ -82,6 +82,14 @@ func (m *MockInstanceService) ResetPassword(ctx context.Context, req *entity.Res
 	return args.Get(0).(*entity.ResetPasswordResponse), args.Error(1)
 }
 
+func (m *MockInstanceService) GetConsoleInfo(ctx context.Context, req *entity.GetConsoleRequest) (*entity.GetConsoleResponse, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*entity.GetConsoleResponse), args.Error(1)
+}
+
 func TestInstance_RunInstances(t *testing.T) {
 	t.Parallel()
 

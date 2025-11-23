@@ -25,7 +25,8 @@ func TestService_Run(t *testing.T) {
 		{
 			name: "run with timeout context",
 			ctx: func() context.Context {
-				ctx, _ := context.WithTimeout(context.Background(), 100*time.Millisecond)
+				ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+				defer cancel()
 				return ctx
 			}(),
 			expectError: false,
@@ -67,7 +68,8 @@ func TestService_Shutdown(t *testing.T) {
 		{
 			name: "shutdown with timeout context",
 			ctx: func() context.Context {
-				ctx, _ := context.WithTimeout(context.Background(), 100*time.Millisecond)
+				ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+				defer cancel()
 				return ctx
 			}(),
 			expectError: false,
