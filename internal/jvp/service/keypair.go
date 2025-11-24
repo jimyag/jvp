@@ -7,13 +7,15 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/jimyag/jvp/internal/jvp/entity"
-	"github.com/jimyag/jvp/internal/jvp/metadata"
 	"github.com/jimyag/jvp/pkg/apierror"
 	"github.com/jimyag/jvp/pkg/idgen"
 	"github.com/rs/zerolog"
@@ -21,20 +23,31 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// KeyPairService 密钥对服务
+// KeyPairService 密钥对服务（使用文件系统存储）
 type KeyPairService struct {
-	metadataStore metadata.KeyPairStore
-	idGen         *idgen.Generator
+	idGen       *idgen.Generator
+	storageDir  string // 存储目录，默认 ~/.jvp/keypairs
 }
 
 // NewKeyPairService 创建密钥对服务
-func NewKeyPairService(
-	metadataStore metadata.KeyPairStore,
-) *KeyPairService {
-	return &KeyPairService{
-		metadataStore: metadataStore,
-		idGen:         idgen.New(),
+func NewKeyPairService() (*KeyPairService, error) {
+	// 默认存储目录为 ~/.jvp/keypairs
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("get user home directory: %w", err)
 	}
+
+	storageDir := filepath.Join(homeDir, ".jvp", "keypairs")
+
+	// 确保目录存在
+	if err := os.MkdirAll(storageDir, 0700); err != nil {
+		return nil, fmt.Errorf("create keypair storage directory: %w", err)
+	}
+
+	return &KeyPairService{
+		idGen:      idgen.New(),
+		storageDir: storageDir,
+	}, nil
 }
 
 // CreateKeyPair 创建密钥对
@@ -101,10 +114,10 @@ func (s *KeyPairService) CreateKeyPair(ctx context.Context, req *entity.CreateKe
 		CreatedAt:   time.Now().Format(time.RFC3339),
 	}
 
-	// 保存到 metadata store
-	if err := s.metadataStore.SaveKeyPair(ctx, keyPair); err != nil {
-		logger.Error().Err(err).Msg("Failed to save keypair to metadata store")
-		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to save keypair to metadata store", err)
+	// 保存到文件系统
+	if err := s.saveKeyPairToFile(keyPair); err != nil {
+		logger.Error().Err(err).Msg("Failed to save keypair to file")
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to save keypair to file", err)
 	}
 
 	logger.Info().
@@ -173,10 +186,10 @@ func (s *KeyPairService) ImportKeyPair(ctx context.Context, req *entity.ImportKe
 		CreatedAt:   time.Now().Format(time.RFC3339),
 	}
 
-	// 保存到 metadata store
-	if err := s.metadataStore.SaveKeyPair(ctx, keyPair); err != nil {
-		logger.Error().Err(err).Msg("Failed to save keypair to metadata store")
-		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to save keypair to metadata store", err)
+	// 保存到文件系统
+	if err := s.saveKeyPairToFile(keyPair); err != nil {
+		logger.Error().Err(err).Msg("Failed to save keypair to file")
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to save keypair to file", err)
 	}
 
 	logger.Info().
@@ -195,7 +208,7 @@ func (s *KeyPairService) DeleteKeyPair(ctx context.Context, keyPairID string) er
 	logger := zerolog.Ctx(ctx)
 
 	// 检查密钥对是否存在
-	_, err := s.metadataStore.GetKeyPair(ctx, keyPairID)
+	_, err := s.loadKeyPairFromFile(keyPairID)
 	if err != nil {
 		logger.Error().Err(err).Str("keypair_id", keyPairID).Msg("Key pair not found")
 		return apierror.NewErrorWithStatus(
@@ -205,10 +218,11 @@ func (s *KeyPairService) DeleteKeyPair(ctx context.Context, keyPairID string) er
 		)
 	}
 
-	// 删除
-	if err := s.metadataStore.DeleteKeyPair(ctx, keyPairID); err != nil {
-		logger.Error().Err(err).Str("keypair_id", keyPairID).Msg("Failed to delete keypair")
-		return apierror.WrapError(apierror.ErrInternalError, "Failed to delete keypair", err)
+	// 删除文件
+	filePath := filepath.Join(s.storageDir, keyPairID+".json")
+	if err := os.Remove(filePath); err != nil {
+		logger.Error().Err(err).Str("keypair_id", keyPairID).Msg("Failed to delete keypair file")
+		return apierror.WrapError(apierror.ErrInternalError, "Failed to delete keypair file", err)
 	}
 
 	logger.Info().Str("keypair_id", keyPairID).Msg("Key pair deleted successfully")
@@ -219,19 +233,36 @@ func (s *KeyPairService) DeleteKeyPair(ctx context.Context, keyPairID string) er
 func (s *KeyPairService) DescribeKeyPairs(ctx context.Context, req *entity.DescribeKeyPairsRequest) ([]entity.KeyPair, error) {
 	logger := zerolog.Ctx(ctx)
 
-	// 从 metadata store 查询
-	keyPairPtrs, err := s.metadataStore.DescribeKeyPairs(ctx, req)
+	// 读取所有 JSON 文件
+	files, err := filepath.Glob(filepath.Join(s.storageDir, "*.json"))
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to describe keypairs from metadata store")
-		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to describe keypairs from metadata store", err)
+		logger.Error().Err(err).Msg("Failed to list keypair files")
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to list keypair files", err)
 	}
 
-	// 转换为值类型
-	result := make([]entity.KeyPair, 0, len(keyPairPtrs))
-	for _, kp := range keyPairPtrs {
-		if kp != nil {
-			result = append(result, *kp)
+	var result []entity.KeyPair
+	for _, file := range files {
+		keyPair, err := s.loadKeyPairFromFileByPath(file)
+		if err != nil {
+			logger.Warn().Err(err).Str("file", file).Msg("Failed to load keypair file, skipping")
+			continue
 		}
+
+		// 应用过滤器
+		if req != nil && len(req.KeyPairIDs) > 0 {
+			found := false
+			for _, id := range req.KeyPairIDs {
+				if keyPair.ID == id {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+		}
+
+		result = append(result, *keyPair)
 	}
 
 	logger.Info().Int("count", len(result)).Msg("Key pairs described successfully")
@@ -240,7 +271,7 @@ func (s *KeyPairService) DescribeKeyPairs(ctx context.Context, req *entity.Descr
 
 // GetKeyPairByID 根据 ID 获取密钥对（内部方法）
 func (s *KeyPairService) GetKeyPairByID(ctx context.Context, keyPairID string) (*entity.KeyPair, error) {
-	kp, err := s.metadataStore.GetKeyPair(ctx, keyPairID)
+	kp, err := s.loadKeyPairFromFile(keyPairID)
 	if err != nil {
 		return nil, apierror.NewErrorWithStatus(
 			"ResourceNotFound",
@@ -250,6 +281,43 @@ func (s *KeyPairService) GetKeyPairByID(ctx context.Context, keyPairID string) (
 	}
 
 	return kp, nil
+}
+
+// saveKeyPairToFile 保存密钥对到文件
+func (s *KeyPairService) saveKeyPairToFile(keyPair *entity.KeyPair) error {
+	filePath := filepath.Join(s.storageDir, keyPair.ID+".json")
+
+	data, err := json.MarshalIndent(keyPair, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal keypair: %w", err)
+	}
+
+	if err := os.WriteFile(filePath, data, 0600); err != nil {
+		return fmt.Errorf("write keypair file: %w", err)
+	}
+
+	return nil
+}
+
+// loadKeyPairFromFile 从文件加载密钥对
+func (s *KeyPairService) loadKeyPairFromFile(keyPairID string) (*entity.KeyPair, error) {
+	filePath := filepath.Join(s.storageDir, keyPairID+".json")
+	return s.loadKeyPairFromFileByPath(filePath)
+}
+
+// loadKeyPairFromFileByPath 从文件路径加载密钥对
+func (s *KeyPairService) loadKeyPairFromFileByPath(filePath string) (*entity.KeyPair, error) {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("read keypair file: %w", err)
+	}
+
+	var keyPair entity.KeyPair
+	if err := json.Unmarshal(data, &keyPair); err != nil {
+		return nil, fmt.Errorf("unmarshal keypair: %w", err)
+	}
+
+	return &keyPair, nil
 }
 
 // generateED25519KeyPair 生成 ED25519 密钥对

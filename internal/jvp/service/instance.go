@@ -11,7 +11,6 @@ import (
 
 	libvirtlib "github.com/digitalocean/go-libvirt"
 	"github.com/jimyag/jvp/internal/jvp/entity"
-	"github.com/jimyag/jvp/internal/jvp/metadata"
 	"github.com/jimyag/jvp/pkg/apierror"
 	"github.com/jimyag/jvp/pkg/cloudinit"
 	"github.com/jimyag/jvp/pkg/idgen"
@@ -29,7 +28,6 @@ type InstanceService struct {
 	libvirtClient       libvirt.LibvirtClient
 	virtCustomizeClient virtcustomize.VirtCustomizeClient
 	idGen               *idgen.Generator
-	metadataStore       metadata.InstanceStore
 }
 
 // NewInstanceService 创建新的 Instance Service
@@ -38,7 +36,6 @@ func NewInstanceService(
 	imageService *ImageService,
 	keyPairService *KeyPairService,
 	libvirtClient libvirt.LibvirtClient,
-	metadataStore metadata.InstanceStore,
 ) (*InstanceService, error) {
 	// 创建 virt-customize 客户端（如果失败，返回 nil，后续使用时再处理）
 	virtCustomizeClient, _ := virtcustomize.NewClient()
@@ -50,7 +47,6 @@ func NewInstanceService(
 		libvirtClient:       libvirtClient,
 		virtCustomizeClient: virtCustomizeClient,
 		idGen:               idgen.New(),
-		metadataStore:       metadataStore,
 	}, nil
 }
 
@@ -226,12 +222,7 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 		Str("domain_name", domain.Name).
 		Msg("Instance created successfully")
 
-	// 8. 保存到 metadata store
-	if err := s.metadataStore.SaveInstance(ctx, instance); err != nil {
-		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to save instance to metadata store", err)
-	}
-	logger.Info().Str("instance_id", instanceID).Msg("Instance saved to metadata store")
-
+	// Instance 已存储在 libvirt 中，不需要额外保存
 	return instance, nil
 }
 
@@ -361,28 +352,61 @@ func (s *InstanceService) convertUserDataToCloudInit(
 // DescribeInstances 描述实例
 func (s *InstanceService) DescribeInstances(ctx context.Context, req *entity.DescribeInstancesRequest) ([]entity.Instance, error) {
 	logger := zerolog.Ctx(ctx)
-	logger.Info().Msg("Describing instances")
+	logger.Info().Msg("Describing instances from libvirt")
 
-	// 从 metadata store 查询
-	instancePtrs, err := s.metadataStore.DescribeInstances(ctx, req)
+	// 直接从 libvirt 获取所有 domain
+	domains, err := s.libvirtClient.GetVMSummaries()
 	if err != nil {
 		logger.Error().
 			Err(err).
-			Msg("Failed to describe instances from metadata store")
-		return nil, fmt.Errorf("describe instances from metadata store: %w", err)
+			Msg("Failed to get VMs from libvirt")
+		return nil, fmt.Errorf("get VMs from libvirt: %w", err)
 	}
 
-	logger.Info().
-		Int("total", len(instancePtrs)).
-		Msg("Retrieved instances from metadata store")
+	logger.Debug().
+		Int("total_domains", len(domains)).
+		Msg("Retrieved domains from libvirt")
 
-	// 转换为值类型
-	instances := make([]entity.Instance, 0, len(instancePtrs))
-	for _, instancePtr := range instancePtrs {
-		if instancePtr != nil {
-			instances = append(instances, *instancePtr)
+	// 转换为 Instance 对象
+	instances := make([]entity.Instance, 0, len(domains))
+	for _, domain := range domains {
+		// 获取详细信息
+		domainInfo, err := s.libvirtClient.GetDomainInfo(domain.UUID)
+		if err != nil {
+			logger.Warn().
+				Str("domain_name", domain.Name).
+				Err(err).
+				Msg("Failed to get domain info, skipping")
+			continue
 		}
+
+		// 获取状态
+		state, _, err := s.libvirtClient.GetDomainState(domain)
+		if err != nil {
+			logger.Warn().
+				Str("domain_name", domain.Name).
+				Err(err).
+				Msg("Failed to get domain state")
+			state = 5 // Unknown
+		}
+
+		instance := entity.Instance{
+			ID:         domain.Name,                   // 使用 domain name 作为 ID
+			Name:       domain.Name,
+			State:      convertDomainState(state),
+			DomainUUID: formatDomainUUID(domain.UUID),
+			DomainName: domain.Name,
+			VCPUs:      domainInfo.VCPUs,
+			MemoryMB:   domainInfo.Memory / 1024, // 转换为 MB
+			CreatedAt:  time.Now().Format(time.RFC3339), // libvirt 不提供创建时间
+		}
+
+		// TODO: 如果需要 ImageID 和 VolumeID，可以从 domain metadata 读取
+		instances = append(instances, instance)
 	}
+
+	// 应用过滤器（如果需要）
+	instances = s.applyInstanceFilters(instances, req)
 
 	logger.Info().
 		Int("total", len(instances)).
@@ -391,12 +415,77 @@ func (s *InstanceService) DescribeInstances(ctx context.Context, req *entity.Des
 	return instances, nil
 }
 
+// applyInstanceFilters 应用过滤器
+func (s *InstanceService) applyInstanceFilters(instances []entity.Instance, req *entity.DescribeInstancesRequest) []entity.Instance {
+	if req == nil {
+		return instances
+	}
+
+	// 如果指定了 InstanceIDs，只返回匹配的
+	if len(req.InstanceIDs) > 0 {
+		filtered := make([]entity.Instance, 0)
+		idSet := make(map[string]bool)
+		for _, id := range req.InstanceIDs {
+			idSet[id] = true
+		}
+		for _, instance := range instances {
+			if idSet[instance.ID] {
+				filtered = append(filtered, instance)
+			}
+		}
+		return filtered
+	}
+
+	return instances
+}
+
+// convertDomainState 转换 libvirt 状态为 JVP 状态
+func convertDomainState(state uint8) string {
+	switch state {
+	case 1: // Running
+		return "running"
+	case 3: // Paused
+		return "stopped"
+	case 4: // Shutdown
+		return "stopped"
+	case 5: // Shutoff
+		return "stopped"
+	case 6: // Crashed
+		return "failed"
+	default:
+		return "pending"
+	}
+}
+
 // GetInstance 获取单个实例信息
 func (s *InstanceService) GetInstance(ctx context.Context, instanceID string) (*entity.Instance, error) {
-	// 从 metadata store 查询
-	instance, err := s.metadataStore.GetInstance(ctx, instanceID)
+	// instanceID 就是 domain name
+	domain, err := s.libvirtClient.GetDomainByName(instanceID)
 	if err != nil {
-		return nil, fmt.Errorf("get instance from metadata store: %w", err)
+		return nil, fmt.Errorf("domain not found: %w", err)
+	}
+
+	// 获取详细信息
+	domainInfo, err := s.libvirtClient.GetDomainInfo(domain.UUID)
+	if err != nil {
+		return nil, fmt.Errorf("get domain info: %w", err)
+	}
+
+	// 获取状态
+	state, _, err := s.libvirtClient.GetDomainState(domain)
+	if err != nil {
+		state = 5 // Unknown
+	}
+
+	instance := &entity.Instance{
+		ID:         domain.Name,
+		Name:       domain.Name,
+		State:      convertDomainState(state),
+		DomainUUID: formatDomainUUID(domain.UUID),
+		DomainName: domain.Name,
+		VCPUs:      domainInfo.VCPUs,
+		MemoryMB:   domainInfo.Memory / 1024,
+		CreatedAt:  time.Now().Format(time.RFC3339),
 	}
 
 	return instance, nil
@@ -540,32 +629,7 @@ func (s *InstanceService) TerminateInstances(ctx context.Context, req *entity.Te
 			}
 		}
 
-		// 更新状态为 terminated 并删除元数据
-		if err := s.metadataStore.UpdateInstanceState(ctx, instanceID, "terminated"); err != nil {
-			logger.Error().
-				Str("instanceID", instanceID).
-				Err(err).
-				Msg("Failed to update instance state in metadata store")
-			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update instance state in metadata store", err)
-		}
-
-		logger.Info().
-			Str("instanceID", instanceID).
-			Msg("Instance state updated to terminated")
-
-		// 删除元数据
-		if err := s.metadataStore.DeleteInstance(ctx, instanceID); err != nil {
-			logger.Error().
-				Str("instanceID", instanceID).
-				Err(err).
-				Msg("Failed to delete instance from metadata store")
-			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to delete instance from metadata store", err)
-		}
-
-		logger.Info().
-			Str("instanceID", instanceID).
-			Msg("Instance deleted from metadata store")
-
+		// Domain 已从 libvirt 删除，不需要额外操作
 		changes = append(changes, entity.InstanceStateChange{
 			InstanceID:    instanceID,
 			CurrentState:  "terminated",
@@ -670,18 +734,7 @@ func (s *InstanceService) StopInstances(ctx context.Context, req *entity.StopIns
 			Str("instanceID", instanceID).
 			Msg("Domain stop command sent successfully")
 
-		// 更新元数据状态
-		if err := s.metadataStore.UpdateInstanceState(ctx, instanceID, "stopped"); err != nil {
-			logger.Error().
-				Str("instanceID", instanceID).
-				Err(err).
-				Msg("Failed to update instance state in metadata store")
-			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update instance state in metadata store", err)
-		}
-
-		logger.Info().
-			Str("instanceID", instanceID).
-			Msg("Instance state updated in metadata store")
+		// 状态已在 libvirt 中更新，不需要额外操作
 
 		changes = append(changes, entity.InstanceStateChange{
 			InstanceID:    instanceID,
@@ -775,19 +828,7 @@ func (s *InstanceService) StartInstances(ctx context.Context, req *entity.StartI
 			Str("instanceID", instanceID).
 			Msg("Domain start command sent successfully")
 
-		// 更新元数据状态
-		if err := s.metadataStore.UpdateInstanceState(ctx, instanceID, "running"); err != nil {
-			logger.Error().
-				Str("instanceID", instanceID).
-				Err(err).
-				Msg("Failed to update instance state in metadata store")
-			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update instance state in metadata store", err)
-		}
-
-		logger.Info().
-			Str("instanceID", instanceID).
-			Msg("Instance state updated in metadata store")
-
+		// 状态已在 libvirt 中更新，不需要额外操作
 		changes = append(changes, entity.InstanceStateChange{
 			InstanceID:    instanceID,
 			CurrentState:  "running",
@@ -886,19 +927,7 @@ func (s *InstanceService) RebootInstances(ctx context.Context, req *entity.Reboo
 			Str("instanceID", instanceID).
 			Msg("Domain reboot command sent successfully")
 
-		// 更新元数据状态
-		if err := s.metadataStore.UpdateInstanceState(ctx, instanceID, "running"); err != nil {
-			logger.Error().
-				Str("instanceID", instanceID).
-				Err(err).
-				Msg("Failed to update instance state in metadata store")
-			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update instance state in metadata store", err)
-		}
-
-		logger.Info().
-			Str("instanceID", instanceID).
-			Msg("Instance state updated in metadata store")
-
+		// 状态已在 libvirt 中更新，不需要额外操作
 		changes = append(changes, entity.InstanceStateChange{
 			InstanceID:    instanceID,
 			CurrentState:  "running",
@@ -983,12 +1012,7 @@ func (s *InstanceService) ModifyInstanceAttribute(ctx context.Context, req *enti
 			Msg("Instance name modified")
 	}
 
-	// 更新元数据（保存完整的实例对象）
-	if err := s.metadataStore.SaveInstance(ctx, instance); err != nil {
-		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update instance in metadata store", err)
-	}
-
-	// 重新获取实例信息以获取最新状态
+	// 属性已在 libvirt 中更新，重新获取实例信息以获取最新状态
 	updatedInstance, err := s.GetInstance(ctx, req.InstanceID)
 	if err != nil {
 		// 如果获取失败，返回修改后的实例信息
@@ -1220,4 +1244,72 @@ func (s *InstanceService) ResetPassword(ctx context.Context, req *entity.ResetPa
 		Message:    message,
 		Users:      userList,
 	}, nil
+}
+
+// ListVMTemplates 列出所有可用的 VM 模板
+// VM Template 是指带有快照的虚拟机，可以基于快照克隆新的 VM
+func (s *InstanceService) ListVMTemplates(ctx context.Context) ([]entity.VMTemplate, error) {
+	logger := zerolog.Ctx(ctx)
+
+	// 直接从 libvirt 获取所有 domain（包括不在 metadata store 中的）
+	domains, err := s.libvirtClient.GetVMSummaries()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get VMs from libvirt: %w", err)
+	}
+
+	templates := make([]entity.VMTemplate, 0)
+
+	// 遍历每个 domain，检查是否有快照
+	for _, domain := range domains {
+		// 获取 domain 的快照列表
+		snapshots, err := s.libvirtClient.ListSnapshots(domain.Name)
+		if err != nil {
+			logger.Warn().
+				Str("domain_name", domain.Name).
+				Err(err).
+				Msg("Failed to list snapshots for domain")
+			continue
+		}
+
+		logger.Debug().
+			Str("domain_name", domain.Name).
+			Int("snapshot_count", len(snapshots)).
+			Msg("Checked domain for snapshots")
+
+		// 如果 domain 有快照，将其作为模板
+		if len(snapshots) > 0 {
+			// 获取 domain 详细信息
+			domainInfo, err := s.libvirtClient.GetDomainInfo(domain.UUID)
+			if err != nil {
+				logger.Warn().
+					Str("domain_name", domain.Name).
+					Err(err).
+					Msg("Failed to get domain info")
+				continue
+			}
+
+			template := entity.VMTemplate{
+				ID:          formatDomainUUID(domain.UUID),
+				Name:        domain.Name + "-template",
+				Description: fmt.Sprintf("Template based on %s with %d snapshots", domain.Name, len(snapshots)),
+				SourceVM:    domain.Name,
+				VCPUs:       domainInfo.VCPUs,
+				Memory:      domainInfo.Memory / 1024, // 转换为 MB
+				DiskSize:    20,                       // 默认磁盘大小，可以后续优化从实际磁盘获取
+				CreatedAt:   time.Now().Format(time.RFC3339),
+			}
+			templates = append(templates, template)
+
+			logger.Debug().
+				Str("domain_name", domain.Name).
+				Str("template_id", template.ID).
+				Msg("Added domain as template")
+		}
+	}
+
+	logger.Info().
+		Int("template_count", len(templates)).
+		Msg("Listed VM templates")
+
+	return templates, nil
 }

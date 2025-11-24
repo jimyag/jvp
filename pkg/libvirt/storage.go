@@ -268,7 +268,9 @@ func (c *Client) ListVolumes(poolName string) ([]*VolumeInfo, error) {
 		return nil, fmt.Errorf("lookup storage pool %s: %w", poolName, err)
 	}
 
-	vols, _, err := c.conn.StoragePoolListAllVolumes(pool, 0, 0)
+	// NeedResults: 设置为足够大的数字以获取所有 volumes
+	// Flags: 0 表示获取所有类型的 volumes
+	vols, _, err := c.conn.StoragePoolListAllVolumes(pool, 1000, 0)
 	if err != nil {
 		return nil, fmt.Errorf("list volumes: %w", err)
 	}

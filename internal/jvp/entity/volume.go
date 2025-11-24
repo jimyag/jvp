@@ -2,19 +2,12 @@ package entity
 
 // CreateVolumeRequest 创建卷请求
 type CreateVolumeRequest struct {
-	AvailabilityZone  string             `json:"availabilityZone,omitempty"`
-	SizeGB            uint64             `json:"sizeGB"`
-	VolumeType        string             `json:"volumeType,omitempty"` // standard, io1, gp2, gp3（默认：gp2）
-	Iops              int                `json:"iops,omitempty"`
-	Encrypted         bool               `json:"encrypted,omitempty"`
-	KmsKeyID          string             `json:"kmsKeyID,omitempty"`
-	SnapshotID        string             `json:"snapshotID,omitempty"`
-	TagSpecifications []TagSpecification `json:"tagSpecifications,omitempty"`
+	SizeGB uint64 `json:"sizeGB" binding:"required"`
 }
 
 // CreateVolumeResponse 创建卷响应
 type CreateVolumeResponse struct {
-	Volume *EBSVolume `json:"volume"`
+	Volume *Volume `json:"volume"`
 }
 
 // DeleteVolumeRequest 删除卷请求
@@ -31,7 +24,7 @@ type DeleteVolumeResponse struct {
 type AttachVolumeRequest struct {
 	VolumeID   string `json:"volumeID" binding:"required"`
 	InstanceID string `json:"instanceID" binding:"required"`
-	Device     string `json:"device,omitempty"`
+	Device     string `json:"device,omitempty"` // 可选，如果不指定则自动分配
 }
 
 // AttachVolumeResponse 附加卷响应
@@ -43,83 +36,80 @@ type AttachVolumeResponse struct {
 type DetachVolumeRequest struct {
 	VolumeID   string `json:"volumeID" binding:"required"`
 	InstanceID string `json:"instanceID,omitempty"`
-	Force      bool   `json:"force,omitempty"`
 }
 
 // DetachVolumeResponse 分离卷响应
 type DetachVolumeResponse struct {
-	Attachment *VolumeAttachment `json:"attachment"`
+	Return bool `json:"return"`
 }
 
-// DescribeVolumesRequest 描述卷请求
-type DescribeVolumesRequest struct {
-	VolumeIDs  []string `json:"volumeIDs,omitempty"`
-	Filters    []Filter `json:"filters,omitempty"`
-	MaxResults int      `json:"maxResults,omitempty"`
-	NextToken  string   `json:"nextToken,omitempty"`
+// ListVolumesRequest 列出卷请求
+type ListVolumesRequest struct {
+	// 暂时为空，未来可以添加过滤参数
 }
 
-// DescribeVolumesResponse 描述卷响应
-type DescribeVolumesResponse struct {
-	Volumes   []EBSVolume `json:"volumes"`
-	NextToken string      `json:"nextToken,omitempty"`
+// ListVolumesResponse 列出卷响应
+type ListVolumesResponse struct {
+	Volumes []Volume `json:"volumes"`
 }
 
-// ModifyVolumeRequest 修改卷请求
-type ModifyVolumeRequest struct {
-	VolumeID   string `json:"volumeID" binding:"required"`
-	SizeGB     uint64 `json:"sizeGB,omitempty"`
-	VolumeType string `json:"volumeType,omitempty"`
-	Iops       int    `json:"iops,omitempty"`
+// DescribeVolumeRequest 描述卷请求
+type DescribeVolumeRequest struct {
+	VolumeID string `json:"volumeID" binding:"required"`
 }
 
-// ModifyVolumeResponse 修改卷响应
-type ModifyVolumeResponse struct {
-	VolumeModification *VolumeModification `json:"volumeModification"`
+// DescribeVolumeResponse 描述卷响应
+type DescribeVolumeResponse struct {
+	Volume *Volume `json:"volume"`
 }
 
-// EBSVolume EBS 卷信息
-type EBSVolume struct {
-	VolumeID         string             `json:"volumeID"` // vol-{uuid}
-	SizeGB           uint64             `json:"sizeGB"`
-	SnapshotID       string             `json:"snapshotID"`
-	AvailabilityZone string             `json:"availabilityZone"`
-	State            string             `json:"state"` // creating, available, in-use, deleting, deleted, error
-	VolumeType       string             `json:"volumeType"`
-	Iops             int                `json:"iops"`
-	Encrypted        bool               `json:"encrypted"`
-	KmsKeyID         string             `json:"kmsKeyID"`
-	Attachments      []VolumeAttachment `json:"attachments"`
-	CreateTime       string             `json:"createTime"`
-	Tags             []Tag              `json:"tags"`
+// ResizeVolumeRequest 调整卷大小请求
+type ResizeVolumeRequest struct {
+	VolumeID  string `json:"volumeID" binding:"required"`
+	NewSizeGB uint64 `json:"newSizeGB" binding:"required"`
+}
+
+// ResizeVolumeResponse 调整卷大小响应
+type ResizeVolumeResponse struct {
+	Return bool `json:"return"`
 }
 
 // VolumeAttachment 卷附加信息
 type VolumeAttachment struct {
-	VolumeID            string `json:"volumeID"`
-	InstanceID          string `json:"instanceID"`
-	Device              string `json:"device"` // /dev/vdb, /dev/vdc 等
-	State               string `json:"state"`  // attaching, attached, detaching, detached
-	AttachTime          string `json:"attachTime"`
-	DeleteOnTermination bool   `json:"deleteOnTermination"`
+	VolumeID   string `json:"volumeID"`
+	InstanceID string `json:"instanceID"`
+	Device     string `json:"device"` // /dev/vdb, /dev/vdc 等
 }
 
-// VolumeModification 卷修改信息
-type VolumeModification struct {
-	VolumeID          string `json:"volumeID"`
-	ModificationState string `json:"modificationState"` // modifying, optimizing, completed, failed
-	StatusMessage     string `json:"statusMessage"`
-	TargetSizeGB      uint64 `json:"targetSizeGB"`
-	TargetVolumeType  string `json:"targetVolumeType"`
-	TargetIops        int    `json:"targetIops"`
-	StartTime         string `json:"startTime"`
-	EndTime           string `json:"endTime,omitempty"`
+// ==================== Storage Pool 相关 ====================
+
+// ListStoragePoolsRequest 列出存储池请求
+type ListStoragePoolsRequest struct {
+	IncludeVolumes bool `json:"includeVolumes"` // 是否包含卷列表
 }
 
-// TagSpecification 标签规范
-type TagSpecification struct {
-	ResourceType string `json:"resourceType"` // volume, snapshot
-	Tags         []Tag  `json:"tags"`
+// ListStoragePoolsResponse 列出存储池响应
+type ListStoragePoolsResponse struct {
+	Pools []StoragePool `json:"pools"`
+}
+
+// DescribeStoragePoolRequest 描述存储池请求
+type DescribeStoragePoolRequest struct {
+	PoolName       string `json:"poolName" binding:"required"`
+	IncludeVolumes bool   `json:"includeVolumes"` // 是否包含卷列表
+}
+
+// DescribeStoragePoolResponse 描述存储池响应
+type DescribeStoragePoolResponse struct {
+	Pool *StoragePool `json:"pool"`
+}
+
+// ==================== 通用类型 ====================
+
+// Filter 过滤器
+type Filter struct {
+	Name   string   `json:"name"`
+	Values []string `json:"values"`
 }
 
 // Tag 标签
@@ -128,8 +118,8 @@ type Tag struct {
 	Value string `json:"value"`
 }
 
-// Filter 过滤器
-type Filter struct {
-	Name   string   `json:"name"`
-	Values []string `json:"values"`
+// TagSpecification 标签规范
+type TagSpecification struct {
+	ResourceType string `json:"resourceType"`
+	Tags         []Tag  `json:"tags"`
 }

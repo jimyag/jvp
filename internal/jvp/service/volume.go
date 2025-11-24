@@ -3,27 +3,21 @@ package service
 import (
 	"context"
 	"fmt"
-	"os"
-	"time"
 
 	"github.com/jimyag/jvp/internal/jvp/entity"
-	"github.com/jimyag/jvp/internal/jvp/metadata"
-	"github.com/jimyag/jvp/pkg/apierror"
 	"github.com/jimyag/jvp/pkg/idgen"
 	"github.com/jimyag/jvp/pkg/libvirt"
 	"github.com/jimyag/jvp/pkg/qemuimg"
 	"github.com/rs/zerolog"
 )
 
-// VolumeService EBS Volume 服务
+// VolumeService 存储卷服务（简化版，移除EBS概念）
 type VolumeService struct {
 	storageService  *StorageService
 	instanceService *InstanceService
 	libvirtClient   libvirt.LibvirtClient
 	qemuImgClient   qemuimg.QemuImgClient
 	idGen           *idgen.Generator
-	metadataStore   metadata.VolumeStore
-	snapshotStore   metadata.SnapshotStore
 }
 
 // NewVolumeService 创建新的 Volume Service
@@ -31,7 +25,6 @@ func NewVolumeService(
 	storageService *StorageService,
 	instanceService *InstanceService,
 	libvirtClient libvirt.LibvirtClient,
-	metadataStore metadata.MetadataStore,
 ) *VolumeService {
 	return &VolumeService{
 		storageService:  storageService,
@@ -39,18 +32,15 @@ func NewVolumeService(
 		libvirtClient:   libvirtClient,
 		qemuImgClient:   qemuimg.New(""),
 		idGen:           idgen.New(),
-		metadataStore:   metadataStore,
-		snapshotStore:   metadataStore,
 	}
 }
 
-// CreateEBSVolume 创建 EBS 卷
-func (s *VolumeService) CreateEBSVolume(ctx context.Context, req *entity.CreateVolumeRequest) (*entity.EBSVolume, error) {
+// CreateVolume 创建存储卷
+func (s *VolumeService) CreateVolume(ctx context.Context, req *entity.CreateVolumeRequest) (*entity.Volume, error) {
 	logger := zerolog.Ctx(ctx)
 	logger.Info().
 		Uint64("sizeGB", req.SizeGB).
-		Str("volumeType", req.VolumeType).
-		Msg("Creating EBS volume")
+		Msg("Creating volume")
 
 	// 生成 Volume ID
 	volumeID, err := s.idGen.GenerateVolumeID()
@@ -58,38 +48,11 @@ func (s *VolumeService) CreateEBSVolume(ctx context.Context, req *entity.CreateV
 		return nil, fmt.Errorf("generate volume ID: %w", err)
 	}
 
-	// 确定大小（如果从快照创建，使用快照大小；否则使用请求的大小）
-	sizeGB := req.SizeGB
-	var sourceVolumePath string
-	if req.SnapshotID != "" {
-		// 从快照创建卷
-		// 获取快照信息
-		snapshot, err := s.snapshotStore.GetSnapshot(ctx, req.SnapshotID)
-		if err != nil {
-			return nil, fmt.Errorf("snapshot %s not found: %w", req.SnapshotID, err)
-		}
-		if snapshot.State != "completed" {
-			return nil, fmt.Errorf("snapshot %s is not completed (state: %s)", req.SnapshotID, snapshot.State)
-		}
-
-		// 如果未指定大小，使用快照大小
-		if sizeGB == 0 {
-			sizeGB = snapshot.VolumeSizeGB
-		}
-
-		// 获取源卷信息
-		sourceVolume, err := s.storageService.GetVolume(ctx, snapshot.VolumeID)
-		if err != nil {
-			return nil, fmt.Errorf("get source volume %s: %w", snapshot.VolumeID, err)
-		}
-		sourceVolumePath = sourceVolume.Path
-	}
-
-	// 创建内部 Volume
+	// 创建存储卷
 	internalReq := &entity.CreateInternalVolumeRequest{
 		PoolName: "default",
 		VolumeID: volumeID,
-		SizeGB:   sizeGB,
+		SizeGB:   req.SizeGB,
 		Format:   "qcow2",
 	}
 
@@ -98,122 +61,66 @@ func (s *VolumeService) CreateEBSVolume(ctx context.Context, req *entity.CreateV
 		return nil, fmt.Errorf("create volume: %w", err)
 	}
 
-	// 如果从快照创建，需要从源卷复制数据
-	if req.SnapshotID != "" && sourceVolumePath != "" {
-		// 删除 CreateVolume 创建的空文件，因为 Convert 需要创建新文件
-		if err := os.Remove(internalVolume.Path); err != nil && !os.IsNotExist(err) {
-			// 清理已创建的 volume
-			_ = s.storageService.DeleteVolume(ctx, volumeID)
-			return nil, fmt.Errorf("remove empty volume file: %w", err)
-		}
-
-		// 从源卷复制到新卷（这会包含快照状态）
-		err = s.qemuImgClient.Convert(ctx, "qcow2", "qcow2", sourceVolumePath, internalVolume.Path)
-		if err != nil {
-			// 清理已创建的 volume
-			_ = s.storageService.DeleteVolume(ctx, volumeID)
-			return nil, fmt.Errorf("convert volume from snapshot: %w", err)
-		}
-
-		// 如果需要调整大小
-		sourceSizeGB := internalVolume.CapacityB / (1024 * 1024 * 1024)
-		if sourceSizeGB < sizeGB {
-			err = s.qemuImgClient.Resize(ctx, internalVolume.Path, sizeGB)
-			if err != nil {
-				// 清理已创建的 volume
-				_ = s.storageService.DeleteVolume(ctx, volumeID)
-				return nil, fmt.Errorf("resize volume: %w", err)
-			}
-		}
-
-		// 重新获取 volume 信息（因为大小可能已改变）
-		_, err = s.storageService.GetVolume(ctx, volumeID)
-		if err != nil {
-			return nil, fmt.Errorf("get volume info: %w", err)
-		}
+	volume := &entity.Volume{
+		ID:        volumeID,
+		Name:      volumeID,
+		Pool:      "default",
+		Path:      internalVolume.Path,
+		CapacityB: internalVolume.CapacityB,
+		Format:    internalVolume.Format,
 	}
-
-	// 转换为 EBS Volume
-	ebsVolume := &entity.EBSVolume{
-		VolumeID:         volumeID,
-		SizeGB:           sizeGB,
-		SnapshotID:       req.SnapshotID,
-		AvailabilityZone: req.AvailabilityZone,
-		State:            "available",
-		VolumeType:       req.VolumeType,
-		Iops:             req.Iops,
-		Encrypted:        req.Encrypted,
-		KmsKeyID:         req.KmsKeyID,
-		Attachments:      []entity.VolumeAttachment{},
-		CreateTime:       time.Now().Format(time.RFC3339),
-		Tags:             extractTags(req.TagSpecifications, "volume"),
-	}
-
-	// 保存到 metadata store
-	if err := s.metadataStore.SaveVolume(ctx, ebsVolume); err != nil {
-		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to save volume to metadata store", err)
-	}
-	logger.Info().Str("volumeID", volumeID).Msg("Volume saved to metadata store")
 
 	logger.Info().
 		Str("volumeID", volumeID).
-		Msg("EBS volume created successfully")
+		Msg("Volume created successfully")
 
-	return ebsVolume, nil
+	return volume, nil
 }
 
-// DeleteEBSVolume 删除 EBS 卷
-func (s *VolumeService) DeleteEBSVolume(ctx context.Context, volumeID string) error {
+// DeleteVolume 删除存储卷
+func (s *VolumeService) DeleteVolume(ctx context.Context, volumeID string) error {
 	logger := zerolog.Ctx(ctx)
-	logger.Info().Str("volumeID", volumeID).Msg("Deleting EBS volume")
+	logger.Info().Str("volumeID", volumeID).Msg("Deleting volume")
 
 	// 检查卷是否被附加
-	volume, err := s.DescribeEBSVolume(ctx, volumeID)
+	volume, err := s.GetVolume(ctx, volumeID)
 	if err != nil {
 		return fmt.Errorf("get volume: %w", err)
 	}
 
-	if len(volume.Attachments) > 0 {
+	attachments := s.findVolumeAttachments(ctx, volume.Path)
+	if len(attachments) > 0 {
 		return fmt.Errorf("volume %s is attached to instance(s), cannot delete", volumeID)
 	}
 
-	// 删除内部 Volume
+	// 删除存储卷
 	err = s.storageService.DeleteVolume(ctx, volumeID)
 	if err != nil {
 		return fmt.Errorf("delete volume: %w", err)
 	}
 
-	// 从 metadata store 删除
-	if err := s.metadataStore.DeleteVolume(ctx, volumeID); err != nil {
-		return apierror.WrapError(apierror.ErrInternalError, "Failed to delete volume from metadata store", err)
-	}
-
-	logger.Info().Str("volumeID", volumeID).Msg("EBS volume deleted successfully")
+	logger.Info().Str("volumeID", volumeID).Msg("Volume deleted successfully")
 	return nil
 }
 
-// AttachEBSVolume 附加卷到实例
-func (s *VolumeService) AttachEBSVolume(ctx context.Context, req *entity.AttachVolumeRequest) (*entity.VolumeAttachment, error) {
+// AttachVolume 将卷附加到实例
+func (s *VolumeService) AttachVolume(ctx context.Context, req *entity.AttachVolumeRequest) (*entity.VolumeAttachment, error) {
 	logger := zerolog.Ctx(ctx)
 	logger.Info().
 		Str("volumeID", req.VolumeID).
 		Str("instanceID", req.InstanceID).
-		Msg("Attaching EBS volume to instance")
+		Msg("Attaching volume to instance")
 
 	// 获取卷信息
-	volume, err := s.DescribeEBSVolume(ctx, req.VolumeID)
+	volume, err := s.GetVolume(ctx, req.VolumeID)
 	if err != nil {
 		return nil, fmt.Errorf("get volume: %w", err)
 	}
 
-	if volume.State != "available" {
-		return nil, fmt.Errorf("volume %s is not available (state: %s)", req.VolumeID, volume.State)
-	}
-
-	// 获取卷的路径
-	internalVolume, err := s.storageService.GetVolume(ctx, req.VolumeID)
-	if err != nil {
-		return nil, fmt.Errorf("get volume: %w", err)
+	// 检查卷是否已被附加
+	attachments := s.findVolumeAttachments(ctx, volume.Path)
+	if len(attachments) > 0 {
+		return nil, fmt.Errorf("volume %s is already attached", req.VolumeID)
 	}
 
 	// 获取 domain 的磁盘列表，确定可用的设备名
@@ -253,311 +160,194 @@ func (s *VolumeService) AttachEBSVolume(ctx context.Context, req *entity.AttachV
 	}
 
 	// 附加磁盘到 domain
-	err = s.libvirtClient.AttachDiskToDomain(req.InstanceID, internalVolume.Path, device)
+	err = s.libvirtClient.AttachDiskToDomain(req.InstanceID, volume.Path, device)
 	if err != nil {
 		return nil, fmt.Errorf("attach disk to domain: %w", err)
 	}
 
-	// 更新卷状态为 in-use
-	if err := s.metadataStore.UpdateVolumeState(ctx, req.VolumeID, "in-use"); err != nil {
-		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update volume state in metadata store", err)
-	}
-
 	attachment := &entity.VolumeAttachment{
-		VolumeID:            req.VolumeID,
-		InstanceID:          req.InstanceID,
-		Device:              device,
-		State:               "attached",
-		AttachTime:          time.Now().Format(time.RFC3339),
-		DeleteOnTermination: false,
+		VolumeID:   req.VolumeID,
+		InstanceID: req.InstanceID,
+		Device:     device,
 	}
 
 	logger.Info().
 		Str("volumeID", req.VolumeID).
 		Str("instanceID", req.InstanceID).
 		Str("device", device).
-		Msg("EBS volume attached successfully")
+		Msg("Volume attached successfully")
 
 	return attachment, nil
 }
 
-// DetachEBSVolume 从实例分离卷
-func (s *VolumeService) DetachEBSVolume(ctx context.Context, req *entity.DetachVolumeRequest) (*entity.VolumeAttachment, error) {
+// DetachVolume 从实例分离卷
+func (s *VolumeService) DetachVolume(ctx context.Context, req *entity.DetachVolumeRequest) error {
 	logger := zerolog.Ctx(ctx)
 	logger.Info().
 		Str("volumeID", req.VolumeID).
 		Str("instanceID", req.InstanceID).
-		Msg("Detaching EBS volume from instance")
+		Msg("Detaching volume from instance")
 
 	// 获取卷信息
-	volume, err := s.DescribeEBSVolume(ctx, req.VolumeID)
+	volume, err := s.GetVolume(ctx, req.VolumeID)
 	if err != nil {
-		return nil, fmt.Errorf("get volume: %w", err)
+		return fmt.Errorf("get volume: %w", err)
 	}
 
 	// 查找附加信息
+	attachments := s.findVolumeAttachments(ctx, volume.Path)
 	var attachment *entity.VolumeAttachment
-	for i, att := range volume.Attachments {
-		if req.InstanceID == "" || att.InstanceID == req.InstanceID {
-			attachment = &volume.Attachments[i]
+	for i := range attachments {
+		if req.InstanceID == "" || attachments[i].InstanceID == req.InstanceID {
+			attachment = &attachments[i]
 			break
 		}
 	}
 
 	if attachment == nil {
-		return nil, fmt.Errorf("volume %s is not attached to instance %s", req.VolumeID, req.InstanceID)
+		return fmt.Errorf("volume %s is not attached to instance %s", req.VolumeID, req.InstanceID)
 	}
 
 	// 从 domain 分离磁盘
 	err = s.libvirtClient.DetachDiskFromDomain(attachment.InstanceID, attachment.Device)
 	if err != nil {
-		return nil, fmt.Errorf("detach disk from domain: %w", err)
+		return fmt.Errorf("detach disk from domain: %w", err)
 	}
-
-	// 更新卷状态为 available
-	if err := s.metadataStore.UpdateVolumeState(ctx, req.VolumeID, "available"); err != nil {
-		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update volume state in metadata store", err)
-	}
-
-	attachment.State = "detached"
 
 	logger.Info().
 		Str("volumeID", req.VolumeID).
 		Str("instanceID", attachment.InstanceID).
-		Msg("EBS volume detached successfully")
+		Msg("Volume detached successfully")
 
-	return attachment, nil
+	return nil
 }
 
-// DescribeEBSVolumes 描述 EBS 卷
-func (s *VolumeService) DescribeEBSVolumes(ctx context.Context, req *entity.DescribeVolumesRequest) ([]entity.EBSVolume, error) {
+// ListVolumes 列出所有存储卷
+func (s *VolumeService) ListVolumes(ctx context.Context) ([]entity.Volume, error) {
 	logger := zerolog.Ctx(ctx)
-	logger.Info().Msg("Describing EBS volumes")
+	logger.Info().Msg("Listing volumes from libvirt storage pools")
 
-	// 从 metadata store 查询
-	volumePtrs, err := s.metadataStore.DescribeVolumes(ctx, req)
+	// 从 StorageService 获取所有卷
+	pools, err := s.storageService.ListStoragePools(ctx, true)
 	if err != nil {
 		logger.Error().
 			Err(err).
-			Msg("Failed to describe volumes from metadata store")
-		return nil, fmt.Errorf("describe volumes from metadata store: %w", err)
+			Msg("Failed to list storage pools")
+		return nil, fmt.Errorf("list storage pools: %w", err)
 	}
 
-	logger.Info().
-		Int("total", len(volumePtrs)).
-		Msg("Retrieved volumes from metadata store")
+	// 收集所有卷
+	var volumes []entity.Volume
+	for _, pool := range pools {
+		for _, vol := range pool.Volumes {
+			// 跳过镜像池和模板池
+			if pool.Name == "images" || pool.Name == "template" {
+				continue
+			}
 
-	// 转换为值类型
-	volumes := make([]entity.EBSVolume, 0, len(volumePtrs))
-	for _, volumePtr := range volumePtrs {
-		if volumePtr != nil {
-			volumes = append(volumes, *volumePtr)
+			// 查找卷的附加关系（实时查询）
+			attachments := s.findVolumeAttachments(ctx, vol.Path)
+
+			volume := entity.Volume{
+				ID:          vol.ID,
+				Name:        vol.Name,
+				Pool:        pool.Name,
+				Path:        vol.Path,
+				CapacityB:   vol.CapacityB,
+				Format:      vol.Format,
+				Attachments: attachments,
+			}
+
+			volumes = append(volumes, volume)
 		}
 	}
 
 	logger.Info().
 		Int("total", len(volumes)).
-		Msg("Describe volumes completed")
+		Msg("List volumes completed")
 
 	return volumes, nil
 }
 
-// DescribeEBSVolume 描述单个 EBS 卷
-func (s *VolumeService) DescribeEBSVolume(ctx context.Context, volumeID string) (*entity.EBSVolume, error) {
-	// 从 metadata store 查询
-	volume, err := s.metadataStore.GetVolume(ctx, volumeID)
+// GetVolume 获取单个存储卷
+func (s *VolumeService) GetVolume(ctx context.Context, volumeID string) (*entity.Volume, error) {
+	volumes, err := s.ListVolumes(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("get volume from metadata store: %w", err)
+		return nil, err
 	}
 
-	return volume, nil
+	for i := range volumes {
+		if volumes[i].ID == volumeID {
+			return &volumes[i], nil
+		}
+	}
+
+	return nil, fmt.Errorf("volume %s not found", volumeID)
 }
 
-// enrichVolumeWithAttachments 补充卷的附加信息
-func (s *VolumeService) enrichVolumeWithAttachments(ctx context.Context, volume *entity.EBSVolume) (*entity.EBSVolume, error) {
+// ResizeVolume 调整卷大小
+func (s *VolumeService) ResizeVolume(ctx context.Context, volumeID string, newSizeGB uint64) error {
 	logger := zerolog.Ctx(ctx)
+	logger.Info().
+		Str("volumeID", volumeID).
+		Uint64("newSizeGB", newSizeGB).
+		Msg("Resizing volume")
 
-	// 获取卷的路径
-	internalVolume, err := s.storageService.GetVolume(ctx, volume.VolumeID)
+	// 获取卷路径
+	volume, err := s.GetVolume(ctx, volumeID)
 	if err != nil {
-		// 如果获取不到路径，返回原始卷信息
-		return volume, nil
+		return fmt.Errorf("get volume: %w", err)
 	}
 
-	// 检查卷是否被附加到任何实例
-	attachments := []entity.VolumeAttachment{}
-	state := volume.State
+	currentSizeGB := volume.CapacityB / (1024 * 1024 * 1024)
+	if newSizeGB <= currentSizeGB {
+		return fmt.Errorf("new size must be larger than current size (%d GB)", currentSizeGB)
+	}
 
-	// 列出所有 domain，检查哪些 domain 使用了这个卷
+	// 使用 qemu-img resize 调整大小
+	err = s.qemuImgClient.Resize(ctx, volume.Path, newSizeGB)
+	if err != nil {
+		return fmt.Errorf("resize volume: %w", err)
+	}
+
+	logger.Info().
+		Str("volumeID", volumeID).
+		Uint64("newSizeGB", newSizeGB).
+		Msg("Volume resized successfully")
+
+	return nil
+}
+
+// findVolumeAttachments 查找卷的附加关系（实时从 libvirt 查询）
+func (s *VolumeService) findVolumeAttachments(ctx context.Context, volumePath string) []entity.VolumeAttachment {
+	logger := zerolog.Ctx(ctx)
+	var attachments []entity.VolumeAttachment
+
+	// 获取所有 domain
 	domains, err := s.libvirtClient.GetVMSummaries()
-	if err == nil {
-		for _, domain := range domains {
-			disks, err := s.libvirtClient.GetDomainDisks(domain.Name)
-			if err != nil {
-				logger.Warn().
-					Str("volumeID", volume.VolumeID).
-					Str("domainName", domain.Name).
-					Err(err).
-					Msg("Failed to get domain disks, skipping")
-				continue
-			}
-			for _, disk := range disks {
-				if disk.Device == "disk" && disk.Source.File == internalVolume.Path {
-					// 找到附加的实例
-					attachment := entity.VolumeAttachment{
-						VolumeID:            volume.VolumeID,
-						InstanceID:          domain.Name,
-						Device:              disk.Target.Dev,
-						State:               "attached",
-						AttachTime:          volume.CreateTime, // 使用卷创建时间作为附加时间
-						DeleteOnTermination: false,
-					}
-					attachments = append(attachments, attachment)
-					state = "in-use"
-				}
-			}
-		}
-	}
-
-	volume.Attachments = attachments
-	volume.State = state
-
-	return volume, nil
-}
-
-// ModifyEBSVolume 修改 EBS 卷属性
-func (s *VolumeService) ModifyEBSVolume(ctx context.Context, req *entity.ModifyVolumeRequest) (*entity.VolumeModification, error) {
-	logger := zerolog.Ctx(ctx)
-	logger.Info().
-		Str("volumeID", req.VolumeID).
-		Uint64("sizeGB", req.SizeGB).
-		Msg("Modifying EBS volume")
-
-	// 获取卷信息
-	volume, err := s.DescribeEBSVolume(ctx, req.VolumeID)
 	if err != nil {
-		return nil, fmt.Errorf("get volume: %w", err)
+		logger.Warn().Err(err).Msg("Failed to get VM summaries")
+		return attachments
 	}
 
-	modification := &entity.VolumeModification{
-		VolumeID:          req.VolumeID,
-		ModificationState: "modifying",
-		StatusMessage:     "Modification in progress",
-		StartTime:         time.Now().Format(time.RFC3339),
-	}
-
-	// 如果修改大小
-	if req.SizeGB > 0 && req.SizeGB > volume.SizeGB {
-		// 获取卷路径
-		internalVolume, err := s.storageService.GetVolume(ctx, req.VolumeID)
+	// 遍历每个 domain，检查是否使用了这个卷
+	for _, domain := range domains {
+		disks, err := s.libvirtClient.GetDomainDisks(domain.Name)
 		if err != nil {
-			return nil, fmt.Errorf("get volume: %w", err)
+			continue
 		}
 
-		// 使用 qemu-img resize 调整大小
-		err = s.qemuImgClient.Resize(ctx, internalVolume.Path, req.SizeGB)
-		if err != nil {
-			return nil, fmt.Errorf("resize volume: %w", err)
-		}
-
-		modification.TargetSizeGB = req.SizeGB
-		logger.Info().
-			Str("volumeID", req.VolumeID).
-			Uint64("newSizeGB", req.SizeGB).
-			Msg("Volume resized successfully")
-
-		// 更新 metadata store 中的卷信息
-		volume, err := s.metadataStore.GetVolume(ctx, req.VolumeID)
-		if err == nil {
-			volume.SizeGB = req.SizeGB
-			if err := s.metadataStore.SaveVolume(ctx, volume); err != nil {
-				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update volume size in metadata store", err)
-			}
-		}
-	}
-
-	// 如果修改类型或 IOPS
-	if req.VolumeType != "" || req.Iops > 0 {
-		volume, err := s.metadataStore.GetVolume(ctx, req.VolumeID)
-		if err == nil {
-			if req.VolumeType != "" {
-				modification.TargetVolumeType = req.VolumeType
-				volume.VolumeType = req.VolumeType
-			}
-			if req.Iops > 0 {
-				modification.TargetIops = req.Iops
-				volume.Iops = req.Iops
-			}
-			if err := s.metadataStore.SaveVolume(ctx, volume); err != nil {
-				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update volume in metadata store", err)
-			}
-		}
-	}
-
-	modification.ModificationState = "completed"
-	modification.EndTime = time.Now().Format(time.RFC3339)
-
-	logger.Info().
-		Str("volumeID", req.VolumeID).
-		Msg("EBS volume modified successfully")
-
-	return modification, nil
-}
-
-// extractTags 从 TagSpecifications 中提取标签
-func extractTags(specs []entity.TagSpecification, resourceType string) []entity.Tag {
-	var tags []entity.Tag
-	for _, spec := range specs {
-		if spec.ResourceType == resourceType {
-			tags = append(tags, spec.Tags...)
-		}
-	}
-	return tags
-}
-
-// applyFilters 应用过滤器
-func (s *VolumeService) applyFilters(volumes []entity.EBSVolume, filters []entity.Filter) []entity.EBSVolume {
-	var result []entity.EBSVolume
-
-	for _, volume := range volumes {
-		match := true
-		for _, filter := range filters {
-			if !s.matchesFilter(volume, filter) {
-				match = false
-				break
-			}
-		}
-		if match {
-			result = append(result, volume)
-		}
-	}
-
-	return result
-}
-
-// matchesFilter 检查卷是否匹配过滤器
-func (s *VolumeService) matchesFilter(volume entity.EBSVolume, filter entity.Filter) bool {
-	for _, value := range filter.Values {
-		switch filter.Name {
-		case "volume-id":
-			if volume.VolumeID == value {
-				return true
-			}
-		case "state":
-			if volume.State == value {
-				return true
-			}
-		case "volume-type":
-			if volume.VolumeType == value {
-				return true
-			}
-		case "attachment.instance-id":
-			for _, att := range volume.Attachments {
-				if att.InstanceID == value {
-					return true
+		for _, disk := range disks {
+			if disk.Device == "disk" && disk.Source.File == volumePath {
+				attachment := entity.VolumeAttachment{
+					VolumeID:   volumePath, // 使用路径作为临时ID
+					InstanceID: domain.Name,
+					Device:     disk.Target.Dev,
 				}
+				attachments = append(attachments, attachment)
 			}
 		}
 	}
-	return false
+
+	return attachments
 }

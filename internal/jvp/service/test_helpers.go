@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jimyag/jvp/internal/jvp/metadata"
 	"github.com/jimyag/jvp/pkg/idgen"
 	"github.com/jimyag/jvp/pkg/libvirt"
 	"github.com/jimyag/jvp/pkg/qemuimg"
@@ -18,20 +17,18 @@ import (
 
 // TestServices 包含测试所需的所有服务和依赖
 type TestServices struct {
-	MetadataStore   metadata.MetadataStore
 	MockLibvirt     *libvirt.MockClient
 	MockQemuImg     *qemuimg.MockClient
 	StorageService  *StorageService
 	ImageService    *ImageService
 	InstanceService *InstanceService
 	VolumeService   *VolumeService
-	SnapshotService *SnapshotService
 	KeyPairService  *KeyPairService
 	TempDir         string
 }
 
 // setupTestServices 为每个测试用例创建独立的测试环境
-// 每个测试用例都会获得自己的数据库、mock clients 和 service 实例
+// 每个测试用例都会获得自己的 mock clients 和 service 实例
 func setupTestServices(t *testing.T) *TestServices {
 	t.Helper()
 
@@ -41,16 +38,6 @@ func setupTestServices(t *testing.T) *TestServices {
 	t.Cleanup(func() {
 		_ = os.RemoveAll(tmpDir)
 	})
-
-	// 创建 metadata store
-	metadataStore, err := metadata.NewLibvirtMetadataStore(&metadata.StoreConfig{
-		BasePath:             tmpDir,
-		LibvirtURI:           "test:///default",
-		EnableIndexCache:     true,
-		IndexRefreshInterval: 5 * time.Minute,
-		LockTimeout:          30 * time.Second,
-	})
-	require.NoError(t, err)
 
 	// 创建 mock libvirt client
 	mockLibvirt := libvirt.NewMockClient()
@@ -67,14 +54,13 @@ func setupTestServices(t *testing.T) *TestServices {
 	// 替换 StorageService 中的真实 qemu-img client 为 mock
 	storageService.qemuImgClient = mockQemuImg
 
-	// 创建 ImageService
+	// 创建 ImageService（不再使用 metadataStore）
 	imageService := &ImageService{
 		storageService: storageService,
 		libvirtClient:  mockLibvirt,
 		qemuImgClient:  mockQemuImg,
 		idGen:          idgen.New(),
 		httpClient:     &http.Client{Timeout: 30 * time.Minute},
-		metadataStore:  metadataStore,
 		imagesPoolName: "images",
 		imagesPoolPath: "/var/lib/jvp/images/images",
 	}
@@ -91,10 +77,16 @@ func setupTestServices(t *testing.T) *TestServices {
 		virtCustomizeClient = virtcustomize.NewClientWithPath("/usr/bin/virt-customize")
 	}
 
-	// 创建 KeyPairService
-	keyPairService := NewKeyPairService(metadataStore)
+	// 创建 KeyPairService（使用文件存储）
+	keypairDir := filepath.Join(tmpDir, "keypairs")
+	err = os.MkdirAll(keypairDir, 0700)
+	require.NoError(t, err)
+	keyPairService := &KeyPairService{
+		idGen:      idgen.New(),
+		storageDir: keypairDir,
+	}
 
-	// 创建 InstanceService
+	// 创建 InstanceService（不再使用 metadataStore）
 	instanceService := &InstanceService{
 		storageService:      storageService,
 		imageService:        imageService,
@@ -102,38 +94,24 @@ func setupTestServices(t *testing.T) *TestServices {
 		libvirtClient:       mockLibvirt,
 		virtCustomizeClient: virtCustomizeClient,
 		idGen:               idgen.New(),
-		metadataStore:       metadataStore,
 	}
 
-	// 创建 VolumeService
+	// 创建 VolumeService（不再使用 metadataStore 和 snapshotStore）
 	volumeService := &VolumeService{
 		storageService:  storageService,
 		instanceService: instanceService,
 		libvirtClient:   mockLibvirt,
 		qemuImgClient:   mockQemuImg,
 		idGen:           idgen.New(),
-		metadataStore:   metadataStore,
-		snapshotStore:   metadataStore,
-	}
-
-	// 创建 SnapshotService
-	snapshotService := &SnapshotService{
-		storageService: storageService,
-		libvirtClient:  mockLibvirt,
-		qemuImgClient:  mockQemuImg,
-		idGen:          idgen.New(),
-		metadataStore:  metadataStore,
 	}
 
 	return &TestServices{
-		MetadataStore:   metadataStore,
 		MockLibvirt:     mockLibvirt,
 		MockQemuImg:     mockQemuImg,
 		StorageService:  storageService,
 		ImageService:    imageService,
 		InstanceService: instanceService,
 		VolumeService:   volumeService,
-		SnapshotService: snapshotService,
 		KeyPairService:  keyPairService,
 		TempDir:         tmpDir,
 	}

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,7 +24,6 @@ func TestNew(t *testing.T) {
 		assert.NotNil(t, api.server)
 		assert.NotNil(t, api.instance)
 		assert.NotNil(t, api.volume)
-		assert.NotNil(t, api.snapshot)
 		assert.NotNil(t, api.image)
 		assert.Equal(t, ":8080", api.server.Addr)
 	})
@@ -47,7 +47,6 @@ func TestNew(t *testing.T) {
 		// 检查一些关键路由是否存在
 		assert.True(t, routePaths["/api/instances/run"] || routePaths["/api/instances/describe"], "should have instance routes")
 		assert.True(t, routePaths["/api/volumes/create"] || routePaths["/api/volumes/describe"], "should have volume routes")
-		assert.True(t, routePaths["/api/snapshots/create"] || routePaths["/api/snapshots/describe"], "should have snapshot routes")
 		assert.True(t, routePaths["/api/images/create"] || routePaths["/api/images/describe"], "should have image routes")
 	})
 }
@@ -212,8 +211,7 @@ func TestPrintRoutes(t *testing.T) {
 
 		// 创建一个空的 engine 来测试 printRoutes 的空路由情况
 		// 由于 printRoutes 是私有函数，我们通过 New 来间接测试
-		// 但我们可以创建一个空的 engine 来模拟
-		engine := setupTestRouter()
+		engine := gin.Default()
 		routes := engine.Routes()
 		// 空的 router 应该没有路由
 		assert.Equal(t, 0, len(routes), "empty router should have no routes")

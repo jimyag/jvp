@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jimyag/jvp/internal/jvp/entity"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -106,7 +107,7 @@ func TestImage_CreateImage(t *testing.T) {
 				imageService: mockService,
 			}
 
-			router := setupTestRouter()
+			router := gin.Default()
 			apiGroup := router.Group("/api")
 			imageAPI.RegisterRoutes(apiGroup)
 
@@ -183,7 +184,7 @@ func TestImage_DescribeImages(t *testing.T) {
 				imageService: mockService,
 			}
 
-			router := setupTestRouter()
+			router := gin.Default()
 			apiGroup := router.Group("/api")
 			imageAPI.RegisterRoutes(apiGroup)
 
@@ -260,7 +261,7 @@ func TestImage_RegisterImage(t *testing.T) {
 				imageService: mockService,
 			}
 
-			router := setupTestRouter()
+			router := gin.Default()
 			apiGroup := router.Group("/api")
 			imageAPI.RegisterRoutes(apiGroup)
 
@@ -322,7 +323,7 @@ func TestImage_DeregisterImage(t *testing.T) {
 				imageService: mockService,
 			}
 
-			router := setupTestRouter()
+			router := gin.Default()
 			apiGroup := router.Group("/api")
 			imageAPI.RegisterRoutes(apiGroup)
 

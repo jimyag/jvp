@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jimyag/jvp/internal/jvp/entity"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -149,7 +150,7 @@ func TestInstance_RunInstances(t *testing.T) {
 				instanceService: mockService,
 			}
 
-			router := setupTestRouter()
+			router := gin.Default()
 			apiGroup := router.Group("/api")
 			instanceAPI.RegisterRoutes(apiGroup)
 
@@ -226,7 +227,7 @@ func TestInstance_DescribeInstances(t *testing.T) {
 				instanceService: mockService,
 			}
 
-			router := setupTestRouter()
+			router := gin.Default()
 			apiGroup := router.Group("/api")
 			instanceAPI.RegisterRoutes(apiGroup)
 
@@ -292,7 +293,7 @@ func TestInstance_TerminateInstances(t *testing.T) {
 				instanceService: mockService,
 			}
 
-			router := setupTestRouter()
+			router := gin.Default()
 			apiGroup := router.Group("/api")
 			instanceAPI.RegisterRoutes(apiGroup)
 
@@ -359,7 +360,7 @@ func TestInstance_StopInstances(t *testing.T) {
 				instanceService: mockService,
 			}
 
-			router := setupTestRouter()
+			router := gin.Default()
 			apiGroup := router.Group("/api")
 			instanceAPI.RegisterRoutes(apiGroup)
 
@@ -425,7 +426,7 @@ func TestInstance_StartInstances(t *testing.T) {
 				instanceService: mockService,
 			}
 
-			router := setupTestRouter()
+			router := gin.Default()
 			apiGroup := router.Group("/api")
 			instanceAPI.RegisterRoutes(apiGroup)
 
@@ -491,7 +492,7 @@ func TestInstance_RebootInstances(t *testing.T) {
 				instanceService: mockService,
 			}
 
-			router := setupTestRouter()
+			router := gin.Default()
 			apiGroup := router.Group("/api")
 			instanceAPI.RegisterRoutes(apiGroup)
 
@@ -561,7 +562,7 @@ func TestInstance_ModifyInstanceAttribute(t *testing.T) {
 				instanceService: mockService,
 			}
 
-			router := setupTestRouter()
+			router := gin.Default()
 			apiGroup := router.Group("/api")
 			instanceAPI.RegisterRoutes(apiGroup)
 

@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"github.com/jimyag/jvp/internal/jvp/entity"
-	"github.com/jimyag/jvp/internal/jvp/metadata"
-	"github.com/jimyag/jvp/pkg/apierror"
 	"github.com/jimyag/jvp/pkg/idgen"
 	"github.com/jimyag/jvp/pkg/libvirt"
 	"github.com/jimyag/jvp/pkg/qemuimg"
@@ -57,7 +55,6 @@ type ImageService struct {
 	qemuImgClient  qemuimg.QemuImgClient
 	idGen          *idgen.Generator
 	httpClient     *http.Client
-	metadataStore  metadata.ImageStore
 
 	// 镜像存储配置
 	imagesPoolName string
@@ -68,7 +65,6 @@ type ImageService struct {
 func NewImageService(
 	storageService *StorageService,
 	libvirtClient libvirt.LibvirtClient,
-	metadataStore metadata.ImageStore,
 ) (*ImageService, error) {
 	return &ImageService{
 		storageService: storageService,
@@ -78,7 +74,6 @@ func NewImageService(
 		httpClient: &http.Client{
 			Timeout: 30 * time.Minute, // 下载镜像可能需要较长时间
 		},
-		metadataStore:  metadataStore,
 		imagesPoolName: "images",
 		imagesPoolPath: "/var/lib/jvp/images/images",
 	}, nil
@@ -131,11 +126,7 @@ func (s *ImageService) RegisterImage(ctx context.Context, req *entity.RegisterIm
 		Str("name", req.Name).
 		Msg("Image registered successfully")
 
-	// 保存到 metadata store
-	if err := s.metadataStore.SaveImage(ctx, image); err != nil {
-		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to save image to metadata store", err)
-	}
-	logger.Info().Str("image_id", imageID).Msg("Image saved to metadata store")
+	// 镜像文件已存储在 images pool 中，不需要额外保存元数据
 
 	return image, nil
 }
@@ -145,58 +136,17 @@ func (s *ImageService) GetImage(ctx context.Context, imageID string) (*entity.Im
 	logger := zerolog.Ctx(ctx)
 	logger.Info().Str("image_id", imageID).Msg("Getting image")
 
-	// 从 metadata store 查询
-	image, err := s.metadataStore.GetImage(ctx, imageID)
-	if err == nil {
-		return image, nil
+	// 从 images storage pool 查询所有镜像
+	images, err := s.ListImages(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list images: %w", err)
 	}
 
-	// 如果 metadata store 中没有，检查是否是默认镜像（兼容旧数据）
-	if defaultImg := s.GetDefaultImageByName(imageID); defaultImg != nil {
-		imagePath := filepath.Join(s.imagesPoolPath, defaultImg.Filename)
-		fileInfo, err := os.Stat(imagePath)
-		if err != nil {
-			// 如果镜像不存在，尝试下载
-			logger.Info().
-				Str("image_id", imageID).
-				Str("url", defaultImg.URL).
-				Msg("Default image not found, downloading...")
-
-			_, err := s.DownloadImage(ctx, defaultImg.URL, defaultImg.Filename)
-			if err != nil {
-				return nil, fmt.Errorf("download default image: %w", err)
-			}
-
-			// 重新获取文件信息
-			fileInfo, err = os.Stat(imagePath)
-			if err != nil {
-				return nil, fmt.Errorf("get image file info after download: %w", err)
-			}
+	// 查找匹配的镜像
+	for _, img := range images {
+		if img != nil && img.ID == imageID {
+			return img, nil
 		}
-
-		sizeGB := uint64(fileInfo.Size() / (1024 * 1024 * 1024))
-		if sizeGB == 0 {
-			sizeGB = 1
-		}
-
-		image := &entity.Image{
-			ID:          imageID,
-			Name:        defaultImg.DisplayName,
-			Description: fmt.Sprintf("Default Ubuntu image: %s", defaultImg.DisplayName),
-			Pool:        s.imagesPoolName,
-			Path:        imagePath,
-			SizeGB:      sizeGB,
-			Format:      "qcow2",
-			State:       "available",
-			CreatedAt:   fileInfo.ModTime().Format(time.RFC3339),
-		}
-
-		// 保存到 metadata store
-		if err := s.metadataStore.SaveImage(ctx, image); err != nil {
-			logger.Warn().Err(err).Msg("Failed to save default image to metadata store")
-		}
-
-		return image, nil
 	}
 
 	return nil, fmt.Errorf("image not found: %s", imageID)
@@ -255,68 +205,59 @@ func (s *ImageService) DescribeImages(ctx context.Context, req *entity.DescribeI
 // ListImages 列出所有镜像
 func (s *ImageService) ListImages(ctx context.Context) ([]*entity.Image, error) {
 	logger := zerolog.Ctx(ctx)
-	logger.Info().Msg("Listing images")
+	logger.Info().Msg("Listing images from storage pool")
 
-	// 从 metadata store 查询
-	images, err := s.metadataStore.ListImages(ctx)
+	// 确保 images pool 存在
+	if err := s.storageService.EnsurePool(ctx, s.imagesPoolName); err != nil {
+		return nil, fmt.Errorf("ensure images pool: %w", err)
+	}
+
+	// 从 images storage pool 查询所有卷
+	pools, err := s.storageService.ListStoragePools(ctx, true)
 	if err != nil {
-		logger.Error().
-			Err(err).
-			Msg("Failed to list images from metadata store")
-		return nil, fmt.Errorf("list images from metadata store: %w", err)
+		return nil, fmt.Errorf("list storage pools: %w", err)
+	}
+
+	var images []*entity.Image
+	for _, pool := range pools {
+		if pool.Name != s.imagesPoolName {
+			continue
+		}
+
+		// 遍历 pool 中的所有卷，转换为镜像
+		for _, vol := range pool.Volumes {
+			// 使用卷名作为镜像 ID（去掉 .qcow2 扩展名）
+			imageID := vol.Name
+			if len(imageID) > 6 && imageID[len(imageID)-6:] == ".qcow2" {
+				imageID = imageID[:len(imageID)-6]
+			}
+
+			// 检查是否是默认镜像
+			displayName := imageID
+			description := ""
+			if defaultImg := s.GetDefaultImageByName(imageID); defaultImg != nil {
+				displayName = defaultImg.DisplayName
+				description = fmt.Sprintf("Default Ubuntu image: %s", defaultImg.DisplayName)
+			}
+
+			image := &entity.Image{
+				ID:          imageID,
+				Name:        displayName,
+				Description: description,
+				Pool:        pool.Name,
+				Path:        vol.Path,
+				SizeGB:      vol.CapacityB / (1024 * 1024 * 1024),
+				Format:      "qcow2",
+				State:       "available",
+				CreatedAt:   time.Now().Format(time.RFC3339),
+			}
+			images = append(images, image)
+		}
 	}
 
 	logger.Info().
 		Int("total", len(images)).
-		Msg("Retrieved images from metadata store")
-
-	// 确保目录存在
-	if err := os.MkdirAll(s.imagesPoolPath, 0o755); err != nil {
-		return nil, fmt.Errorf("create images directory: %w", err)
-	}
-
-	// 添加默认镜像（如果已下载但未在 metadata store 中）
-	for _, defaultImg := range DefaultImages {
-		// 检查是否已在 metadata store 中
-		exists := false
-		for _, img := range images {
-			if img != nil && img.ID == defaultImg.Name {
-				exists = true
-				break
-			}
-		}
-		if exists {
-			continue
-		}
-
-		savePath := filepath.Join(s.imagesPoolPath, defaultImg.Filename)
-		if fileInfo, err := os.Stat(savePath); err == nil {
-			sizeGB := uint64(fileInfo.Size() / (1024 * 1024 * 1024))
-			if sizeGB == 0 {
-				sizeGB = 1
-			}
-
-			// 使用镜像名称作为 ID（如：ubuntu-jammy）
-			image := &entity.Image{
-				ID:          defaultImg.Name,
-				Name:        defaultImg.DisplayName,
-				Description: fmt.Sprintf("Default Ubuntu image: %s", defaultImg.DisplayName),
-				Pool:        s.imagesPoolName,
-				Path:        savePath,
-				SizeGB:      sizeGB,
-				Format:      "qcow2",
-				State:       "available",
-				CreatedAt:   fileInfo.ModTime().Format(time.RFC3339),
-			}
-
-			// 保存到 metadata store
-			if err := s.metadataStore.SaveImage(ctx, image); err != nil {
-				logger.Warn().Err(err).Str("image_id", defaultImg.Name).Msg("Failed to save default image to metadata store")
-			}
-
-			images = append(images, image)
-		}
-	}
+		Msg("Retrieved images from storage pool")
 
 	return images, nil
 }
@@ -326,22 +267,19 @@ func (s *ImageService) DeleteImage(ctx context.Context, imageID string) error {
 	logger := zerolog.Ctx(ctx)
 	logger.Info().Str("image_id", imageID).Msg("Deleting image")
 
-	// 从 metadata store 查询镜像信息
-	image, err := s.metadataStore.GetImage(ctx, imageID)
+	// 从 images pool 获取镜像信息
+	image, err := s.GetImage(ctx, imageID)
 	if err != nil {
-		return fmt.Errorf("get image from metadata store: %w", err)
+		return fmt.Errorf("get image: %w", err)
 	}
 
 	// 删除文件
 	if err := os.Remove(image.Path); err != nil {
 		logger.Warn().Err(err).Str("path", image.Path).Msg("Failed to delete image file")
-		// 继续执行，即使文件删除失败也继续删除 metadata
+		return fmt.Errorf("delete image file: %w", err)
 	}
 
-	// 从 metadata store 删除
-	if err := s.metadataStore.DeleteImage(ctx, imageID); err != nil {
-		return fmt.Errorf("delete image from metadata store: %w", err)
-	}
+	// 镜像文件已删除，libvirt storage pool 会自动更新
 
 	logger.Info().Str("image_id", imageID).Msg("Image deleted successfully")
 	return nil

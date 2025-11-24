@@ -176,3 +176,21 @@ type ResetPasswordResponse struct {
 	Message    string   `json:"message"`     // 操作结果消息
 	Users      []string `json:"users"`       // 成功重置密码的用户列表
 }
+
+// VMTemplate VM 模板信息
+// VM Template 是指带有快照的虚拟机,可以基于快照克隆新的 VM
+type VMTemplate struct {
+	ID          string `json:"id"`          // VM UUID
+	Name        string `json:"name"`        // 模板名称 (VM名称-template)
+	Description string `json:"description"` // 模板描述
+	SourceVM    string `json:"sourceVM"`    // 源 VM 名称
+	VCPUs       uint16 `json:"vcpus"`       // 虚拟 CPU 数量
+	Memory      uint64 `json:"memory"`      // 内存大小（MB）
+	DiskSize    uint64 `json:"diskSize"`    // 磁盘大小（GB）
+	CreatedAt   string `json:"createdAt"`   // 创建时间
+}
+
+// ListVMTemplatesResponse 列出 VM 模板响应
+type ListVMTemplatesResponse struct {
+	Templates []VMTemplate `json:"templates"`
+}

@@ -10,40 +10,21 @@ import (
 	"github.com/jimmicro/grace"
 	"github.com/jimyag/jvp/internal/jvp/api"
 	"github.com/jimyag/jvp/internal/jvp/config"
-	"github.com/jimyag/jvp/internal/jvp/metadata"
 	"github.com/jimyag/jvp/internal/jvp/service"
 	"github.com/jimyag/jvp/pkg/libvirt"
 	"github.com/rs/zerolog"
 )
 
 type Server struct {
-	cfg           *config.Config
-	api           *api.API
-	metadataStore metadata.MetadataStore
+	cfg *config.Config
+	api *api.API
 }
 
 func New(cfg *config.Config) (*Server, error) {
 	logger := zerolog.New(os.Stdout).With().Timestamp().Logger()
 	zerolog.DefaultContextLogger = &logger
 
-	// 0. 创建 Metadata Store（基于 Libvirt API，替代 SQLite）
-	metadataStore, err := metadata.NewLibvirtMetadataStore(&metadata.StoreConfig{
-		BasePath:             "/var/lib/jvp",
-		LibvirtURI:           "qemu:///system",
-		EnableIndexCache:     true,
-		IndexRefreshInterval: 5 * time.Minute,
-		LockTimeout:          30 * time.Second,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("create metadata store: %w", err)
-	}
-
-	// 初始化 Metadata Store
 	ctx := context.Background()
-	if err := metadataStore.Initialize(ctx); err != nil {
-		return nil, fmt.Errorf("initialize metadata store: %w", err)
-	}
-	logger.Info().Msg("Metadata store initialized")
 
 	// 1. 创建 Libvirt Client
 	libvirtClient, err := libvirt.New()
@@ -57,8 +38,8 @@ func New(cfg *config.Config) (*Server, error) {
 		return nil, err
 	}
 
-	// 3. 创建 Image Service（使用 metadataStore）
-	imageService, err := service.NewImageService(storageService, libvirtClient, metadataStore)
+	// 3. 创建 Image Service（不再使用 metadataStore）
+	imageService, err := service.NewImageService(storageService, libvirtClient)
 	if err != nil {
 		return nil, err
 	}
@@ -71,31 +52,30 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 	logger.Info().Msg("All default images are ready")
 
-	// 4. 创建 KeyPair Service（使用 metadataStore）
-	keyPairService := service.NewKeyPairService(metadataStore)
+	// 4. 创建 KeyPair Service（使用文件存储）
+	keyPairService, err := service.NewKeyPairService()
+	if err != nil {
+		return nil, fmt.Errorf("create keypair service: %w", err)
+	}
 
-	// 5. 创建 Instance Service（使用 metadataStore）
-	instanceService, err := service.NewInstanceService(storageService, imageService, keyPairService, libvirtClient, metadataStore)
+	// 5. 创建 Instance Service（不再使用 metadataStore）
+	instanceService, err := service.NewInstanceService(storageService, imageService, keyPairService, libvirtClient)
 	if err != nil {
 		return nil, err
 	}
 
-	// 6. 创建 Volume Service（使用 metadataStore）
-	volumeService := service.NewVolumeService(storageService, instanceService, libvirtClient, metadataStore)
+	// 6. 创建 Volume Service（不再使用 metadataStore）
+	volumeService := service.NewVolumeService(storageService, instanceService, libvirtClient)
 
-	// 7. 创建 Snapshot Service（使用 metadataStore）
-	snapshotService := service.NewSnapshotService(storageService, libvirtClient, metadataStore)
-
-	// 8. 创建 API
-	apiInstance, err := api.New(instanceService, volumeService, snapshotService, imageService, keyPairService)
+	// 7. 创建 API（不再传入 snapshotService）
+	apiInstance, err := api.New(instanceService, volumeService, imageService, keyPairService, storageService)
 	if err != nil {
 		return nil, err
 	}
 
 	server := &Server{
-		cfg:           cfg,
-		api:           apiInstance,
-		metadataStore: metadataStore,
+		cfg: cfg,
+		api: apiInstance,
 	}
 	return server, nil
 }

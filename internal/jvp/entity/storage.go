@@ -2,23 +2,29 @@ package entity
 
 // StoragePool 存储池信息
 type StoragePool struct {
-	Name        string `json:"name"`
-	State       string `json:"state"`        // Active, Inactive, Building, Degraded, Inaccessible
-	CapacityB   uint64 `json:"capacity_b"`   // 总容量（字节）
-	AllocationB uint64 `json:"allocation_b"` // 已分配（字节）
-	AvailableB  uint64 `json:"available_b"`  // 可用容量（字节）
-	Path        string `json:"path"`         // Pool 路径
+	Name        string   `json:"name"`
+	UUID        string   `json:"uuid,omitempty"`
+	State       string   `json:"state"`        // Active, Inactive, Building, Degraded, Inaccessible
+	CapacityB   uint64   `json:"capacity_b"`   // 总容量（字节）
+	AllocationB uint64   `json:"allocation_b"` // 已分配（字节）
+	AvailableB  uint64   `json:"available_b"`  // 可用容量（字节）
+	Path        string   `json:"path"`         // Pool 路径
+	Type        string   `json:"type,omitempty"`        // dir, fs, netfs, disk, iscsi, logical, etc
+	VolumeCount int      `json:"volumeCount,omitempty"` // 卷数量
+	Volumes     []Volume `json:"volumes,omitempty"`     // 池中的卷列表
 }
 
 // Volume 存储卷信息
 type Volume struct {
-	ID          string `json:"id"`           // Volume ID: vol-{uuid}
-	Name        string `json:"name"`         // Volume 名称
-	Pool        string `json:"pool"`         // 所属 Pool 名称
-	Path        string `json:"path"`         // 文件路径
-	CapacityB   uint64 `json:"capacity_b"`   // 容量（字节）
-	AllocationB uint64 `json:"allocation_b"` // 已分配（字节）
-	Format      string `json:"format"`       // 格式：qcow2, raw
+	ID          string             `json:"id"`           // Volume ID: vol-{uuid}
+	Name        string             `json:"name"`         // Volume 名称
+	Pool        string             `json:"pool"`         // 所属 Pool 名称
+	Path        string             `json:"path"`         // 文件路径
+	CapacityB   uint64             `json:"capacity_b"`   // 容量（字节）
+	AllocationB uint64             `json:"allocation_b"` // 已分配（字节）
+	Format      string             `json:"format"`       // 格式：qcow2, raw, iso
+	VolumeType  string             `json:"volumeType"`   // 类型：disk, template, iso
+	Attachments []VolumeAttachment `json:"attachments,omitempty"` // 附加到的实例列表
 }
 
 // CreateInternalVolumeRequest 创建内部 Volume 请求（用于 StorageService）

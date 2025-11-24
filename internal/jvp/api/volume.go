@@ -12,12 +12,13 @@ import (
 
 // VolumeServiceInterface 定义卷服务的接口
 type VolumeServiceInterface interface {
-	CreateEBSVolume(ctx context.Context, req *entity.CreateVolumeRequest) (*entity.EBSVolume, error)
-	DeleteEBSVolume(ctx context.Context, volumeID string) error
-	AttachEBSVolume(ctx context.Context, req *entity.AttachVolumeRequest) (*entity.VolumeAttachment, error)
-	DetachEBSVolume(ctx context.Context, req *entity.DetachVolumeRequest) (*entity.VolumeAttachment, error)
-	DescribeEBSVolumes(ctx context.Context, req *entity.DescribeVolumesRequest) ([]entity.EBSVolume, error)
-	ModifyEBSVolume(ctx context.Context, req *entity.ModifyVolumeRequest) (*entity.VolumeModification, error)
+	CreateVolume(ctx context.Context, req *entity.CreateVolumeRequest) (*entity.Volume, error)
+	DeleteVolume(ctx context.Context, volumeID string) error
+	AttachVolume(ctx context.Context, req *entity.AttachVolumeRequest) (*entity.VolumeAttachment, error)
+	DetachVolume(ctx context.Context, req *entity.DetachVolumeRequest) error
+	ListVolumes(ctx context.Context) ([]entity.Volume, error)
+	GetVolume(ctx context.Context, volumeID string) (*entity.Volume, error)
+	ResizeVolume(ctx context.Context, volumeID string, newSizeGB uint64) error
 }
 
 type Volume struct {
@@ -36,8 +37,9 @@ func (v *Volume) RegisterRoutes(router *gin.RouterGroup) {
 	volumeRouter.POST("/delete", ginx.Adapt5(v.DeleteVolume))
 	volumeRouter.POST("/attach", ginx.Adapt5(v.AttachVolume))
 	volumeRouter.POST("/detach", ginx.Adapt5(v.DetachVolume))
-	volumeRouter.POST("/describe", ginx.Adapt5(v.DescribeVolumes))
-	volumeRouter.POST("/modify", ginx.Adapt5(v.ModifyVolume))
+	volumeRouter.POST("/list", ginx.Adapt5(v.ListVolumes))
+	volumeRouter.POST("/describe", ginx.Adapt5(v.DescribeVolume))
+	volumeRouter.POST("/resize", ginx.Adapt5(v.ResizeVolume))
 }
 
 func (v *Volume) CreateVolume(ctx *gin.Context, req *entity.CreateVolumeRequest) (*entity.CreateVolumeResponse, error) {
@@ -46,7 +48,7 @@ func (v *Volume) CreateVolume(ctx *gin.Context, req *entity.CreateVolumeRequest)
 		Interface("request", req).
 		Msg("CreateVolume called")
 
-	volume, err := v.volumeService.CreateEBSVolume(ctx, req)
+	volume, err := v.volumeService.CreateVolume(ctx, req)
 	if err != nil {
 		logger.Error().
 			Err(err).
@@ -55,7 +57,7 @@ func (v *Volume) CreateVolume(ctx *gin.Context, req *entity.CreateVolumeRequest)
 	}
 
 	logger.Info().
-		Str("volumeID", volume.VolumeID).
+		Str("volumeID", volume.ID).
 		Msg("Volume created successfully")
 
 	return &entity.CreateVolumeResponse{
@@ -69,7 +71,7 @@ func (v *Volume) DeleteVolume(ctx *gin.Context, req *entity.DeleteVolumeRequest)
 		Str("volumeID", req.VolumeID).
 		Msg("DeleteVolume called")
 
-	err := v.volumeService.DeleteEBSVolume(ctx, req.VolumeID)
+	err := v.volumeService.DeleteVolume(ctx, req.VolumeID)
 	if err != nil {
 		logger.Error().
 			Err(err).
@@ -93,7 +95,7 @@ func (v *Volume) AttachVolume(ctx *gin.Context, req *entity.AttachVolumeRequest)
 		Str("instanceID", req.InstanceID).
 		Msg("AttachVolume called")
 
-	attachment, err := v.volumeService.AttachEBSVolume(ctx, req)
+	attachment, err := v.volumeService.AttachVolume(ctx, req)
 	if err != nil {
 		logger.Error().
 			Err(err).
@@ -118,7 +120,7 @@ func (v *Volume) DetachVolume(ctx *gin.Context, req *entity.DetachVolumeRequest)
 		Str("instanceID", req.InstanceID).
 		Msg("DetachVolume called")
 
-	attachment, err := v.volumeService.DetachEBSVolume(ctx, req)
+	err := v.volumeService.DetachVolume(ctx, req)
 	if err != nil {
 		logger.Error().
 			Err(err).
@@ -128,56 +130,79 @@ func (v *Volume) DetachVolume(ctx *gin.Context, req *entity.DetachVolumeRequest)
 
 	logger.Info().
 		Str("volumeID", req.VolumeID).
+		Str("instanceID", req.InstanceID).
 		Msg("Volume detached successfully")
 
 	return &entity.DetachVolumeResponse{
-		Attachment: attachment,
+		Return: true,
 	}, nil
 }
 
-func (v *Volume) DescribeVolumes(ctx *gin.Context, req *entity.DescribeVolumesRequest) (*entity.DescribeVolumesResponse, error) {
+func (v *Volume) ListVolumes(ctx *gin.Context, req *entity.ListVolumesRequest) (*entity.ListVolumesResponse, error) {
 	logger := zerolog.Ctx(ctx)
-	logger.Info().
-		Interface("request", req).
-		Msg("DescribeVolumes called")
+	logger.Info().Msg("ListVolumes called")
 
-	volumes, err := v.volumeService.DescribeEBSVolumes(ctx, req)
+	volumes, err := v.volumeService.ListVolumes(ctx)
 	if err != nil {
 		logger.Error().
 			Err(err).
-			Msg("Failed to describe volumes")
+			Msg("Failed to list volumes")
 		return nil, err
 	}
 
 	logger.Info().
 		Int("count", len(volumes)).
-		Msg("Volumes described successfully")
+		Msg("Volumes listed successfully")
 
-	return &entity.DescribeVolumesResponse{
+	return &entity.ListVolumesResponse{
 		Volumes: volumes,
 	}, nil
 }
 
-func (v *Volume) ModifyVolume(ctx *gin.Context, req *entity.ModifyVolumeRequest) (*entity.ModifyVolumeResponse, error) {
+func (v *Volume) DescribeVolume(ctx *gin.Context, req *entity.DescribeVolumeRequest) (*entity.DescribeVolumeResponse, error) {
 	logger := zerolog.Ctx(ctx)
 	logger.Info().
 		Str("volumeID", req.VolumeID).
-		Interface("request", req).
-		Msg("ModifyVolume called")
+		Msg("DescribeVolume called")
 
-	modification, err := v.volumeService.ModifyEBSVolume(ctx, req)
+	volume, err := v.volumeService.GetVolume(ctx, req.VolumeID)
 	if err != nil {
 		logger.Error().
 			Err(err).
-			Msg("Failed to modify volume")
+			Msg("Failed to describe volume")
+		return nil, err
+	}
+
+	logger.Info().
+		Str("volumeID", volume.ID).
+		Msg("Volume described successfully")
+
+	return &entity.DescribeVolumeResponse{
+		Volume: volume,
+	}, nil
+}
+
+func (v *Volume) ResizeVolume(ctx *gin.Context, req *entity.ResizeVolumeRequest) (*entity.ResizeVolumeResponse, error) {
+	logger := zerolog.Ctx(ctx)
+	logger.Info().
+		Str("volumeID", req.VolumeID).
+		Uint64("newSizeGB", req.NewSizeGB).
+		Msg("ResizeVolume called")
+
+	err := v.volumeService.ResizeVolume(ctx, req.VolumeID, req.NewSizeGB)
+	if err != nil {
+		logger.Error().
+			Err(err).
+			Msg("Failed to resize volume")
 		return nil, err
 	}
 
 	logger.Info().
 		Str("volumeID", req.VolumeID).
-		Msg("Volume modified successfully")
+		Uint64("newSizeGB", req.NewSizeGB).
+		Msg("Volume resized successfully")
 
-	return &entity.ModifyVolumeResponse{
-		VolumeModification: modification,
+	return &entity.ResizeVolumeResponse{
+		Return: true,
 	}, nil
 }

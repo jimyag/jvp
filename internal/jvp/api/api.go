@@ -15,20 +15,21 @@ type API struct {
 	engine *gin.Engine
 	server *http.Server
 
-	instance  *Instance
-	volume    *Volume
-	snapshot  *Snapshot
-	image     *Image
-	keypair   *KeyPair
-	consoleWS *ConsoleWS
+	instance    *Instance
+	volume      *Volume
+	image       *Image
+	keypair     *KeyPair
+	consoleWS   *ConsoleWS
+	storagePool *StoragePoolAPI
+	template    *Template
 }
 
 func New(
 	instanceService *service.InstanceService,
 	volumeService *service.VolumeService,
-	snapshotService *service.SnapshotService,
 	imageService *service.ImageService,
 	keyPairService *service.KeyPairService,
+	storageService *service.StorageService,
 ) (*API, error) {
 	// 先禁用 Gin 的 debug 路由输出（避免打印带函数名的路由信息）
 	// 注意：这需要在创建 engine 之前设置
@@ -36,22 +37,25 @@ func New(
 
 	engine := gin.Default()
 	api := &API{
-		engine:    engine,
-		instance:  NewInstance(instanceService),
-		volume:    NewVolume(volumeService),
-		snapshot:  NewSnapshot(snapshotService),
-		image:     NewImage(imageService),
-		keypair:   NewKeyPair(keyPairService),
-		consoleWS: NewConsoleWS(instanceService),
+		engine:      engine,
+		instance:    NewInstance(instanceService),
+		volume:      NewVolume(volumeService),
+		image:       NewImage(imageService),
+		keypair:     NewKeyPair(keyPairService),
+		consoleWS:   NewConsoleWS(instanceService),
+		storagePool: NewStoragePoolAPI(storageService),
+		template:    NewTemplate(instanceService),
 	}
 
 	apiGroup := engine.Group("/api")
 	api.instance.RegisterRoutes(apiGroup)
 	api.volume.RegisterRoutes(apiGroup)
-	api.snapshot.RegisterRoutes(apiGroup)
+	// Snapshot routes removed
 	api.image.RegisterRoutes(apiGroup)
 	api.keypair.RegisterRoutes(apiGroup)
 	api.consoleWS.RegisterRoutes(apiGroup)
+	api.storagePool.RegisterRoutes(apiGroup)
+	api.template.RegisterRoutes(apiGroup)
 
 	// 打印路由信息（只显示方法和路径，不显示处理函数）
 	printRoutes(engine)

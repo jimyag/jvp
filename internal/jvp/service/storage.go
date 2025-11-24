@@ -339,3 +339,151 @@ func (s *StorageService) ListVolumes(ctx context.Context, poolName string) ([]*e
 
 	return volumes, nil
 }
+
+// determineVolumeType 根据卷的名称、格式和池名称判断卷类型
+// 参考 Flint 的实现逻辑:
+// - ISO: format 为 iso 的安装镜像文件
+// - Template: 存储在 image/template 池中的云镜像,或文件名包含云镜像关键词
+// - Disk: 其他普通虚拟机磁盘文件
+func determineVolumeType(volumeName, format, poolName string) string {
+	// ISO 格式直接返回 iso
+	if format == "iso" {
+		return "iso"
+	}
+
+	// 根据池名称判断 - image/template 池中的文件都是模板
+	poolNameLower := strings.ToLower(poolName)
+	if strings.Contains(poolNameLower, "image") || strings.Contains(poolNameLower, "template") {
+		return "template"
+	}
+
+	// 根据文件名判断 - 云镜像通常包含这些关键词
+	volumeNameLower := strings.ToLower(volumeName)
+	templateKeywords := []string{"cloudimg", "cloud-init", "cloud-base", "genericcloud"}
+	for _, keyword := range templateKeywords {
+		if strings.Contains(volumeNameLower, keyword) {
+			return "template"
+		}
+	}
+
+	// 默认为普通磁盘
+	return "disk"
+}
+
+// ListStoragePools 列出所有存储池
+func (s *StorageService) ListStoragePools(ctx context.Context, includeVolumes bool) ([]entity.StoragePool, error) {
+	logger := zerolog.Ctx(ctx)
+
+	// 获取所有存储池
+	poolInfos, err := s.libvirtClient.ListStoragePools()
+	if err != nil {
+		return nil, fmt.Errorf("list storage pools: %w", err)
+	}
+
+	pools := make([]entity.StoragePool, 0, len(poolInfos))
+	for _, poolInfo := range poolInfos {
+		pool := entity.StoragePool{
+			Name:        poolInfo.Name,
+			State:       poolInfo.State,
+			CapacityB:   poolInfo.CapacityB,
+			AllocationB: poolInfo.AllocationB,
+			AvailableB:  poolInfo.AvailableB,
+			Path:        poolInfo.Path,
+		}
+
+		// 如果需要包含卷列表
+		if includeVolumes {
+			volInfos, err := s.libvirtClient.ListVolumes(poolInfo.Name)
+			if err != nil {
+				logger.Warn().
+					Str("pool_name", poolInfo.Name).
+					Err(err).
+					Msg("Failed to list volumes in pool")
+				// 继续处理其他池，不中断
+				pool.Volumes = []entity.Volume{}
+			} else {
+				volumes := make([]entity.Volume, 0, len(volInfos))
+				for _, volInfo := range volInfos {
+					// 从文件名提取 volume ID（去掉 .qcow2 后缀）
+					volumeID := strings.TrimSuffix(volInfo.Name, ".qcow2")
+					volumeType := determineVolumeType(volInfo.Name, volInfo.Format, poolInfo.Name)
+
+					volumes = append(volumes, entity.Volume{
+						ID:          volumeID,
+						Name:        volInfo.Name,
+						Pool:        poolInfo.Name,
+						Path:        volInfo.Path,
+						CapacityB:   volInfo.CapacityB,
+						AllocationB: volInfo.AllocationB,
+						Format:      volInfo.Format,
+						VolumeType:  volumeType,
+					})
+				}
+				pool.Volumes = volumes
+				pool.VolumeCount = len(volumes)
+			}
+		}
+
+		pools = append(pools, pool)
+	}
+
+	logger.Info().
+		Int("pool_count", len(pools)).
+		Bool("include_volumes", includeVolumes).
+		Msg("Listed storage pools")
+
+	return pools, nil
+}
+
+// GetStoragePool 获取单个存储池的详细信息
+func (s *StorageService) GetStoragePool(ctx context.Context, poolName string, includeVolumes bool) (*entity.StoragePool, error) {
+	logger := zerolog.Ctx(ctx)
+
+	// 获取存储池信息
+	poolInfo, err := s.libvirtClient.GetStoragePool(poolName)
+	if err != nil {
+		return nil, fmt.Errorf("get storage pool %s: %w", poolName, err)
+	}
+
+	pool := &entity.StoragePool{
+		Name:        poolInfo.Name,
+		State:       poolInfo.State,
+		CapacityB:   poolInfo.CapacityB,
+		AllocationB: poolInfo.AllocationB,
+		AvailableB:  poolInfo.AvailableB,
+		Path:        poolInfo.Path,
+	}
+
+	// 如果需要包含卷列表
+	if includeVolumes {
+		volInfos, err := s.libvirtClient.ListVolumes(poolName)
+		if err != nil {
+			return nil, fmt.Errorf("list volumes in pool %s: %w", poolName, err)
+		}
+
+		volumes := make([]entity.Volume, 0, len(volInfos))
+		for _, volInfo := range volInfos {
+			// 从文件名提取 volume ID（去掉 .qcow2 后缀）
+			volumeID := strings.TrimSuffix(volInfo.Name, ".qcow2")
+
+			volumes = append(volumes, entity.Volume{
+				ID:          volumeID,
+				Name:        volInfo.Name,
+				Pool:        poolName,
+				Path:        volInfo.Path,
+				CapacityB:   volInfo.CapacityB,
+				AllocationB: volInfo.AllocationB,
+				Format:      volInfo.Format,
+			})
+		}
+		pool.Volumes = volumes
+		pool.VolumeCount = len(volumes)
+	}
+
+	logger.Info().
+		Str("pool_name", poolName).
+		Bool("include_volumes", includeVolumes).
+		Msg("Retrieved storage pool")
+
+	return pool, nil
+}

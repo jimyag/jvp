@@ -44,4 +44,7 @@ type LibvirtClient interface {
 
 	// Console 操作
 	GetDomainConsoleInfo(domain libvirt.Domain) (*ConsoleInfo, error)
+
+	// Snapshot 操作
+	ListSnapshots(domainName string) ([]string, error)
 }

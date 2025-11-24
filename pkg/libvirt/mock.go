@@ -178,6 +178,15 @@ func (m *MockClient) GetDomainConsoleInfo(domain libvirt.Domain) (*ConsoleInfo, 
 	return args.Get(0).(*ConsoleInfo), args.Error(1)
 }
 
+// Snapshot 操作
+func (m *MockClient) ListSnapshots(domainName string) ([]string, error) {
+	args := m.Called(domainName)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]string), args.Error(1)
+}
+
 // NewMockClient 创建新的 MockClient
 // 这是一个便捷函数，用于在测试中创建 mock client
 func NewMockClient() *MockClient {
