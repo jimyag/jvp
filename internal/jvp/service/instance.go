@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -398,7 +399,7 @@ func (s *InstanceService) DescribeInstances(ctx context.Context, req *entity.Des
 			DomainName: domain.Name,
 			VCPUs:      domainInfo.VCPUs,
 			MemoryMB:   domainInfo.Memory / 1024, // 转换为 MB
-			CreatedAt:  time.Now().Format(time.RFC3339), // libvirt 不提供创建时间
+			CreatedAt:  "",                        // libvirt 不提供创建时间
 		}
 
 		// TODO: 如果需要 ImageID 和 VolumeID，可以从 domain metadata 读取
@@ -407,6 +408,9 @@ func (s *InstanceService) DescribeInstances(ctx context.Context, req *entity.Des
 
 	// 应用过滤器（如果需要）
 	instances = s.applyInstanceFilters(instances, req)
+
+	// 按 name 升序排序
+	s.sortInstancesByName(instances)
 
 	logger.Info().
 		Int("total", len(instances)).
@@ -1312,4 +1316,11 @@ func (s *InstanceService) ListVMTemplates(ctx context.Context) ([]entity.VMTempl
 		Msg("Listed VM templates")
 
 	return templates, nil
+}
+
+// sortInstancesByName 按 name 升序排序实例
+func (s *InstanceService) sortInstancesByName(instances []entity.Instance) {
+	sort.Slice(instances, func(i, j int) bool {
+		return instances[i].Name < instances[j].Name
+	})
 }

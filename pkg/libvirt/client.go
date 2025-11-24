@@ -945,3 +945,46 @@ func (c *Client) CheckGuestAgentAvailable(domain libvirt.Domain) (bool, error) {
 	}
 	return true, nil
 }
+
+// DomainSnapshotXML 快照 XML 结构
+type DomainSnapshotXML struct {
+	XMLName xml.Name `xml:"domainsnapshot"`
+	Name    string   `xml:"name"`
+}
+
+// ListSnapshots 列出域的所有快照名称
+func (c *Client) ListSnapshots(domainName string) ([]string, error) {
+	// 获取 domain
+	domain, err := c.conn.DomainLookupByName(domainName)
+	if err != nil {
+		return nil, fmt.Errorf("lookup domain %s: %w", domainName, err)
+	}
+
+	// 使用 DomainListAllSnapshots 获取所有快照
+	snapshots, _, err := c.conn.DomainListAllSnapshots(domain, 1000, 0)
+	if err != nil {
+		return nil, fmt.Errorf("list snapshots for domain %s: %w", domainName, err)
+	}
+
+	// 提取快照名称
+	names := make([]string, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		// 获取快照的 XML 描述
+		xmlDesc, err := c.conn.DomainSnapshotGetXMLDesc(snapshot, 0)
+		if err != nil {
+			continue
+		}
+
+		// 解析 XML
+		var snapshotXML DomainSnapshotXML
+		if err := xml.Unmarshal([]byte(xmlDesc), &snapshotXML); err != nil {
+			continue
+		}
+
+		if snapshotXML.Name != "" {
+			names = append(names, snapshotXML.Name)
+		}
+	}
+
+	return names, nil
+}

@@ -2,15 +2,7 @@
 
 ## 已完成测试
 
-### SnapshotService
-- [x] TestSnapshotService_DeleteEBSSnapshot
-- [x] TestSnapshotService_CopyEBSSnapshot
-- [x] TestSnapshotService_DescribeEBSSnapshots_Pagination
-- [x] TestSnapshotService_CreateEBSSnapshot
-- [x] TestNewSnapshotService
-
 ### VolumeService
-- [x] TestVolumeService_CreateEBSVolume_FromSnapshot
 - [x] TestVolumeService_DescribeEBSVolumes_Pagination
 - [x] TestVolumeService_DeleteEBSVolume
 - [x] TestVolumeService_AttachEBSVolume

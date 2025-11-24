@@ -46,7 +46,7 @@ export default function VolumesPage() {
   const fetchVolumes = async () => {
     setLoading(true);
     try {
-      const data = await apiPost<{ volumes: Volume[] }>("/api/volumes/describe", {});
+      const data = await apiPost<{ volumes: Volume[] }>("/api/volumes/list", {});
       setVolumes(data.volumes || []);
     } catch (error) {
       console.error("Failed to fetch volumes:", error);

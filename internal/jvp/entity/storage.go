@@ -16,14 +16,17 @@ type StoragePool struct {
 
 // Volume 存储卷信息
 type Volume struct {
-	ID          string             `json:"id"`           // Volume ID: vol-{uuid}
+	ID          string             `json:"volumeID"`     // Volume ID: vol-{uuid}
 	Name        string             `json:"name"`         // Volume 名称
 	Pool        string             `json:"pool"`         // 所属 Pool 名称
 	Path        string             `json:"path"`         // 文件路径
 	CapacityB   uint64             `json:"capacity_b"`   // 容量（字节）
+	SizeGB      uint64             `json:"sizeGB"`       // 容量（GB）- 前端展示用
 	AllocationB uint64             `json:"allocation_b"` // 已分配（字节）
 	Format      string             `json:"format"`       // 格式：qcow2, raw, iso
+	State       string             `json:"state"`        // 状态：available, in-use, creating, deleting
 	VolumeType  string             `json:"volumeType"`   // 类型：disk, template, iso
+	CreateTime  string             `json:"createTime,omitempty"` // 创建时间
 	Attachments []VolumeAttachment `json:"attachments,omitempty"` // 附加到的实例列表
 }
 

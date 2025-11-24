@@ -83,7 +83,7 @@ web/
 
 ### 2. Volumes Management
 - **List View**: Table showing volumes with size and attachment status
-- **Create**: Modal form for new volumes (with optional snapshot)
+- **Create**: Modal form for new volumes
 - **Attach/Detach**: Attach volumes to instances, detach when needed
 - **Delete**: Remove unused volumes
 
@@ -226,15 +226,14 @@ npm start
 Potential features to add:
 
 1. **Authentication**: Login/logout, user sessions
-2. **Snapshots**: Volume snapshot management
-3. **Networking**: Network and security group management
-4. **Monitoring**: Real-time metrics and charts
-5. **Logs**: View instance console logs
-6. **Notifications**: Toast notifications for actions
-7. **Search & Filter**: Advanced filtering in tables
-8. **Bulk Actions**: Select multiple items for batch operations
-9. **Dark Mode**: Toggle between light and dark themes
-10. **Websockets**: Real-time status updates
+2. **Networking**: Network and security group management
+3. **Monitoring**: Real-time metrics and charts
+4. **Logs**: View instance console logs
+5. **Notifications**: Toast notifications for actions
+6. **Search & Filter**: Advanced filtering in tables
+7. **Bulk Actions**: Select multiple items for batch operations
+8. **Dark Mode**: Toggle between light and dark themes
+9. **Websockets**: Real-time status updates
 
 ## Customization
 

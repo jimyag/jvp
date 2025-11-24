@@ -48,15 +48,6 @@ JVP 后端使用 **POST + 子路径** 的设计模式,所有 API 都是 POST 请
 | 导入密钥对 | POST | `/api/keypairs/import` | `{ name, public_key }` |
 | 删除密钥对 | POST | `/api/keypairs/delete` | `{ keypair_id }` |
 
-### 快照管理 (Snapshots)
-
-| 功能 | HTTP方法 | 后端路径 | 请求体 |
-|------|---------|---------|--------|
-| 查询快照 | POST | `/api/snapshots/describe` | `{}` 或 `{ snapshot_ids: [...] }` |
-| 创建快照 | POST | `/api/snapshots/create` | `{ volume_id, description? }` |
-| 删除快照 | POST | `/api/snapshots/delete` | `{ snapshot_id }` |
-| 复制快照 | POST | `/api/snapshots/copy` | `{ snapshot_id, destination }` |
-
 ## 前端实现
 
 前端已全部适配后端的 API 设计:

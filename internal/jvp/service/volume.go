@@ -67,7 +67,9 @@ func (s *VolumeService) CreateVolume(ctx context.Context, req *entity.CreateVolu
 		Pool:      "default",
 		Path:      internalVolume.Path,
 		CapacityB: internalVolume.CapacityB,
+		SizeGB:    req.SizeGB,
 		Format:    internalVolume.Format,
+		State:     "available",
 	}
 
 	logger.Info().
@@ -248,13 +250,23 @@ func (s *VolumeService) ListVolumes(ctx context.Context) ([]entity.Volume, error
 			// 查找卷的附加关系（实时查询）
 			attachments := s.findVolumeAttachments(ctx, vol.Path)
 
+			// 计算状态
+			state := "available"
+			if len(attachments) > 0 {
+				state = "in-use"
+			}
+
 			volume := entity.Volume{
 				ID:          vol.ID,
 				Name:        vol.Name,
 				Pool:        pool.Name,
 				Path:        vol.Path,
 				CapacityB:   vol.CapacityB,
+				SizeGB:      vol.CapacityB / (1024 * 1024 * 1024), // 转换为 GB
+				AllocationB: vol.AllocationB,
 				Format:      vol.Format,
+				State:       state,
+				VolumeType:  vol.VolumeType,
 				Attachments: attachments,
 			}
 
