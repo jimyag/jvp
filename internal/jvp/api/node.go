@@ -18,6 +18,8 @@ type NodeServiceInterface interface {
 	DescribeNodeUSB(ctx context.Context, nodeName string) ([]entity.USBDevice, error)
 	DescribeNodeNet(ctx context.Context, nodeName string) (*service.NodeNetworkInfo, error)
 	DescribeNodeDisks(ctx context.Context, nodeName string) ([]entity.Disk, error)
+	DescribeNodeGPU(ctx context.Context, nodeName string) ([]entity.GPUDevice, error)
+	DescribeNodeVMs(ctx context.Context, nodeName string) ([]service.NodeVMInfo, error)
 	CreateNode(ctx context.Context, name, uri string, nodeType entity.NodeType) (*entity.Node, error)
 	DeleteNode(ctx context.Context, nodeName string) error
 	EnableNode(ctx context.Context, nodeName string) error
@@ -45,6 +47,8 @@ func (a *NodeAPI) RegisterRoutes(r *gin.RouterGroup) {
 	r.POST("/describe-node-usb", ginx.Adapt5(a.DescribeNodeUSB))
 	r.POST("/describe-node-net", ginx.Adapt5(a.DescribeNodeNet))
 	r.POST("/describe-node-disks", ginx.Adapt5(a.DescribeNodeDisks))
+	r.POST("/describe-node-gpu", ginx.Adapt5(a.DescribeNodeGPU))
+	r.POST("/describe-node-vms", ginx.Adapt5(a.DescribeNodeVMs))
 	r.POST("/create-node", ginx.Adapt5(a.CreateNode))
 	r.POST("/delete-node", ginx.Adapt5(a.DeleteNode))
 	r.POST("/enable-node", ginx.Adapt5(a.EnableNode))
@@ -259,4 +263,48 @@ func (a *NodeAPI) DisableNode(ctx *gin.Context, req *DisableNodeRequest) (*Disab
 	}
 
 	return &DisableNodeResponse{Message: "node disabled successfully"}, nil
+}
+
+// DescribeNodeGPURequest 查询节点 GPU 设备请求
+type DescribeNodeGPURequest struct {
+	Name string `json:"name" binding:"required"` // 节点名称
+}
+
+// DescribeNodeGPUResponse 查询节点 GPU 设备响应
+type DescribeNodeGPUResponse struct {
+	Devices []entity.GPUDevice `json:"devices"`
+}
+
+// DescribeNodeGPU 查询节点 GPU 设备
+func (a *NodeAPI) DescribeNodeGPU(ctx *gin.Context, req *DescribeNodeGPURequest) (*DescribeNodeGPUResponse, error) {
+	devices, err := a.nodeService.DescribeNodeGPU(ctx.Request.Context(), req.Name)
+	if err != nil {
+		return nil, err
+	}
+
+	return &DescribeNodeGPUResponse{Devices: devices}, nil
+}
+
+// DescribeNodeVMsRequest 查询节点虚拟机请求
+type DescribeNodeVMsRequest struct {
+	Name string `json:"name" binding:"required"` // 节点名称
+}
+
+// DescribeNodeVMsResponse 查询节点虚拟机响应
+type DescribeNodeVMsResponse struct {
+	Total int                    `json:"total"`   // 虚拟机总数
+	VMs   []service.NodeVMInfo   `json:"vms"`     // 虚拟机列表
+}
+
+// DescribeNodeVMs 查询节点虚拟机
+func (a *NodeAPI) DescribeNodeVMs(ctx *gin.Context, req *DescribeNodeVMsRequest) (*DescribeNodeVMsResponse, error) {
+	vms, err := a.nodeService.DescribeNodeVMs(ctx.Request.Context(), req.Name)
+	if err != nil {
+		return nil, err
+	}
+
+	return &DescribeNodeVMsResponse{
+		Total: len(vms),
+		VMs:   vms,
+	}, nil
 }

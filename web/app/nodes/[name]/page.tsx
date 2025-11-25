@@ -19,6 +19,7 @@ import {
   Power,
   PowerOff,
   RefreshCw,
+  Box,
 } from "lucide-react";
 
 interface Node {
@@ -153,6 +154,12 @@ export default function NodeDetailPage() {
           break;
         case "disks":
           endpoint = "/api/describe-node-disks";
+          break;
+        case "gpu":
+          endpoint = "/api/describe-node-gpu";
+          break;
+        case "vms":
+          endpoint = "/api/describe-node-vms";
           break;
       }
 
@@ -444,7 +451,7 @@ export default function NodeDetailPage() {
       )}
 
       {/* Quick Links */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
         <button
           onClick={() => handleViewDevices("pci")}
           className="card hover:shadow-md transition-shadow p-4 flex flex-col items-center text-center"
@@ -452,6 +459,14 @@ export default function NodeDetailPage() {
           <Cpu size={24} className="text-blue-600 mb-2" />
           <span className="font-medium">PCI Devices</span>
           <span className="text-xs text-gray-500 mt-1">View PCI devices</span>
+        </button>
+        <button
+          onClick={() => handleViewDevices("gpu")}
+          className="card hover:shadow-md transition-shadow p-4 flex flex-col items-center text-center"
+        >
+          <MonitorCheck size={24} className="text-indigo-600 mb-2" />
+          <span className="font-medium">GPU Devices</span>
+          <span className="text-xs text-gray-500 mt-1">View GPU devices</span>
         </button>
         <button
           onClick={() => handleViewDevices("usb")}
@@ -477,6 +492,14 @@ export default function NodeDetailPage() {
           <span className="font-medium">Disks</span>
           <span className="text-xs text-gray-500 mt-1">View physical disks</span>
         </button>
+        <button
+          onClick={() => handleViewDevices("vms")}
+          className="card hover:shadow-md transition-shadow p-4 flex flex-col items-center text-center"
+        >
+          <Box size={24} className="text-pink-600 mb-2" />
+          <span className="font-medium">Virtual Machines</span>
+          <span className="text-xs text-gray-500 mt-1">View VMs on node</span>
+        </button>
       </div>
 
       {/* Devices Modal */}
@@ -486,9 +509,11 @@ export default function NodeDetailPage() {
             <div className="p-6 border-b flex justify-between items-center">
               <h2 className="text-xl font-semibold">
                 {showDevices === "pci" && "PCI Devices"}
+                {showDevices === "gpu" && "GPU Devices"}
                 {showDevices === "usb" && "USB Devices"}
                 {showDevices === "net" && "Network Interfaces"}
                 {showDevices === "disks" && "Physical Disks"}
+                {showDevices === "vms" && "Virtual Machines"}
               </h2>
               <button
                 onClick={() => {
@@ -618,6 +643,84 @@ export default function NodeDetailPage() {
                                   'bg-gray-100 text-gray-600'
                                 }`}>
                                   {disk.type}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {showDevices === "gpu" && devicesData?.devices && (
+                    <div>
+                      {devicesData.devices.length === 0 ? (
+                        <p className="text-gray-500 text-center py-8">No GPU devices found</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {devicesData.devices.map((device: any, idx: number) => (
+                            <div key={idx} className="border rounded p-3">
+                              <div className="flex justify-between items-start">
+                                <div className="flex-1">
+                                  <div className="font-mono text-sm font-medium">{device.address}</div>
+                                  <div className="text-sm text-gray-700 mt-1">{device.device}</div>
+                                  <div className="text-xs text-gray-500 mt-1">{device.vendor}</div>
+                                  {device.memory > 0 && (
+                                    <div className="text-xs text-gray-500 mt-1">
+                                      Memory: {(device.memory / (1024 * 1024)).toFixed(0)} MB
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                  <span className="px-2 py-1 bg-indigo-100 text-indigo-800 text-xs rounded">
+                                    GPU
+                                  </span>
+                                  {device.iommu_group >= 0 && (
+                                    <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded">
+                                      IOMMU: {device.iommu_group}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {showDevices === "vms" && devicesData?.vms && (
+                    <div>
+                      {devicesData.vms.length === 0 ? (
+                        <p className="text-gray-500 text-center py-8">No virtual machines found</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {devicesData.vms.map((vm: any, idx: number) => (
+                            <div key={idx} className="border rounded p-3">
+                              <div className="flex justify-between items-start">
+                                <div className="flex-1">
+                                  <div className="font-medium">{vm.name}</div>
+                                  <div className="text-xs text-gray-500 mt-1 font-mono">
+                                    UUID: {vm.uuid}
+                                  </div>
+                                  {vm.cpus > 0 && (
+                                    <div className="text-xs text-gray-600 mt-2">
+                                      vCPUs: {vm.cpus}
+                                    </div>
+                                  )}
+                                  {vm.memory > 0 && (
+                                    <div className="text-xs text-gray-600">
+                                      Memory: {(vm.memory / 1024 / 1024).toFixed(2)} GB
+                                    </div>
+                                  )}
+                                </div>
+                                <span className={`px-2 py-1 text-xs rounded ${
+                                  vm.state === 'running' ? 'bg-green-100 text-green-800' :
+                                  vm.state === 'paused' ? 'bg-yellow-100 text-yellow-800' :
+                                  vm.state === 'shutoff' ? 'bg-gray-100 text-gray-600' :
+                                  'bg-red-100 text-red-800'
+                                }`}>
+                                  {vm.state}
                                 </span>
                               </div>
                             </div>

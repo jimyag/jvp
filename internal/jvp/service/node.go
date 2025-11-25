@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jimyag/jvp/internal/jvp/entity"
@@ -450,20 +451,19 @@ func (s *NodeService) DescribeNodeDisks(ctx context.Context, nodeName string) ([
 			fmt.Sscanf(deviceXML.Capability.Size, "%d", &size)
 		}
 
-		// 判断磁盘类型（简化版）
-		diskType := "HDD"
-		if len(deviceXML.Capability.Block) > 0 {
-			// 如果设备名包含 nvme，认为是 NVMe
-			if len(deviceXML.Capability.Block) > 4 && deviceXML.Capability.Block[:4] == "nvme" {
-				diskType = "NVMe"
-			} else if len(deviceXML.Capability.Block) > 2 && deviceXML.Capability.Block[:2] == "sd" {
-				// sd* 设备，可能是 HDD 或 SSD（需要进一步判断）
-				diskType = "SSD/HDD"
-			}
+		// 获取磁盘名称
+		diskName := deviceXML.Capability.Block
+
+		// 根据设备名判断类型
+		diskType := "disk"
+		if strings.Contains(diskName, "nvme") {
+			diskType = "NVMe"
+		} else if strings.Contains(diskName, "/sd") || strings.HasPrefix(diskName, "sd") {
+			diskType = "SATA/SAS"
 		}
 
 		disk := entity.Disk{
-			Name:   deviceXML.Capability.Block,
+			Name:   diskName,
 			Type:   diskType,
 			Size:   size,
 			Model:  deviceXML.Capability.Model,
@@ -586,3 +586,111 @@ type NodeNetworkInfo struct {
 	Bonds      []entity.Bond             `json:"bonds"`
 	SRIOV      []entity.SRIOVInfo        `json:"sriov"`
 }
+
+// DescribeNodeGPU 查询节点 GPU 设备
+func (s *NodeService) DescribeNodeGPU(ctx context.Context, nodeName string) ([]entity.GPUDevice, error) {
+	// 获取节点的 libvirt 连接
+	conn, err := s.storage.GetConnection(nodeName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get node connection: %w", err)
+	}
+
+	// 获取所有 PCI 设备
+	devices, err := conn.ListNodeDevices("pci")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list PCI devices: %w", err)
+	}
+
+	gpuDevices := make([]entity.GPUDevice, 0)
+	for _, dev := range devices {
+		// 获取设备 XML 描述
+		xmlDesc, err := conn.GetNodeDeviceXMLDesc(dev)
+		if err != nil {
+			continue
+		}
+
+		// 解析 XML 获取详细信息
+		deviceXML, err := libvirt.ParseNodeDeviceXML(xmlDesc)
+		if err != nil {
+			continue
+		}
+
+		// 检查是否为 VGA/Display controller (class 0x03xxxx)
+		// PCI class code: https://pci-ids.ucw.cz/read/PD/
+		// 0x03 = Display controller
+		if len(deviceXML.Capability.Product.ID) > 4 {
+			classCode := deviceXML.Capability.Product.ID[:4]
+			if classCode == "0x03" {
+				gpuDevice := entity.GPUDevice{
+					PCIDevice: entity.PCIDevice{
+						Address:    deviceXML.GetPCIAddress(),
+						Vendor:     deviceXML.Capability.Vendor.Name,
+						Device:     deviceXML.Capability.Product.Name,
+						Class:      deviceXML.Capability.Product.ID,
+						IOMMUGroup: deviceXML.GetIOMMUGroup(),
+					},
+					// Memory 信息需要从其他地方获取，暂时设为 0
+					Memory: 0,
+				}
+				gpuDevices = append(gpuDevices, gpuDevice)
+			}
+		}
+	}
+
+	return gpuDevices, nil
+}
+
+// NodeVMInfo 节点虚拟机信息
+type NodeVMInfo struct {
+	UUID   string `json:"uuid"`
+	Name   string `json:"name"`
+	State  string `json:"state"`
+	CPUs   uint16 `json:"cpus"`
+	Memory uint64 `json:"memory"` // KB
+}
+
+// DescribeNodeVMs 查询节点上的虚拟机
+func (s *NodeService) DescribeNodeVMs(ctx context.Context, nodeName string) ([]NodeVMInfo, error) {
+	// 获取节点的 libvirt 连接
+	conn, err := s.storage.GetConnection(nodeName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get node connection: %w", err)
+	}
+
+	// 获取所有虚拟机
+	domains, err := conn.GetVMSummaries()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list VMs: %w", err)
+	}
+
+	vms := make([]NodeVMInfo, 0, len(domains))
+	for _, domain := range domains {
+		// 获取虚拟机状态
+		state, _, err := conn.GetDomainState(domain)
+		if err != nil {
+			continue
+		}
+
+		// 转换状态
+		stateStr := "unknown"
+		switch state {
+		case 1:
+			stateStr = "running"
+		case 3:
+			stateStr = "paused"
+		case 5:
+			stateStr = "shutoff"
+		}
+
+		vm := NodeVMInfo{
+			UUID:  fmt.Sprintf("%x", domain.UUID),
+			Name:  domain.Name,
+			State: stateStr,
+			// CPUs 和 Memory 需要通过 GetDomainInfo 获取，为了性能暂不获取
+		}
+		vms = append(vms, vm)
+	}
+
+	return vms, nil
+}
+
