@@ -1079,3 +1079,95 @@ func (c *Client) ListSnapshots(domainName string) ([]string, error) {
 
 	return names, nil
 }
+
+// ListInterfaces 列出所有网络接口
+func (c *Client) ListInterfaces() ([]libvirt.Interface, error) {
+	// 获取所有活动的网络接口
+	activeIfaces, _, err := c.conn.ConnectListAllInterfaces(1, libvirt.ConnectListInterfacesActive)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list active interfaces: %w", err)
+	}
+
+	// 获取所有非活动的网络接口
+	inactiveIfaces, _, err := c.conn.ConnectListAllInterfaces(1, libvirt.ConnectListInterfacesInactive)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list inactive interfaces: %w", err)
+	}
+
+	// 合并结果
+	allIfaces := append(activeIfaces, inactiveIfaces...)
+	return allIfaces, nil
+}
+
+// GetInterfaceXMLDesc 获取网络接口的 XML 描述
+func (c *Client) GetInterfaceXMLDesc(iface libvirt.Interface) (string, error) {
+	xmlDesc, err := c.conn.InterfaceGetXMLDesc(iface, 0)
+	if err != nil {
+		return "", fmt.Errorf("failed to get interface XML: %w", err)
+	}
+	return xmlDesc, nil
+}
+
+// ListNodeDevices 列出指定类型的节点设备
+// cap 参数可以是: "pci", "usb", "storage", "net" 等
+func (c *Client) ListNodeDevices(cap string) ([]libvirt.NodeDevice, error) {
+	devices, _, err := c.conn.ConnectListAllNodeDevices(1, 0)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list node devices: %w", err)
+	}
+
+	log.Printf("Total devices found: %d", len(devices))
+
+	// 如果没有指定 capability，返回所有设备
+	if cap == "" {
+		return devices, nil
+	}
+
+	// 过滤指定类型的设备
+	filtered := make([]libvirt.NodeDevice, 0)
+	for _, dev := range devices {
+		// 获取设备 XML 描述
+		xmlDesc, err := c.GetNodeDeviceXMLDesc(dev)
+		if err != nil {
+			log.Printf("Failed to get XML for device %s: %v", dev.Name, err)
+			continue
+		}
+
+		// 解析 XML 来判断设备类型
+		deviceXML, err := ParseNodeDeviceXML(xmlDesc)
+		if err != nil {
+			log.Printf("Failed to parse XML for device %s: %v", dev.Name, err)
+			continue
+		}
+
+		// 根据指定的类型过滤
+		matched := false
+		switch cap {
+		case "pci":
+			matched = deviceXML.IsPCIDevice()
+		case "usb":
+			matched = deviceXML.IsUSBDevice()
+		case "net":
+			matched = deviceXML.IsNetworkInterface()
+		case "storage":
+			matched = deviceXML.IsStorageDevice()
+		}
+
+		if matched {
+			log.Printf("Device %s matched type %s", dev.Name, cap)
+			filtered = append(filtered, dev)
+		}
+	}
+
+	log.Printf("Filtered %d devices for type %s", len(filtered), cap)
+	return filtered, nil
+}
+
+// GetNodeDeviceXMLDesc 获取节点设备的 XML 描述
+func (c *Client) GetNodeDeviceXMLDesc(dev libvirt.NodeDevice) (string, error) {
+	xmlDesc, err := c.conn.NodeDeviceGetXMLDesc(dev.Name, 0)
+	if err != nil {
+		return "", fmt.Errorf("failed to get node device XML: %w", err)
+	}
+	return xmlDesc, nil
+}

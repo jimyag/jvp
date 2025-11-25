@@ -216,6 +216,34 @@ func (m *MockClient) ListSnapshots(domainName string) ([]string, error) {
 	return args.Get(0).([]string), args.Error(1)
 }
 
+// Network Interface 操作
+func (m *MockClient) ListInterfaces() ([]libvirt.Interface, error) {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]libvirt.Interface), args.Error(1)
+}
+
+func (m *MockClient) GetInterfaceXMLDesc(iface libvirt.Interface) (string, error) {
+	args := m.Called(iface)
+	return args.String(0), args.Error(1)
+}
+
+// Node Device 操作
+func (m *MockClient) ListNodeDevices(cap string) ([]libvirt.NodeDevice, error) {
+	args := m.Called(cap)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]libvirt.NodeDevice), args.Error(1)
+}
+
+func (m *MockClient) GetNodeDeviceXMLDesc(dev libvirt.NodeDevice) (string, error) {
+	args := m.Called(dev)
+	return args.String(0), args.Error(1)
+}
+
 // NewMockClient 创建新的 MockClient
 // 这是一个便捷函数，用于在测试中创建 mock client
 func NewMockClient() *MockClient {

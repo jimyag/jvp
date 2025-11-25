@@ -17,6 +17,7 @@ type NodeConfig struct {
 	Name      string           `json:"name"`
 	URI       string           `json:"uri"`
 	Type      entity.NodeType  `json:"type"`
+	State     entity.NodeState `json:"state"` // 节点状态（用于手动禁用/启用）
 	CreatedAt time.Time        `json:"created_at"`
 	UpdatedAt time.Time        `json:"updated_at"`
 }

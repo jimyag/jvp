@@ -67,6 +67,9 @@ export default function NodeDetailPage() {
   const [summary, setSummary] = useState<NodeSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
+  const [showDevices, setShowDevices] = useState<string | null>(null);
+  const [devicesData, setDevicesData] = useState<any>(null);
+  const [devicesLoading, setDevicesLoading] = useState(false);
 
   useEffect(() => {
     fetchNodeDetails();
@@ -130,6 +133,37 @@ export default function NodeDetailPage() {
   const handleRefresh = async () => {
     setLoading(true);
     await Promise.all([fetchNodeDetails(), fetchNodeSummary()]);
+  };
+
+  const handleViewDevices = async (deviceType: string) => {
+    setShowDevices(deviceType);
+    setDevicesLoading(true);
+
+    try {
+      let endpoint = "";
+      switch (deviceType) {
+        case "pci":
+          endpoint = "/api/describe-node-pci";
+          break;
+        case "usb":
+          endpoint = "/api/describe-node-usb";
+          break;
+        case "net":
+          endpoint = "/api/describe-node-net";
+          break;
+        case "disks":
+          endpoint = "/api/describe-node-disks";
+          break;
+      }
+
+      const data = await apiPost(endpoint, { name: nodeName });
+      setDevicesData(data);
+    } catch (error: any) {
+      console.error(`Failed to fetch ${deviceType} devices:`, error);
+      toast.error(error?.message || `Failed to fetch ${deviceType} devices`);
+    } finally {
+      setDevicesLoading(false);
+    }
   };
 
   const formatBytes = (bytes: number): string => {
@@ -411,27 +445,193 @@ export default function NodeDetailPage() {
 
       {/* Quick Links */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <button className="card hover:shadow-md transition-shadow p-4 flex flex-col items-center text-center">
+        <button
+          onClick={() => handleViewDevices("pci")}
+          className="card hover:shadow-md transition-shadow p-4 flex flex-col items-center text-center"
+        >
           <Cpu size={24} className="text-blue-600 mb-2" />
           <span className="font-medium">PCI Devices</span>
           <span className="text-xs text-gray-500 mt-1">View PCI devices</span>
         </button>
-        <button className="card hover:shadow-md transition-shadow p-4 flex flex-col items-center text-center">
+        <button
+          onClick={() => handleViewDevices("usb")}
+          className="card hover:shadow-md transition-shadow p-4 flex flex-col items-center text-center"
+        >
           <Usb size={24} className="text-purple-600 mb-2" />
           <span className="font-medium">USB Devices</span>
           <span className="text-xs text-gray-500 mt-1">View USB devices</span>
         </button>
-        <button className="card hover:shadow-md transition-shadow p-4 flex flex-col items-center text-center">
+        <button
+          onClick={() => handleViewDevices("net")}
+          className="card hover:shadow-md transition-shadow p-4 flex flex-col items-center text-center"
+        >
           <Network size={24} className="text-green-600 mb-2" />
           <span className="font-medium">Network</span>
           <span className="text-xs text-gray-500 mt-1">View network interfaces</span>
         </button>
-        <button className="card hover:shadow-md transition-shadow p-4 flex flex-col items-center text-center">
+        <button
+          onClick={() => handleViewDevices("disks")}
+          className="card hover:shadow-md transition-shadow p-4 flex flex-col items-center text-center"
+        >
           <HardDrive size={24} className="text-orange-600 mb-2" />
           <span className="font-medium">Disks</span>
           <span className="text-xs text-gray-500 mt-1">View physical disks</span>
         </button>
       </div>
+
+      {/* Devices Modal */}
+      {showDevices && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[80vh] overflow-hidden flex flex-col">
+            <div className="p-6 border-b flex justify-between items-center">
+              <h2 className="text-xl font-semibold">
+                {showDevices === "pci" && "PCI Devices"}
+                {showDevices === "usb" && "USB Devices"}
+                {showDevices === "net" && "Network Interfaces"}
+                {showDevices === "disks" && "Physical Disks"}
+              </h2>
+              <button
+                onClick={() => {
+                  setShowDevices(null);
+                  setDevicesData(null);
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto">
+              {devicesLoading ? (
+                <div className="flex justify-center py-12">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {showDevices === "pci" && devicesData?.devices && (
+                    <div>
+                      {devicesData.devices.length === 0 ? (
+                        <p className="text-gray-500 text-center py-8">No PCI devices found</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {devicesData.devices.map((device: any, idx: number) => (
+                            <div key={idx} className="border rounded p-3">
+                              <div className="flex justify-between items-start">
+                                <div>
+                                  <div className="font-mono text-sm font-medium">{device.address}</div>
+                                  <div className="text-sm text-gray-700 mt-1">{device.device}</div>
+                                  <div className="text-xs text-gray-500 mt-1">{device.vendor}</div>
+                                </div>
+                                {device.iommu_group >= 0 && (
+                                  <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded">
+                                    IOMMU: {device.iommu_group}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {showDevices === "usb" && devicesData?.devices && (
+                    <div>
+                      {devicesData.devices.length === 0 ? (
+                        <p className="text-gray-500 text-center py-8">No USB devices found</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {devicesData.devices.map((device: any, idx: number) => (
+                            <div key={idx} className="border rounded p-3">
+                              <div className="font-medium">{device.product || "Unknown Device"}</div>
+                              <div className="text-sm text-gray-600 mt-1">{device.vendor}</div>
+                              <div className="flex gap-4 mt-2 text-xs text-gray-500">
+                                {device.vendor_id && <span>Vendor: {device.vendor_id}</span>}
+                                {device.product_id && <span>Product: {device.product_id}</span>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {showDevices === "net" && devicesData?.interfaces && (
+                    <div>
+                      {devicesData.interfaces.length === 0 ? (
+                        <p className="text-gray-500 text-center py-8">No network interfaces found</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {devicesData.interfaces.map((iface: any, idx: number) => (
+                            <div key={idx} className="border rounded p-3">
+                              <div className="flex justify-between items-start">
+                                <div>
+                                  <div className="font-medium">{iface.name}</div>
+                                  <div className="text-sm text-gray-600 mt-1 font-mono">{iface.mac}</div>
+                                </div>
+                                <div className="flex gap-2">
+                                  {iface.state && (
+                                    <span className={`px-2 py-1 text-xs rounded ${
+                                      iface.state === 'up' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
+                                    }`}>
+                                      {iface.state}
+                                    </span>
+                                  )}
+                                  {iface.speed && (
+                                    <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded">
+                                      {iface.speed}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {showDevices === "disks" && devicesData?.disks && (
+                    <div>
+                      {devicesData.disks.length === 0 ? (
+                        <p className="text-gray-500 text-center py-8">No disks found</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {devicesData.disks.map((disk: any, idx: number) => (
+                            <div key={idx} className="border rounded p-3">
+                              <div className="flex justify-between items-start">
+                                <div className="flex-1">
+                                  <div className="font-medium font-mono">{disk.name}</div>
+                                  {disk.model && (
+                                    <div className="text-sm text-gray-700 mt-1">{disk.model}</div>
+                                  )}
+                                  <div className="flex gap-4 mt-2 text-xs text-gray-500">
+                                    {disk.serial && <span>Serial: {disk.serial}</span>}
+                                    {disk.size > 0 && (
+                                      <span>Size: {(disk.size / (1024 * 1024 * 1024)).toFixed(2)} GB</span>
+                                    )}
+                                  </div>
+                                </div>
+                                <span className={`px-2 py-1 text-xs rounded ${
+                                  disk.type === 'NVMe' ? 'bg-purple-100 text-purple-800' :
+                                  disk.type === 'SSD' ? 'bg-blue-100 text-blue-800' :
+                                  'bg-gray-100 text-gray-600'
+                                }`}>
+                                  {disk.type}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   );
 }

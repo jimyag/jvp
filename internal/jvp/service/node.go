@@ -31,6 +31,21 @@ func (s *NodeService) ListNodes(ctx context.Context) ([]*entity.Node, error) {
 
 	nodes := make([]*entity.Node, 0, len(configs))
 	for _, config := range configs {
+		// 如果节点被手动设置为维护模式，直接使用该状态
+		if config.State == entity.NodeStateMaintenance {
+			node := &entity.Node{
+				Name:      config.Name,
+				UUID:      fmt.Sprintf("%s-node", config.Name),
+				URI:       config.URI,
+				Type:      config.Type,
+				State:     entity.NodeStateMaintenance,
+				CreatedAt: config.CreatedAt,
+				UpdatedAt: config.UpdatedAt,
+			}
+			nodes = append(nodes, node)
+			continue
+		}
+
 		// 尝试连接以检查状态
 		state := entity.NodeStateOffline
 		var hostname string
@@ -260,22 +275,136 @@ func (s *NodeService) DescribeNodeSummary(ctx context.Context, nodeName string) 
 
 // DescribeNodePCI 查询节点 PCI 设备
 func (s *NodeService) DescribeNodePCI(ctx context.Context, nodeName string) ([]entity.PCIDevice, error) {
-	// TODO: 实现 PCI 设备查询
-	// 需要通过 sysfs 或其他方式获取 PCI 设备信息
-	return []entity.PCIDevice{}, nil
+	// 获取节点的 libvirt 连接
+	conn, err := s.storage.GetConnection(nodeName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get node connection: %w", err)
+	}
+
+	// 先获取所有设备看看
+	allDevices, err := conn.ListNodeDevices("")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list all devices: %w", err)
+	}
+	fmt.Printf("Total devices in libvirt: %d\n", len(allDevices))
+
+	// 获取所有 PCI 设备
+	devices, err := conn.ListNodeDevices("pci")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list PCI devices: %w", err)
+	}
+
+	fmt.Printf("Filtered PCI devices: %d\n", len(devices))
+
+	pciDevices := make([]entity.PCIDevice, 0)
+	for _, dev := range devices {
+		// 获取设备 XML 描述
+		xmlDesc, err := conn.GetNodeDeviceXMLDesc(dev)
+		if err != nil {
+			fmt.Printf("Failed to get XML for PCI device %s: %v\n", dev.Name, err)
+			continue
+		}
+
+		// 解析 XML 获取详细信息
+		deviceXML, err := libvirt.ParseNodeDeviceXML(xmlDesc)
+		if err != nil {
+			fmt.Printf("Failed to parse XML for PCI device %s: %v\n", dev.Name, err)
+			continue
+		}
+
+		pciDevice := entity.PCIDevice{
+			Address:    deviceXML.GetPCIAddress(),
+			Vendor:     deviceXML.Capability.Vendor.Name,
+			Device:     deviceXML.Capability.Product.Name,
+			Class:      deviceXML.Capability.Product.ID,
+			IOMMUGroup: deviceXML.GetIOMMUGroup(),
+		}
+		pciDevices = append(pciDevices, pciDevice)
+	}
+
+	return pciDevices, nil
 }
 
 // DescribeNodeUSB 查询节点 USB 设备
 func (s *NodeService) DescribeNodeUSB(ctx context.Context, nodeName string) ([]entity.USBDevice, error) {
-	// TODO: 实现 USB 设备查询
-	return []entity.USBDevice{}, nil
+	// 获取节点的 libvirt 连接
+	conn, err := s.storage.GetConnection(nodeName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get node connection: %w", err)
+	}
+
+	// 获取所有 USB 设备
+	devices, err := conn.ListNodeDevices("usb")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list USB devices: %w", err)
+	}
+
+	usbDevices := make([]entity.USBDevice, 0)
+	for _, dev := range devices {
+		// 获取设备 XML 描述
+		xmlDesc, err := conn.GetNodeDeviceXMLDesc(dev)
+		if err != nil {
+			continue
+		}
+
+		// 解析 XML 获取详细信息
+		deviceXML, err := libvirt.ParseNodeDeviceXML(xmlDesc)
+		if err != nil {
+			continue
+		}
+
+		usbDevice := entity.USBDevice{
+			VendorID:  deviceXML.Capability.Vendor.ID,
+			ProductID: deviceXML.Capability.Product.ID,
+			Vendor:    deviceXML.Capability.Vendor.Name,
+			Product:   deviceXML.Capability.Product.Name,
+		}
+		usbDevices = append(usbDevices, usbDevice)
+	}
+
+	return usbDevices, nil
 }
 
 // DescribeNodeNet 查询节点网络接口
 func (s *NodeService) DescribeNodeNet(ctx context.Context, nodeName string) (*NodeNetworkInfo, error) {
-	// TODO: 实现网络接口查询
+	// 获取节点的 libvirt 连接
+	conn, err := s.storage.GetConnection(nodeName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get node connection: %w", err)
+	}
+
+	// 通过 node devices 获取网络接口（包含更详细的信息）
+	devices, err := conn.ListNodeDevices("net")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list network devices: %w", err)
+	}
+
+	interfaces := make([]entity.NetworkInterface, 0)
+
+	for _, dev := range devices {
+		// 获取设备 XML 描述
+		xmlDesc, err := conn.GetNodeDeviceXMLDesc(dev)
+		if err != nil {
+			continue
+		}
+
+		// 解析 XML 获取详细信息
+		deviceXML, err := libvirt.ParseNodeDeviceXML(xmlDesc)
+		if err != nil {
+			continue
+		}
+
+		netIface := entity.NetworkInterface{
+			Name:  deviceXML.Capability.Interface,
+			MAC:   deviceXML.Capability.Address,
+			State: deviceXML.Capability.Link.State,
+			Speed: deviceXML.Capability.Link.Speed,
+		}
+		interfaces = append(interfaces, netIface)
+	}
+
 	return &NodeNetworkInfo{
-		Interfaces: []entity.NetworkInterface{},
+		Interfaces: interfaces,
 		Bridges:    []entity.Bridge{},
 		Bonds:      []entity.Bond{},
 		SRIOV:      []entity.SRIOVInfo{},
@@ -284,8 +413,66 @@ func (s *NodeService) DescribeNodeNet(ctx context.Context, nodeName string) (*No
 
 // DescribeNodeDisks 查询节点物理磁盘
 func (s *NodeService) DescribeNodeDisks(ctx context.Context, nodeName string) ([]entity.Disk, error) {
-	// TODO: 实现物理磁盘查询
-	return []entity.Disk{}, nil
+	// 获取节点的 libvirt 连接
+	conn, err := s.storage.GetConnection(nodeName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get node connection: %w", err)
+	}
+
+	// 获取所有存储设备
+	devices, err := conn.ListNodeDevices("storage")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list storage devices: %w", err)
+	}
+
+	disks := make([]entity.Disk, 0)
+	for _, dev := range devices {
+		// 获取设备 XML 描述
+		xmlDesc, err := conn.GetNodeDeviceXMLDesc(dev)
+		if err != nil {
+			continue
+		}
+
+		// 解析 XML 获取详细信息
+		deviceXML, err := libvirt.ParseNodeDeviceXML(xmlDesc)
+		if err != nil {
+			continue
+		}
+
+		// 确保是磁盘设备（drive_type 为 disk）
+		if !deviceXML.IsStorageDevice() {
+			continue
+		}
+
+		// 解析容量
+		var size int64
+		if deviceXML.Capability.Size != "" {
+			fmt.Sscanf(deviceXML.Capability.Size, "%d", &size)
+		}
+
+		// 判断磁盘类型（简化版）
+		diskType := "HDD"
+		if len(deviceXML.Capability.Block) > 0 {
+			// 如果设备名包含 nvme，认为是 NVMe
+			if len(deviceXML.Capability.Block) > 4 && deviceXML.Capability.Block[:4] == "nvme" {
+				diskType = "NVMe"
+			} else if len(deviceXML.Capability.Block) > 2 && deviceXML.Capability.Block[:2] == "sd" {
+				// sd* 设备，可能是 HDD 或 SSD（需要进一步判断）
+				diskType = "SSD/HDD"
+			}
+		}
+
+		disk := entity.Disk{
+			Name:   deviceXML.Capability.Block,
+			Type:   diskType,
+			Size:   size,
+			Model:  deviceXML.Capability.Model,
+			Serial: deviceXML.Capability.Serial,
+		}
+		disks = append(disks, disk)
+	}
+
+	return disks, nil
 }
 
 // CreateNode 创建（添加）新节点
@@ -313,6 +500,7 @@ func (s *NodeService) CreateNode(ctx context.Context, name, uri string, nodeType
 		Name:      name,
 		URI:       uri,
 		Type:      nodeType,
+		State:     entity.NodeStateOnline, // 新创建的节点默认为 online
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -351,15 +539,43 @@ func (s *NodeService) DeleteNode(ctx context.Context, nodeName string) error {
 	return nil
 }
 
-// EnableNode 启用节点
+// EnableNode 启用节点（退出维护模式）
 func (s *NodeService) EnableNode(ctx context.Context, nodeName string) error {
-	// TODO: 实现节点启用逻辑（如有需要）
+	// 获取节点配置
+	config, err := s.storage.Get(nodeName)
+	if err != nil {
+		return fmt.Errorf("failed to get node config: %w", err)
+	}
+
+	// 更新状态为在线
+	config.State = entity.NodeStateOnline
+	config.UpdatedAt = time.Now()
+
+	// 保存配置
+	if err := s.storage.Save(config); err != nil {
+		return fmt.Errorf("failed to save node config: %w", err)
+	}
+
 	return nil
 }
 
 // DisableNode 禁用节点（进入维护模式）
 func (s *NodeService) DisableNode(ctx context.Context, nodeName string) error {
-	// TODO: 实现节点禁用逻辑（如有需要）
+	// 获取节点配置
+	config, err := s.storage.Get(nodeName)
+	if err != nil {
+		return fmt.Errorf("failed to get node config: %w", err)
+	}
+
+	// 更新状态为维护模式
+	config.State = entity.NodeStateMaintenance
+	config.UpdatedAt = time.Now()
+
+	// 保存配置
+	if err := s.storage.Save(config); err != nil {
+		return fmt.Errorf("failed to save node config: %w", err)
+	}
+
 	return nil
 }
 
