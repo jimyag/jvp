@@ -3,35 +3,32 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/jimyag/jvp/internal/jvp/entity"
 	"github.com/jimyag/jvp/pkg/idgen"
-	"github.com/jimyag/jvp/pkg/libvirt"
 	"github.com/jimyag/jvp/pkg/qemuimg"
 	"github.com/rs/zerolog"
 )
 
-// VolumeService 存储卷服务（简化版，移除EBS概念）
+// VolumeService 存储卷服务
 type VolumeService struct {
-	storageService  *StorageService
-	instanceService *InstanceService
-	libvirtClient   libvirt.LibvirtClient
-	qemuImgClient   qemuimg.QemuImgClient
-	idGen           *idgen.Generator
+	nodeService        *NodeService
+	storagePoolService *StoragePoolService
+	qemuImgClient      qemuimg.QemuImgClient
+	idGen              *idgen.Generator
 }
 
 // NewVolumeService 创建新的 Volume Service
 func NewVolumeService(
-	storageService *StorageService,
-	instanceService *InstanceService,
-	libvirtClient libvirt.LibvirtClient,
+	nodeService *NodeService,
+	storagePoolService *StoragePoolService,
 ) *VolumeService {
 	return &VolumeService{
-		storageService:  storageService,
-		instanceService: instanceService,
-		libvirtClient:   libvirtClient,
-		qemuImgClient:   qemuimg.New(""),
-		idGen:           idgen.New(),
+		nodeService:        nodeService,
+		storagePoolService: storagePoolService,
+		qemuImgClient:      qemuimg.New(""),
+		idGen:              idgen.New(),
 	}
 }
 
@@ -39,7 +36,10 @@ func NewVolumeService(
 func (s *VolumeService) CreateVolume(ctx context.Context, req *entity.CreateVolumeRequest) (*entity.Volume, error) {
 	logger := zerolog.Ctx(ctx)
 	logger.Info().
-		Uint64("sizeGB", req.SizeGB).
+		Str("node_name", req.NodeName).
+		Str("pool_name", req.PoolName).
+		Str("requested_name", req.Name).
+		Uint64("size_gb", req.SizeGB).
 		Msg("Creating volume")
 
 	// 生成 Volume ID
@@ -48,326 +48,250 @@ func (s *VolumeService) CreateVolume(ctx context.Context, req *entity.CreateVolu
 		return nil, fmt.Errorf("generate volume ID: %w", err)
 	}
 
-	// 创建存储卷
-	internalReq := &entity.CreateInternalVolumeRequest{
-		PoolName: "default",
-		VolumeID: volumeID,
-		SizeGB:   req.SizeGB,
-		Format:   "qcow2",
+	// 确定卷名称
+	volumeName := req.Name
+	if volumeName == "" {
+		// 如果没有提供名称，使用 volumeID
+		volumeName = volumeID
 	}
 
-	internalVolume, err := s.storageService.CreateVolume(ctx, internalReq)
+	logger.Info().
+		Str("volume_id", volumeID).
+		Str("volume_name", volumeName).
+		Msg("Generated volume ID and name")
+
+	// 确定格式
+	format := req.Format
+	if format == "" {
+		format = "qcow2"
+	}
+
+	// 根据格式添加扩展名
+	fileExtension := ".qcow2"
+	if format == "raw" {
+		fileExtension = ".raw"
+	}
+	fileName := volumeName + fileExtension
+
+	// 获取节点的存储服务
+	nodeStorage, err := s.nodeService.GetNodeStorage(ctx, req.NodeName)
+	if err != nil {
+		return nil, fmt.Errorf("get node storage: %w", err)
+	}
+
+	// 创建存储卷
+	volInfo, err := nodeStorage.CreateVolume(req.PoolName, fileName, req.SizeGB, format)
 	if err != nil {
 		return nil, fmt.Errorf("create volume: %w", err)
 	}
 
+	// 构建返回的 Volume 对象
 	volume := &entity.Volume{
-		ID:        volumeID,
-		Name:      volumeID,
-		Pool:      "default",
-		Path:      internalVolume.Path,
-		CapacityB: internalVolume.CapacityB,
-		SizeGB:    req.SizeGB,
-		Format:    internalVolume.Format,
-		State:     "available",
+		ID:          volumeID,
+		Name:        volInfo.Name,
+		NodeName:    req.NodeName,
+		Pool:        req.PoolName,
+		Path:        volInfo.Path,
+		CapacityB:   volInfo.CapacityB,
+		SizeGB:      req.SizeGB,
+		AllocationB: volInfo.AllocationB,
+		Format:      volInfo.Format,
 	}
 
 	logger.Info().
-		Str("volumeID", volumeID).
+		Str("volume_id", volumeID).
+		Str("path", volInfo.Path).
 		Msg("Volume created successfully")
 
 	return volume, nil
 }
 
-// DeleteVolume 删除存储卷
-func (s *VolumeService) DeleteVolume(ctx context.Context, volumeID string) error {
-	logger := zerolog.Ctx(ctx)
-	logger.Info().Str("volumeID", volumeID).Msg("Deleting volume")
-
-	// 检查卷是否被附加
-	volume, err := s.GetVolume(ctx, volumeID)
-	if err != nil {
-		return fmt.Errorf("get volume: %w", err)
-	}
-
-	attachments := s.findVolumeAttachments(ctx, volume.Path)
-	if len(attachments) > 0 {
-		return fmt.Errorf("volume %s is attached to instance(s), cannot delete", volumeID)
-	}
-
-	// 删除存储卷
-	err = s.storageService.DeleteVolume(ctx, volumeID)
-	if err != nil {
-		return fmt.Errorf("delete volume: %w", err)
-	}
-
-	logger.Info().Str("volumeID", volumeID).Msg("Volume deleted successfully")
-	return nil
-}
-
-// AttachVolume 将卷附加到实例
-func (s *VolumeService) AttachVolume(ctx context.Context, req *entity.AttachVolumeRequest) (*entity.VolumeAttachment, error) {
+// ListVolumes 列举存储池中的所有卷
+func (s *VolumeService) ListVolumes(ctx context.Context, req *entity.ListVolumesRequest) ([]entity.Volume, error) {
 	logger := zerolog.Ctx(ctx)
 	logger.Info().
-		Str("volumeID", req.VolumeID).
-		Str("instanceID", req.InstanceID).
-		Msg("Attaching volume to instance")
+		Str("node_name", req.NodeName).
+		Str("pool_name", req.PoolName).
+		Msg("Listing volumes in pool")
 
-	// 获取卷信息
-	volume, err := s.GetVolume(ctx, req.VolumeID)
+	// 获取节点的存储服务
+	nodeStorage, err := s.nodeService.GetNodeStorage(ctx, req.NodeName)
 	if err != nil {
-		return nil, fmt.Errorf("get volume: %w", err)
+		return nil, fmt.Errorf("get node storage: %w", err)
 	}
 
-	// 检查卷是否已被附加
-	attachments := s.findVolumeAttachments(ctx, volume.Path)
-	if len(attachments) > 0 {
-		return nil, fmt.Errorf("volume %s is already attached", req.VolumeID)
-	}
-
-	// 获取 domain 的磁盘列表，确定可用的设备名
-	disks, err := s.libvirtClient.GetDomainDisks(req.InstanceID)
+	// 列举卷
+	volInfos, err := nodeStorage.ListVolumes(req.PoolName)
 	if err != nil {
-		return nil, fmt.Errorf("get domain disks: %w", err)
+		return nil, fmt.Errorf("list volumes: %w", err)
 	}
 
-	// 确定设备名
-	device := req.Device
-	if device == "" {
-		// 自动分配设备名（从 /dev/vdb 开始）
-		usedDevices := make(map[string]bool)
-		for _, disk := range disks {
-			if disk.Device == "disk" {
-				usedDevices[disk.Target.Dev] = true
-			}
-		}
-		// 从 vdb 开始查找可用设备
-		for i := 1; i < 26; i++ {
-			candidate := fmt.Sprintf("/dev/vd%c", 'a'+i)
-			if !usedDevices[candidate] {
-				device = candidate
-				break
-			}
-		}
-		if device == "" {
-			return nil, fmt.Errorf("no available device slot for domain")
-		}
-	} else {
-		// 检查设备是否已被使用
-		for _, disk := range disks {
-			if disk.Target.Dev == device && disk.Device == "disk" {
-				return nil, fmt.Errorf("device %s already in use", device)
-			}
-		}
-	}
+	volumes := make([]entity.Volume, 0, len(volInfos))
+	for _, volInfo := range volInfos {
+		// 从文件名提取 volume ID (去掉扩展名)
+		volumeID := strings.TrimSuffix(volInfo.Name, ".qcow2")
+		volumeID = strings.TrimSuffix(volumeID, ".raw")
+		volumeID = strings.TrimSuffix(volumeID, ".iso")
+		volumeID = strings.TrimSuffix(volumeID, ".img")
 
-	// 附加磁盘到 domain
-	err = s.libvirtClient.AttachDiskToDomain(req.InstanceID, volume.Path, device)
-	if err != nil {
-		return nil, fmt.Errorf("attach disk to domain: %w", err)
-	}
-
-	attachment := &entity.VolumeAttachment{
-		InstanceID: req.InstanceID,
-		Device:     device,
+		volume := entity.Volume{
+			ID:          volumeID,
+			Name:        volInfo.Name,
+			NodeName:    req.NodeName,
+			Pool:        req.PoolName,
+			Path:        volInfo.Path,
+			CapacityB:   volInfo.CapacityB,
+			SizeGB:      volInfo.CapacityB / (1024 * 1024 * 1024),
+			AllocationB: volInfo.AllocationB,
+			Format:      volInfo.Format,
+		}
+		volumes = append(volumes, volume)
 	}
 
 	logger.Info().
-		Str("volumeID", req.VolumeID).
-		Str("instanceID", req.InstanceID).
-		Str("device", device).
-		Msg("Volume attached successfully")
-
-	return attachment, nil
-}
-
-// DetachVolume 从实例分离卷
-func (s *VolumeService) DetachVolume(ctx context.Context, req *entity.DetachVolumeRequest) error {
-	logger := zerolog.Ctx(ctx)
-	logger.Info().
-		Str("volumeID", req.VolumeID).
-		Str("instanceID", req.InstanceID).
-		Msg("Detaching volume from instance")
-
-	// 获取卷信息
-	volume, err := s.GetVolume(ctx, req.VolumeID)
-	if err != nil {
-		return fmt.Errorf("get volume: %w", err)
-	}
-
-	// 查找附加信息
-	attachments := s.findVolumeAttachments(ctx, volume.Path)
-	var attachment *entity.VolumeAttachment
-	for i := range attachments {
-		if req.InstanceID == "" || attachments[i].InstanceID == req.InstanceID {
-			attachment = &attachments[i]
-			break
-		}
-	}
-
-	if attachment == nil {
-		return fmt.Errorf("volume %s is not attached to instance %s", req.VolumeID, req.InstanceID)
-	}
-
-	// 从 domain 分离磁盘
-	err = s.libvirtClient.DetachDiskFromDomain(attachment.InstanceID, attachment.Device)
-	if err != nil {
-		return fmt.Errorf("detach disk from domain: %w", err)
-	}
-
-	logger.Info().
-		Str("volumeID", req.VolumeID).
-		Str("instanceID", attachment.InstanceID).
-		Msg("Volume detached successfully")
-
-	return nil
-}
-
-// ListVolumes 列出所有存储卷
-func (s *VolumeService) ListVolumes(ctx context.Context) ([]entity.Volume, error) {
-	logger := zerolog.Ctx(ctx)
-	logger.Info().Msg("Listing volumes from libvirt storage pools")
-
-	// 从 StorageService 获取所有存储池
-	pools, err := s.storageService.ListStoragePools(ctx, false)
-	if err != nil {
-		logger.Error().
-			Err(err).
-			Msg("Failed to list storage pools")
-		return nil, fmt.Errorf("list storage pools: %w", err)
-	}
-
-	// 收集所有卷
-	var volumes []entity.Volume
-	for _, pool := range pools {
-		// 跳过镜像池和模板池
-		if pool.Name == "images" || pool.Name == "template" {
-			continue
-		}
-
-		// 获取池中的所有卷
-		poolVolumes, err := s.storageService.ListVolumes(ctx, pool.Name)
-		if err != nil {
-			logger.Warn().
-				Str("pool_name", pool.Name).
-				Err(err).
-				Msg("Failed to list volumes in pool")
-			continue
-		}
-
-		for _, vol := range poolVolumes {
-			// 查找卷的附加关系（实时查询）
-			attachments := s.findVolumeAttachments(ctx, vol.Path)
-
-			// 计算状态
-			state := "available"
-			if len(attachments) > 0 {
-				state = "in-use"
-			}
-
-			volume := entity.Volume{
-				ID:          vol.ID,
-				Name:        vol.Name,
-				Pool:        pool.Name,
-				Path:        vol.Path,
-				CapacityB:   vol.CapacityB,
-				SizeGB:      vol.CapacityB / (1024 * 1024 * 1024), // 转换为 GB
-				AllocationB: vol.AllocationB,
-				Format:      vol.Format,
-				State:       state,
-				VolumeType:  vol.VolumeType,
-				Attachments: attachments,
-			}
-
-			volumes = append(volumes, volume)
-		}
-	}
-
-	logger.Info().
-		Int("total", len(volumes)).
-		Msg("List volumes completed")
+		Int("count", len(volumes)).
+		Msg("Volumes listed successfully")
 
 	return volumes, nil
 }
 
-// GetVolume 获取单个存储卷
-func (s *VolumeService) GetVolume(ctx context.Context, volumeID string) (*entity.Volume, error) {
-	volumes, err := s.ListVolumes(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	for i := range volumes {
-		if volumes[i].ID == volumeID {
-			return &volumes[i], nil
-		}
-	}
-
-	return nil, fmt.Errorf("volume %s not found", volumeID)
-}
-
-// ResizeVolume 调整卷大小
-func (s *VolumeService) ResizeVolume(ctx context.Context, volumeID string, newSizeGB uint64) error {
+// DescribeVolume 查询卷详情
+func (s *VolumeService) DescribeVolume(ctx context.Context, req *entity.DescribeVolumeRequest) (*entity.Volume, error) {
 	logger := zerolog.Ctx(ctx)
 	logger.Info().
-		Str("volumeID", volumeID).
-		Uint64("newSizeGB", newSizeGB).
-		Msg("Resizing volume")
+		Str("node_name", req.NodeName).
+		Str("pool_name", req.PoolName).
+		Str("volume_id", req.VolumeID).
+		Msg("Describing volume")
 
-	// 获取卷路径
-	volume, err := s.GetVolume(ctx, volumeID)
+	// 获取节点的存储服务
+	nodeStorage, err := s.nodeService.GetNodeStorage(ctx, req.NodeName)
 	if err != nil {
-		return fmt.Errorf("get volume: %w", err)
+		return nil, fmt.Errorf("get node storage: %w", err)
 	}
 
-	currentSizeGB := volume.CapacityB / (1024 * 1024 * 1024)
-	if newSizeGB <= currentSizeGB {
-		return fmt.Errorf("new size must be larger than current size (%d GB)", currentSizeGB)
-	}
-
-	// 使用 qemu-img resize 调整大小
-	err = s.qemuImgClient.Resize(ctx, volume.Path, newSizeGB)
+	// 查询卷信息
+	volumeName := req.VolumeID + ".qcow2"
+	volInfo, err := nodeStorage.GetVolume(req.PoolName, volumeName)
 	if err != nil {
-		return fmt.Errorf("resize volume: %w", err)
-	}
-
-	logger.Info().
-		Str("volumeID", volumeID).
-		Uint64("newSizeGB", newSizeGB).
-		Msg("Volume resized successfully")
-
-	return nil
-}
-
-// findVolumeAttachments 查找卷的附加关系（实时从 libvirt 查询）
-func (s *VolumeService) findVolumeAttachments(ctx context.Context, volumePath string) []entity.VolumeAttachment {
-	logger := zerolog.Ctx(ctx)
-	var attachments []entity.VolumeAttachment
-
-	// 获取所有 domain
-	domains, err := s.libvirtClient.GetVMSummaries()
-	if err != nil {
-		logger.Warn().Err(err).Msg("Failed to get VM summaries")
-		return attachments
-	}
-
-	// 遍历每个 domain，检查是否使用了这个卷
-	for _, domain := range domains {
-		disks, err := s.libvirtClient.GetDomainDisks(domain.Name)
+		// 尝试其他扩展名
+		volumeName = req.VolumeID + ".raw"
+		volInfo, err = nodeStorage.GetVolume(req.PoolName, volumeName)
 		if err != nil {
-			continue
-		}
-
-		for _, disk := range disks {
-			if disk.Device == "disk" && disk.Source.File == volumePath {
-				attachment := entity.VolumeAttachment{
-					InstanceID: domain.Name,
-					Device:     disk.Target.Dev,
-				}
-				attachments = append(attachments, attachment)
+			volumeName = req.VolumeID + ".img"
+			volInfo, err = nodeStorage.GetVolume(req.PoolName, volumeName)
+			if err != nil {
+				return nil, fmt.Errorf("get volume: %w", err)
 			}
 		}
 	}
 
-	return attachments
+	volume := &entity.Volume{
+		ID:          req.VolumeID,
+		Name:        volInfo.Name,
+		NodeName:    req.NodeName,
+		Pool:        req.PoolName,
+		Path:        volInfo.Path,
+		CapacityB:   volInfo.CapacityB,
+		SizeGB:      volInfo.CapacityB / (1024 * 1024 * 1024),
+		AllocationB: volInfo.AllocationB,
+		Format:      volInfo.Format,
+	}
+
+	logger.Info().
+		Str("volume_id", req.VolumeID).
+		Msg("Volume described successfully")
+
+	return volume, nil
+}
+
+// ResizeVolume 扩容卷
+func (s *VolumeService) ResizeVolume(ctx context.Context, req *entity.ResizeVolumeRequest) (*entity.Volume, error) {
+	logger := zerolog.Ctx(ctx)
+	logger.Info().
+		Str("node_name", req.NodeName).
+		Str("pool_name", req.PoolName).
+		Str("volume_id", req.VolumeID).
+		Uint64("new_size_gb", req.NewSizeGB).
+		Msg("Resizing volume")
+
+	// 先查询卷信息
+	describeReq := &entity.DescribeVolumeRequest{
+		NodeName: req.NodeName,
+		PoolName: req.PoolName,
+		VolumeID: req.VolumeID,
+	}
+	volume, err := s.DescribeVolume(ctx, describeReq)
+	if err != nil {
+		return nil, fmt.Errorf("get volume: %w", err)
+	}
+
+	// 检查新大小是否大于当前大小
+	currentSizeGB := volume.CapacityB / (1024 * 1024 * 1024)
+	if req.NewSizeGB <= currentSizeGB {
+		return nil, fmt.Errorf("new size (%d GB) must be larger than current size (%d GB)", req.NewSizeGB, currentSizeGB)
+	}
+
+	// 获取节点的存储服务
+	nodeStorage, err := s.nodeService.GetNodeStorage(ctx, req.NodeName)
+	if err != nil {
+		return nil, fmt.Errorf("get node storage: %w", err)
+	}
+
+	// 使用 libvirt API 调整大小
+	err = nodeStorage.ResizeVolume(req.PoolName, volume.Name, req.NewSizeGB)
+	if err != nil {
+		return nil, fmt.Errorf("resize volume: %w", err)
+	}
+
+	// 重新查询卷信息
+	updatedVolume, err := s.DescribeVolume(ctx, describeReq)
+	if err != nil {
+		return nil, fmt.Errorf("get updated volume: %w", err)
+	}
+
+	logger.Info().
+		Str("volume_id", req.VolumeID).
+		Uint64("new_size_gb", req.NewSizeGB).
+		Msg("Volume resized successfully")
+
+	return updatedVolume, nil
+}
+
+// DeleteVolume 删除存储卷
+func (s *VolumeService) DeleteVolume(ctx context.Context, req *entity.DeleteVolumeRequest) error {
+	logger := zerolog.Ctx(ctx)
+	logger.Info().
+		Str("node_name", req.NodeName).
+		Str("pool_name", req.PoolName).
+		Str("volume_id", req.VolumeID).
+		Msg("Deleting volume")
+
+	// 获取节点的存储服务
+	nodeStorage, err := s.nodeService.GetNodeStorage(ctx, req.NodeName)
+	if err != nil {
+		return fmt.Errorf("get node storage: %w", err)
+	}
+
+	// 删除卷
+	volumeName := req.VolumeID + ".qcow2"
+	err = nodeStorage.DeleteVolume(req.PoolName, volumeName)
+	if err != nil {
+		// 尝试其他扩展名
+		volumeName = req.VolumeID + ".raw"
+		err = nodeStorage.DeleteVolume(req.PoolName, volumeName)
+		if err != nil {
+			volumeName = req.VolumeID + ".img"
+			err = nodeStorage.DeleteVolume(req.PoolName, volumeName)
+			if err != nil {
+				return fmt.Errorf("delete volume: %w", err)
+			}
+		}
+	}
+
+	logger.Info().
+		Str("volume_id", req.VolumeID).
+		Msg("Volume deleted successfully")
+
+	return nil
 }

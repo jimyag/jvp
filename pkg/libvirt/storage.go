@@ -395,6 +395,29 @@ func (c *Client) DeleteVolume(poolName, volumeName string) error {
 	return nil
 }
 
+// ResizeVolume 调整存储卷大小
+func (c *Client) ResizeVolume(poolName, volumeName string, newSizeGB uint64) error {
+	pool, err := c.conn.StoragePoolLookupByName(poolName)
+	if err != nil {
+		return fmt.Errorf("lookup storage pool %s: %w", poolName, err)
+	}
+
+	vol, err := c.conn.StorageVolLookupByName(pool, volumeName)
+	if err != nil {
+		return fmt.Errorf("lookup volume %s: %w", volumeName, err)
+	}
+
+	// 转换为字节
+	newCapacity := newSizeGB * 1024 * 1024 * 1024
+
+	// 使用 libvirt API 调整大小
+	if err := c.conn.StorageVolResize(vol, newCapacity, 0); err != nil {
+		return fmt.Errorf("resize volume: %w", err)
+	}
+
+	return nil
+}
+
 // extractPoolPath 从 pool XML 中提取路径
 func extractPoolPath(xmlDesc string) string {
 	// 查找 <path> 标签

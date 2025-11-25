@@ -94,14 +94,14 @@ func setupTestServices(t *testing.T) *TestServices {
 		idGen:               idgen.New(),
 	}
 
-	// 创建 VolumeService（不再使用 metadataStore 和 snapshotStore）
-	volumeService := &VolumeService{
-		storageService:  storageService,
-		instanceService: instanceService,
-		libvirtClient:   mockLibvirt,
-		qemuImgClient:   mockQemuImg,
-		idGen:           idgen.New(),
-	}
+	// 创建 NodeStorage (测试用)
+	nodeStorage, _ := NewNodeStorage("/tmp/jvp-test")
+	nodeService, _ := NewNodeService(nodeStorage)
+	storagePoolService := NewStoragePoolService(nodeStorage)
+
+	// 创建 VolumeService（使用新的依赖）
+	volumeService := NewVolumeService(nodeService, storagePoolService)
+	volumeService.qemuImgClient = mockQemuImg  // 注入 mock 客户端
 
 	return &TestServices{
 		MockLibvirt:     mockLibvirt,

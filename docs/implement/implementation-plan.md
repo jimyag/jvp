@@ -195,7 +195,78 @@ web/
 
 ### 阶段 2：存储层（第 3-4 周）
 
-#### 2.1 Template 模块（需拆分重构）
+#### 2.1 Volume 模块 ✅ **已完成 (2025-11-25)**
+- [x] 重构 service/volume.go
+- [x] 重构 entity/volume.go
+- [x] 重构 API 路由为 Action 风格
+- [x] 前端页面优化(集成到 Storage Pool 详情页)
+
+基础功能（已完成）：
+- [x] 创建 Volume(空白卷)
+- [x] 删除 Volume
+- [x] 列举/查询 Volume(按存储池)
+- [x] 扩容 Volume
+
+扩展功能（待实现）：
+- [ ] **CreateVolumeFromBackingFile** - 从模板创建增量卷 ⭐⭐⭐⭐⭐
+  - 用途：创建虚拟机时从模板快速创建磁盘
+  - API: `POST /api/create-volume-from-template`
+  - libvirt API: 使用 backing file 参数创建 qcow2 卷
+  - 优先级：最高（VM 创建必需）
+
+- [ ] **CloneVolume** - 克隆现有卷 ⭐⭐⭐⭐
+  - 用途：快速复制卷用于备份或克隆虚拟机
+  - API: `POST /api/clone-volume`
+  - libvirt API: `StorageVolCreateXMLFrom`
+  - 优先级：高
+
+- [ ] **UploadVolume** - 上传本地文件到卷 ⭐⭐⭐
+  - 用途：导入 ISO 镜像、虚拟机镜像
+  - API: `POST /api/upload-volume`
+  - libvirt API: `StorageVolUpload`
+  - 优先级：中高
+
+- [ ] **DownloadVolume** - 下载卷到本地 ⭐⭐⭐
+  - 用途：导出/备份卷
+  - API: `POST /api/download-volume`
+  - libvirt API: `StorageVolDownload`
+  - 优先级：中
+
+- [ ] **WipeVolume** - 安全擦除卷数据 ⭐⭐
+  - 用途：安全删除敏感数据
+  - API: `POST /api/wipe-volume`
+  - libvirt API: `StorageVolWipe`
+  - 优先级：低
+
+- [ ] **ConvertVolumeFormat** - 转换卷格式 ⭐⭐
+  - 用途：qcow2 ↔ raw 转换
+  - API: `POST /api/convert-volume`
+  - 工具：qemu-img convert
+  - 优先级：低
+
+- [ ] **GetVolumeDetailInfo** - 获取卷详细信息 ⭐⭐
+  - 用途：查看 backing file、快照等详细信息
+  - API: `POST /api/describe-volume-detail`
+  - 工具：qemu-img info
+  - 优先级：低
+
+技术实现：
+- Volume 就是 Storage Pool 中的 libvirt volume
+- 通过 Storage Pool 查询和管理 Volume,不需要全局 Volume 列表
+- 移除了 Volume 类型区分(disk/template/iso),简化为纯存储卷管理
+- 移除了 InstanceService 依赖,Volume 不关心附加关系
+- API 采用 Action 风格: `/api/create-volume`, `/api/list-volumes` 等
+- 支持多节点操作,通过 NodeService.GetNodeStorage 获取节点连接
+- 所有远程操作使用 libvirt API 而不是本地命令行工具
+- 前端集成在 Storage Pool 详情页,按池显示卷列表
+
+依赖关系：
+```
+NodeService → VolumeService
+StoragePoolService → VolumeService
+```
+
+#### 2.2 Template 模块（需拆分重构）
 - [ ] 从 image.go 拆分出 template.go
 - [ ] 后端 service: template.go
 - [ ] 后端 entity: template.go
@@ -208,17 +279,7 @@ web/
 - 删除模板
 - 更新模板
 
-#### 2.2 Volume 模块（已有，需重构）
-- [ ] 重构 service/volume.go
-- [ ] 重构 entity/volume.go
-- [ ] 重构 API 路由为 Action 风格
-- [ ] 前端页面优化
-
-功能：
-- 创建 Volume（空白/从模板/从快照）
-- 删除 Volume
-- 列举/查询 Volume
-- 扩容/克隆/压缩 Volume
+注意：Template 本质上是存储在 `images` 池中的特殊 Volume,需要额外的元数据管理
 
 #### 2.3 Snapshot 模块（新增）
 - [ ] 后端 service: snapshot.go（快照服务）

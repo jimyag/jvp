@@ -13,12 +13,10 @@ import (
 // VolumeServiceInterface 定义卷服务的接口
 type VolumeServiceInterface interface {
 	CreateVolume(ctx context.Context, req *entity.CreateVolumeRequest) (*entity.Volume, error)
-	DeleteVolume(ctx context.Context, volumeID string) error
-	AttachVolume(ctx context.Context, req *entity.AttachVolumeRequest) (*entity.VolumeAttachment, error)
-	DetachVolume(ctx context.Context, req *entity.DetachVolumeRequest) error
-	ListVolumes(ctx context.Context) ([]entity.Volume, error)
-	GetVolume(ctx context.Context, volumeID string) (*entity.Volume, error)
-	ResizeVolume(ctx context.Context, volumeID string, newSizeGB uint64) error
+	ListVolumes(ctx context.Context, req *entity.ListVolumesRequest) ([]entity.Volume, error)
+	DescribeVolume(ctx context.Context, req *entity.DescribeVolumeRequest) (*entity.Volume, error)
+	ResizeVolume(ctx context.Context, req *entity.ResizeVolumeRequest) (*entity.Volume, error)
+	DeleteVolume(ctx context.Context, req *entity.DeleteVolumeRequest) error
 }
 
 type Volume struct {
@@ -32,21 +30,23 @@ func NewVolume(volumeService *service.VolumeService) *Volume {
 }
 
 func (v *Volume) RegisterRoutes(router *gin.RouterGroup) {
-	volumeRouter := router.Group("/volumes")
-	volumeRouter.POST("/create", ginx.Adapt5(v.CreateVolume))
-	volumeRouter.POST("/delete", ginx.Adapt5(v.DeleteVolume))
-	volumeRouter.POST("/attach", ginx.Adapt5(v.AttachVolume))
-	volumeRouter.POST("/detach", ginx.Adapt5(v.DetachVolume))
-	volumeRouter.POST("/list", ginx.Adapt5(v.ListVolumes))
-	volumeRouter.POST("/describe", ginx.Adapt5(v.DescribeVolume))
-	volumeRouter.POST("/resize", ginx.Adapt5(v.ResizeVolume))
+	// Action 风格 API
+	router.POST("/create-volume", ginx.Adapt5(v.CreateVolume))
+	router.POST("/list-volumes", ginx.Adapt5(v.ListVolumes))
+	router.POST("/describe-volume", ginx.Adapt5(v.DescribeVolume))
+	router.POST("/resize-volume", ginx.Adapt5(v.ResizeVolume))
+	router.POST("/delete-volume", ginx.Adapt5(v.DeleteVolume))
 }
 
 func (v *Volume) CreateVolume(ctx *gin.Context, req *entity.CreateVolumeRequest) (*entity.CreateVolumeResponse, error) {
 	logger := zerolog.Ctx(ctx)
 	logger.Info().
-		Interface("request", req).
-		Msg("CreateVolume called")
+		Str("node_name", req.NodeName).
+		Str("pool_name", req.PoolName).
+		Str("name", req.Name).
+		Uint64("size_gb", req.SizeGB).
+		Str("format", req.Format).
+		Msg("API: CreateVolume called")
 
 	volume, err := v.volumeService.CreateVolume(ctx, req)
 	if err != nil {
@@ -57,7 +57,7 @@ func (v *Volume) CreateVolume(ctx *gin.Context, req *entity.CreateVolumeRequest)
 	}
 
 	logger.Info().
-		Str("volumeID", volume.ID).
+		Str("volume_id", volume.ID).
 		Msg("Volume created successfully")
 
 	return &entity.CreateVolumeResponse{
@@ -65,84 +65,14 @@ func (v *Volume) CreateVolume(ctx *gin.Context, req *entity.CreateVolumeRequest)
 	}, nil
 }
 
-func (v *Volume) DeleteVolume(ctx *gin.Context, req *entity.DeleteVolumeRequest) (*entity.DeleteVolumeResponse, error) {
-	logger := zerolog.Ctx(ctx)
-	logger.Info().
-		Str("volumeID", req.VolumeID).
-		Msg("DeleteVolume called")
-
-	err := v.volumeService.DeleteVolume(ctx, req.VolumeID)
-	if err != nil {
-		logger.Error().
-			Err(err).
-			Msg("Failed to delete volume")
-		return nil, err
-	}
-
-	logger.Info().
-		Str("volumeID", req.VolumeID).
-		Msg("Volume deleted successfully")
-
-	return &entity.DeleteVolumeResponse{
-		Return: true,
-	}, nil
-}
-
-func (v *Volume) AttachVolume(ctx *gin.Context, req *entity.AttachVolumeRequest) (*entity.AttachVolumeResponse, error) {
-	logger := zerolog.Ctx(ctx)
-	logger.Info().
-		Str("volumeID", req.VolumeID).
-		Str("instanceID", req.InstanceID).
-		Msg("AttachVolume called")
-
-	attachment, err := v.volumeService.AttachVolume(ctx, req)
-	if err != nil {
-		logger.Error().
-			Err(err).
-			Msg("Failed to attach volume")
-		return nil, err
-	}
-
-	logger.Info().
-		Str("volumeID", req.VolumeID).
-		Str("instanceID", req.InstanceID).
-		Msg("Volume attached successfully")
-
-	return &entity.AttachVolumeResponse{
-		Attachment: attachment,
-	}, nil
-}
-
-func (v *Volume) DetachVolume(ctx *gin.Context, req *entity.DetachVolumeRequest) (*entity.DetachVolumeResponse, error) {
-	logger := zerolog.Ctx(ctx)
-	logger.Info().
-		Str("volumeID", req.VolumeID).
-		Str("instanceID", req.InstanceID).
-		Msg("DetachVolume called")
-
-	err := v.volumeService.DetachVolume(ctx, req)
-	if err != nil {
-		logger.Error().
-			Err(err).
-			Msg("Failed to detach volume")
-		return nil, err
-	}
-
-	logger.Info().
-		Str("volumeID", req.VolumeID).
-		Str("instanceID", req.InstanceID).
-		Msg("Volume detached successfully")
-
-	return &entity.DetachVolumeResponse{
-		Return: true,
-	}, nil
-}
-
 func (v *Volume) ListVolumes(ctx *gin.Context, req *entity.ListVolumesRequest) (*entity.ListVolumesResponse, error) {
 	logger := zerolog.Ctx(ctx)
-	logger.Info().Msg("ListVolumes called")
+	logger.Info().
+		Str("node_name", req.NodeName).
+		Str("pool_name", req.PoolName).
+		Msg("API: ListVolumes called")
 
-	volumes, err := v.volumeService.ListVolumes(ctx)
+	volumes, err := v.volumeService.ListVolumes(ctx, req)
 	if err != nil {
 		logger.Error().
 			Err(err).
@@ -162,10 +92,12 @@ func (v *Volume) ListVolumes(ctx *gin.Context, req *entity.ListVolumesRequest) (
 func (v *Volume) DescribeVolume(ctx *gin.Context, req *entity.DescribeVolumeRequest) (*entity.DescribeVolumeResponse, error) {
 	logger := zerolog.Ctx(ctx)
 	logger.Info().
-		Str("volumeID", req.VolumeID).
-		Msg("DescribeVolume called")
+		Str("node_name", req.NodeName).
+		Str("pool_name", req.PoolName).
+		Str("volume_id", req.VolumeID).
+		Msg("API: DescribeVolume called")
 
-	volume, err := v.volumeService.GetVolume(ctx, req.VolumeID)
+	volume, err := v.volumeService.DescribeVolume(ctx, req)
 	if err != nil {
 		logger.Error().
 			Err(err).
@@ -174,7 +106,7 @@ func (v *Volume) DescribeVolume(ctx *gin.Context, req *entity.DescribeVolumeRequ
 	}
 
 	logger.Info().
-		Str("volumeID", volume.ID).
+		Str("volume_id", volume.ID).
 		Msg("Volume described successfully")
 
 	return &entity.DescribeVolumeResponse{
@@ -185,11 +117,13 @@ func (v *Volume) DescribeVolume(ctx *gin.Context, req *entity.DescribeVolumeRequ
 func (v *Volume) ResizeVolume(ctx *gin.Context, req *entity.ResizeVolumeRequest) (*entity.ResizeVolumeResponse, error) {
 	logger := zerolog.Ctx(ctx)
 	logger.Info().
-		Str("volumeID", req.VolumeID).
-		Uint64("newSizeGB", req.NewSizeGB).
-		Msg("ResizeVolume called")
+		Str("node_name", req.NodeName).
+		Str("pool_name", req.PoolName).
+		Str("volume_id", req.VolumeID).
+		Uint64("new_size_gb", req.NewSizeGB).
+		Msg("API: ResizeVolume called")
 
-	err := v.volumeService.ResizeVolume(ctx, req.VolumeID, req.NewSizeGB)
+	volume, err := v.volumeService.ResizeVolume(ctx, req)
 	if err != nil {
 		logger.Error().
 			Err(err).
@@ -198,11 +132,36 @@ func (v *Volume) ResizeVolume(ctx *gin.Context, req *entity.ResizeVolumeRequest)
 	}
 
 	logger.Info().
-		Str("volumeID", req.VolumeID).
-		Uint64("newSizeGB", req.NewSizeGB).
+		Str("volume_id", req.VolumeID).
+		Uint64("new_size_gb", req.NewSizeGB).
 		Msg("Volume resized successfully")
 
 	return &entity.ResizeVolumeResponse{
-		Return: true,
+		Volume: volume,
+	}, nil
+}
+
+func (v *Volume) DeleteVolume(ctx *gin.Context, req *entity.DeleteVolumeRequest) (*entity.DeleteVolumeResponse, error) {
+	logger := zerolog.Ctx(ctx)
+	logger.Info().
+		Str("node_name", req.NodeName).
+		Str("pool_name", req.PoolName).
+		Str("volume_id", req.VolumeID).
+		Msg("API: DeleteVolume called")
+
+	err := v.volumeService.DeleteVolume(ctx, req)
+	if err != nil {
+		logger.Error().
+			Err(err).
+			Msg("Failed to delete volume")
+		return nil, err
+	}
+
+	logger.Info().
+		Str("volume_id", req.VolumeID).
+		Msg("Volume deleted successfully")
+
+	return &entity.DeleteVolumeResponse{
+		Message: "Volume deleted successfully",
 	}, nil
 }

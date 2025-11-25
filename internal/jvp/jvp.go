@@ -67,17 +67,17 @@ func New(cfg *config.Config) (*Server, error) {
 		return nil, fmt.Errorf("create keypair service: %w", err)
 	}
 
-	// 5. 创建 Instance Service（不再使用 metadataStore）
+	// 5. 创建 Storage Pool Service
+	storagePoolService := service.NewStoragePoolService(nodeStorage)
+
+	// 6. 创建 Volume Service
+	volumeService := service.NewVolumeService(nodeService, storagePoolService)
+
+	// 7. 创建 Instance Service（不再使用 metadataStore）
 	instanceService, err := service.NewInstanceService(storageService, imageService, keyPairService, libvirtClient)
 	if err != nil {
 		return nil, err
 	}
-
-	// 6. 创建 Volume Service（不再使用 metadataStore）
-	volumeService := service.NewVolumeService(storageService, instanceService, libvirtClient)
-
-	// 7. 创建 Storage Pool Service
-	storagePoolService := service.NewStoragePoolService(nodeStorage)
 
 	// 8. 创建 API（添加 nodeService 和 storagePoolService）
 	apiInstance, err := api.New(nodeService, instanceService, volumeService, imageService, keyPairService, storageService, storagePoolService)
