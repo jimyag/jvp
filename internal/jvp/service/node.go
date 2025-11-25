@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jimyag/jvp/internal/jvp/entity"
 	"github.com/jimyag/jvp/pkg/libvirt"
@@ -10,41 +11,57 @@ import (
 
 // NodeService 节点管理服务
 type NodeService struct {
-	libvirtClient libvirt.LibvirtClient
+	storage *NodeStorage
 }
 
 // NewNodeService 创建节点服务
-func NewNodeService(libvirtClient libvirt.LibvirtClient) (*NodeService, error) {
+func NewNodeService(storage *NodeStorage) (*NodeService, error) {
 	return &NodeService{
-		libvirtClient: libvirtClient,
+		storage: storage,
 	}, nil
 }
 
 // ListNodes 列举节点
-// 单机部署时只返回本地节点
 func (s *NodeService) ListNodes(ctx context.Context) ([]*entity.Node, error) {
-	// 获取 libvirt 主机名
-	hostname, err := s.libvirtClient.GetHostname()
+	// 从存储获取所有节点配置
+	configs, err := s.storage.List()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get hostname: %w", err)
+		return nil, fmt.Errorf("failed to list nodes: %w", err)
 	}
 
-	// 获取 libvirt 版本来验证连接
-	version, err := s.libvirtClient.GetLibvirtVersion()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get libvirt version: %w", err)
+	nodes := make([]*entity.Node, 0, len(configs))
+	for _, config := range configs {
+		// 尝试连接以检查状态
+		state := entity.NodeStateOffline
+		var hostname string
+
+		conn, err := s.storage.GetConnection(config.Name)
+		if err == nil {
+			// 连接成功，获取实际的 hostname
+			hostname, err = conn.GetHostname()
+			if err == nil {
+				state = entity.NodeStateOnline
+			}
+		}
+
+		// 如果无法获取 hostname，使用配置的名称
+		if hostname == "" {
+			hostname = config.Name
+		}
+
+		node := &entity.Node{
+			Name:      hostname,
+			UUID:      fmt.Sprintf("%s-node", config.Name),
+			URI:       config.URI,
+			Type:      config.Type,
+			State:     state,
+			CreatedAt: config.CreatedAt,
+			UpdatedAt: config.UpdatedAt,
+		}
+		nodes = append(nodes, node)
 	}
 
-	// 创建节点信息
-	node := &entity.Node{
-		Name:  hostname,
-		UUID:  fmt.Sprintf("%s-node", hostname),
-		URI:   fmt.Sprintf("libvirt-%s", version),
-		Type:  entity.NodeTypeLocal,
-		State: entity.NodeStateOnline,
-	}
-
-	return []*entity.Node{node}, nil
+	return nodes, nil
 }
 
 // DescribeNode 查询节点详情
@@ -65,8 +82,14 @@ func (s *NodeService) DescribeNode(ctx context.Context, nodeName string) (*entit
 
 // DescribeNodeSummary 查询节点概要信息
 func (s *NodeService) DescribeNodeSummary(ctx context.Context, nodeName string) (*entity.NodeSummary, error) {
+	// 获取节点的 libvirt 连接
+	conn, err := s.storage.GetConnection(nodeName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get node connection: %w", err)
+	}
+
 	// 获取 capabilities XML（包含详细的 CPU、内存、NUMA 信息）
-	capsXML, err := s.libvirtClient.GetCapabilities()
+	capsXML, err := conn.GetCapabilities()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get capabilities: %w", err)
 	}
@@ -78,7 +101,7 @@ func (s *NodeService) DescribeNodeSummary(ctx context.Context, nodeName string) 
 	}
 
 	// 获取 sysinfo XML（包含真实的 CPU 型号）
-	sysinfoXML, err := s.libvirtClient.GetSysinfo()
+	sysinfoXML, err := conn.GetSysinfo()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sysinfo: %w", err)
 	}
@@ -263,6 +286,69 @@ func (s *NodeService) DescribeNodeNet(ctx context.Context, nodeName string) (*No
 func (s *NodeService) DescribeNodeDisks(ctx context.Context, nodeName string) ([]entity.Disk, error) {
 	// TODO: 实现物理磁盘查询
 	return []entity.Disk{}, nil
+}
+
+// CreateNode 创建（添加）新节点
+func (s *NodeService) CreateNode(ctx context.Context, name, uri string, nodeType entity.NodeType) (*entity.Node, error) {
+	// 检查节点是否已存在
+	if s.storage.Exists(name) {
+		return nil, fmt.Errorf("node %s already exists", name)
+	}
+
+	// 验证连接 - 尝试连接以确保 URI 有效
+	conn, err := libvirt.NewWithURI(uri)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to %s: %w", uri, err)
+	}
+
+	// 获取实际的 hostname
+	hostname, err := conn.GetHostname()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get hostname: %w", err)
+	}
+
+	// 创建节点配置
+	now := time.Now()
+	config := &NodeConfig{
+		Name:      name,
+		URI:       uri,
+		Type:      nodeType,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	// 保存配置
+	if err := s.storage.Save(config); err != nil {
+		return nil, fmt.Errorf("failed to save node config: %w", err)
+	}
+
+	// 返回节点信息
+	node := &entity.Node{
+		Name:      hostname,
+		UUID:      fmt.Sprintf("%s-node", name),
+		URI:       uri,
+		Type:      nodeType,
+		State:     entity.NodeStateOnline,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	return node, nil
+}
+
+// DeleteNode 删除节点
+func (s *NodeService) DeleteNode(ctx context.Context, nodeName string) error {
+	// 检查节点是否存在
+	if !s.storage.Exists(nodeName) {
+		return fmt.Errorf("node %s not found", nodeName)
+	}
+
+	// 删除节点配置
+	if err := s.storage.Delete(nodeName); err != nil {
+		return fmt.Errorf("failed to delete node: %w", err)
+	}
+
+	return nil
 }
 
 // EnableNode 启用节点

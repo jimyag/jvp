@@ -33,13 +33,19 @@ func New(cfg *config.Config) (*Server, error) {
 	logger.Info().Msg("Successfully connected to libvirt")
 	logger.Info().Str("data_dir", cfg.DataDir).Msg("Using data directory")
 
-	// 2. 创建 Node Service
-	nodeService, err := service.NewNodeService(libvirtClient)
+	// 2. 创建 Node Storage
+	nodeStorage, err := service.NewNodeStorage(cfg.DataDir)
+	if err != nil {
+		return nil, fmt.Errorf("create node storage: %w", err)
+	}
+
+	// 3. 创建 Node Service
+	nodeService, err := service.NewNodeService(nodeStorage)
 	if err != nil {
 		return nil, err
 	}
 
-	// 3. 创建 Storage Service
+	// 4. 创建 Storage Service
 	storageService, err := service.NewStorageService(libvirtClient, cfg.DataDir)
 	if err != nil {
 		return nil, err

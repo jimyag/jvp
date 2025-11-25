@@ -18,6 +18,8 @@ type NodeServiceInterface interface {
 	DescribeNodeUSB(ctx context.Context, nodeName string) ([]entity.USBDevice, error)
 	DescribeNodeNet(ctx context.Context, nodeName string) (*service.NodeNetworkInfo, error)
 	DescribeNodeDisks(ctx context.Context, nodeName string) ([]entity.Disk, error)
+	CreateNode(ctx context.Context, name, uri string, nodeType entity.NodeType) (*entity.Node, error)
+	DeleteNode(ctx context.Context, nodeName string) error
 	EnableNode(ctx context.Context, nodeName string) error
 	DisableNode(ctx context.Context, nodeName string) error
 }
@@ -43,6 +45,8 @@ func (a *NodeAPI) RegisterRoutes(r *gin.RouterGroup) {
 	r.POST("/describe-node-usb", ginx.Adapt5(a.DescribeNodeUSB))
 	r.POST("/describe-node-net", ginx.Adapt5(a.DescribeNodeNet))
 	r.POST("/describe-node-disks", ginx.Adapt5(a.DescribeNodeDisks))
+	r.POST("/create-node", ginx.Adapt5(a.CreateNode))
+	r.POST("/delete-node", ginx.Adapt5(a.DeleteNode))
 	r.POST("/enable-node", ginx.Adapt5(a.EnableNode))
 	r.POST("/disable-node", ginx.Adapt5(a.DisableNode))
 }
@@ -175,6 +179,48 @@ func (a *NodeAPI) DescribeNodeDisks(ctx *gin.Context, req *DescribeNodeDisksRequ
 	}
 
 	return &DescribeNodeDisksResponse{Disks: disks}, nil
+}
+
+// CreateNodeRequest 创建节点请求
+type CreateNodeRequest struct {
+	Name string          `json:"name" binding:"required"` // 节点名称（用于标识）
+	URI  string          `json:"uri" binding:"required"`  // Libvirt 连接 URI
+	Type entity.NodeType `json:"type"`                    // 节点类型（可选，默认 remote）
+}
+
+// CreateNode 创建节点
+func (a *NodeAPI) CreateNode(ctx *gin.Context, req *CreateNodeRequest) (*entity.Node, error) {
+	// 如果未指定类型，默认为 remote
+	nodeType := req.Type
+	if nodeType == "" {
+		nodeType = entity.NodeTypeRemote
+	}
+
+	node, err := a.nodeService.CreateNode(ctx.Request.Context(), req.Name, req.URI, nodeType)
+	if err != nil {
+		return nil, err
+	}
+
+	return node, nil
+}
+
+// DeleteNodeRequest 删除节点请求
+type DeleteNodeRequest struct {
+	Name string `json:"name" binding:"required"` // 节点名称
+}
+
+// DeleteNodeResponse 删除节点响应
+type DeleteNodeResponse struct {
+	Message string `json:"message"`
+}
+
+// DeleteNode 删除节点
+func (a *NodeAPI) DeleteNode(ctx *gin.Context, req *DeleteNodeRequest) (*DeleteNodeResponse, error) {
+	if err := a.nodeService.DeleteNode(ctx.Request.Context(), req.Name); err != nil {
+		return nil, err
+	}
+
+	return &DeleteNodeResponse{Message: "node deleted successfully"}, nil
 }
 
 // EnableNodeRequest 启用节点请求
