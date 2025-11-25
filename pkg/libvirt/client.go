@@ -68,10 +68,24 @@ type CreateVMConfig struct {
 }
 
 func New() (*Client, error) {
-	uri, _ := url.Parse(string(libvirt.QEMUSystem))
-	l, err := libvirt.ConnectToURI(uri)
+	return NewWithURI("")
+}
+
+// NewWithURI 使用指定的 URI 创建 libvirt 客户端
+// 如果 uri 为空，则使用默认的 qemu:///system
+func NewWithURI(uri string) (*Client, error) {
+	if uri == "" {
+		uri = string(libvirt.QEMUSystem)
+	}
+
+	parsedURI, err := url.Parse(uri)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect: %v", err)
+		return nil, fmt.Errorf("failed to parse URI %s: %v", uri, err)
+	}
+
+	l, err := libvirt.ConnectToURI(parsedURI)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to libvirt: %v", err)
 	}
 
 	return &Client{conn: l}, nil
@@ -85,6 +99,83 @@ func formatLibvirtVersion(version uint64) string {
 	minor := (version % 1000000) / 1000
 	micro := version % 1000
 	return fmt.Sprintf("%d.%d.%d", major, minor, micro)
+}
+
+// GetHostname 获取 libvirt 主机的 hostname
+func (c *Client) GetHostname() (string, error) {
+	hostname, err := c.conn.ConnectGetHostname()
+	if err != nil {
+		return "", fmt.Errorf("failed to get hostname: %w", err)
+	}
+	return hostname, nil
+}
+
+// GetLibvirtVersion 获取 libvirt 版本
+func (c *Client) GetLibvirtVersion() (string, error) {
+	v, err := c.conn.ConnectGetLibVersion()
+	if err != nil {
+		return "", fmt.Errorf("failed to get libvirt version: %w", err)
+	}
+	return formatLibvirtVersion(v), nil
+}
+
+// GetNodeInfo 获取物理节点的硬件信息
+func (c *Client) GetNodeInfo() (*NodeInfo, error) {
+	model, memory, cpus, mhz, nodes, sockets, cores, threads, err := c.conn.NodeGetInfo()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get node info: %w", err)
+	}
+
+	// 转换 model ([]int8) 为 string
+	modelBytes := make([]byte, len(model))
+	for i, b := range model {
+		if b == 0 {
+			modelBytes = modelBytes[:i]
+			break
+		}
+		modelBytes[i] = byte(b)
+	}
+
+	return &NodeInfo{
+		Model:   string(modelBytes),
+		Memory:  memory,
+		CPUs:    uint32(cpus),
+		MHz:     uint32(mhz),
+		Nodes:   uint32(nodes),
+		Sockets: uint32(sockets),
+		Cores:   uint32(cores),
+		Threads: uint32(threads),
+	}, nil
+}
+
+// GetCapabilities 获取 libvirt 主机能力（XML 格式）
+func (c *Client) GetCapabilities() (string, error) {
+	caps, err := c.conn.ConnectGetCapabilities()
+	if err != nil {
+		return "", fmt.Errorf("failed to get capabilities: %w", err)
+	}
+	return caps, nil
+}
+
+// GetSysinfo 获取主机系统信息（SMBIOS，包含真实的 CPU 型号）
+func (c *Client) GetSysinfo() (string, error) {
+	sysinfo, err := c.conn.ConnectGetSysinfo(0)
+	if err != nil {
+		return "", fmt.Errorf("failed to get sysinfo: %w", err)
+	}
+	return sysinfo, nil
+}
+
+// NodeInfo 物理节点硬件信息
+type NodeInfo struct {
+	Model   string // CPU 型号
+	Memory  uint64 // 内存大小 (KB)
+	CPUs    uint32 // CPU 总数
+	MHz     uint32 // CPU 频率 (MHz)
+	Nodes   uint32 // NUMA 节点数
+	Sockets uint32 // Socket 数
+	Cores   uint32 // 每个 socket 的核心数
+	Threads uint32 // 每个核心的线程数
 }
 
 func (c *Client) GetVMSummaries() ([]libvirt.Domain, error) {

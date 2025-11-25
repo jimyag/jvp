@@ -74,8 +74,8 @@ func NewImageService(
 		httpClient: &http.Client{
 			Timeout: 30 * time.Minute, // 下载镜像可能需要较长时间
 		},
-		imagesPoolName: "images",
-		imagesPoolPath: "/var/lib/jvp/images/images",
+		imagesPoolName: storageService.imagesPoolName,
+		imagesPoolPath: storageService.imagesPoolPath,
 	}, nil
 }
 

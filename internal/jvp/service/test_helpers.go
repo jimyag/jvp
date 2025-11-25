@@ -44,8 +44,8 @@ func setupTestServices(t *testing.T) *TestServices {
 	mockLibvirt.On("EnsureStoragePool", "default", "dir", mock.AnythingOfType("string")).Return(nil)
 	mockLibvirt.On("EnsureStoragePool", "images", "dir", mock.AnythingOfType("string")).Return(nil)
 
-	// 创建 StorageService
-	storageService, err := NewStorageService(mockLibvirt)
+	// 创建 StorageService，使用临时目录
+	storageService, err := NewStorageService(mockLibvirt, tmpDir)
 	require.NoError(t, err)
 
 	// 创建 mock qemu-img client
@@ -61,14 +61,12 @@ func setupTestServices(t *testing.T) *TestServices {
 		qemuImgClient:  mockQemuImg,
 		idGen:          idgen.New(),
 		httpClient:     &http.Client{Timeout: 30 * time.Minute},
-		imagesPoolName: "images",
-		imagesPoolPath: "/var/lib/jvp/images/images",
+		imagesPoolName: storageService.imagesPoolName,
+		imagesPoolPath: storageService.imagesPoolPath,
 	}
-	// 设置测试镜像路径
-	imagesDir := filepath.Join(tmpDir, "images")
-	err = os.MkdirAll(imagesDir, 0o755)
+	// 确保测试镜像目录存在
+	err = os.MkdirAll(imageService.imagesPoolPath, 0o755)
 	require.NoError(t, err)
-	imageService.imagesPoolPath = imagesDir
 
 	// 创建 virt-customize 客户端（mock，测试中会替换）
 	virtCustomizeClient, _ := virtcustomize.NewClient()

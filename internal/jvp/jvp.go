@@ -24,16 +24,23 @@ func New(cfg *config.Config) (*Server, error) {
 	logger := zerolog.New(os.Stdout).With().Timestamp().Logger()
 	zerolog.DefaultContextLogger = &logger
 
-	ctx := context.Background()
-
 	// 1. 创建 Libvirt Client
-	libvirtClient, err := libvirt.New()
+	logger.Info().Str("uri", cfg.LibvirtURI).Msg("Connecting to libvirt")
+	libvirtClient, err := libvirt.NewWithURI(cfg.LibvirtURI)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to libvirt at %s: %w", cfg.LibvirtURI, err)
+	}
+	logger.Info().Msg("Successfully connected to libvirt")
+	logger.Info().Str("data_dir", cfg.DataDir).Msg("Using data directory")
+
+	// 2. 创建 Node Service
+	nodeService, err := service.NewNodeService(libvirtClient)
 	if err != nil {
 		return nil, err
 	}
 
-	// 2. 创建 Storage Service
-	storageService, err := service.NewStorageService(libvirtClient)
+	// 3. 创建 Storage Service
+	storageService, err := service.NewStorageService(libvirtClient, cfg.DataDir)
 	if err != nil {
 		return nil, err
 	}
@@ -44,13 +51,9 @@ func New(cfg *config.Config) (*Server, error) {
 		return nil, err
 	}
 
-	// 3.1. 确保默认镜像存在（如果不存在则下载）
-	// 阻塞启动，等待镜像下载完成
-	logger.Info().Msg("Ensuring default images exist...")
-	if err := imageService.EnsureDefaultImages(ctx); err != nil {
-		return nil, fmt.Errorf("ensure default images: %w", err)
-	}
-	logger.Info().Msg("All default images are ready")
+	// 注意：不再在启动时自动下载默认镜像
+	// 用户可以通过 API 手动下载需要的镜像
+	logger.Info().Msg("Image service initialized. Use API to download images as needed.")
 
 	// 4. 创建 KeyPair Service（使用文件存储）
 	keyPairService, err := service.NewKeyPairService()
@@ -67,8 +70,8 @@ func New(cfg *config.Config) (*Server, error) {
 	// 6. 创建 Volume Service（不再使用 metadataStore）
 	volumeService := service.NewVolumeService(storageService, instanceService, libvirtClient)
 
-	// 7. 创建 API（不再传入 snapshotService）
-	apiInstance, err := api.New(instanceService, volumeService, imageService, keyPairService, storageService)
+	// 7. 创建 API（添加 nodeService）
+	apiInstance, err := api.New(nodeService, instanceService, volumeService, imageService, keyPairService, storageService)
 	if err != nil {
 		return nil, err
 	}

@@ -2,10 +2,14 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   async rewrites() {
+    // 支持通过环境变量配置后端 API 地址
+    // 默认使用 localhost:8080
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+
     return [
       {
         source: '/api/:path*',
-        destination: 'http://192.168.2.100:8080/api/:path*',
+        destination: `${apiUrl}/api/:path*`,
       },
     ];
   },

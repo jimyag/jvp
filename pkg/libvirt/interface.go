@@ -7,6 +7,13 @@ import (
 // LibvirtClient 定义 libvirt 客户端接口
 // 用于抽象 libvirt 操作，便于测试和 mock
 type LibvirtClient interface {
+	// 连接信息
+	GetHostname() (string, error)
+	GetLibvirtVersion() (string, error)
+	GetNodeInfo() (*NodeInfo, error)
+	GetCapabilities() (string, error)
+	GetSysinfo() (string, error)
+
 	// Domain 操作
 	GetVMSummaries() ([]libvirt.Domain, error)
 	GetDomainInfo(domainUUID libvirt.UUID) (*DomainInfo, error)

@@ -11,6 +11,35 @@ type MockClient struct {
 	mock.Mock
 }
 
+// 连接信息
+func (m *MockClient) GetHostname() (string, error) {
+	args := m.Called()
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockClient) GetLibvirtVersion() (string, error) {
+	args := m.Called()
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockClient) GetNodeInfo() (*NodeInfo, error) {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*NodeInfo), args.Error(1)
+}
+
+func (m *MockClient) GetCapabilities() (string, error) {
+	args := m.Called()
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockClient) GetSysinfo() (string, error) {
+	args := m.Called()
+	return args.String(0), args.Error(1)
+}
+
 // Domain 操作
 func (m *MockClient) GetVMSummaries() ([]libvirt.Domain, error) {
 	args := m.Called()

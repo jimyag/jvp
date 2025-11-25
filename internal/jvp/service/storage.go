@@ -31,12 +31,13 @@ type StorageService struct {
 // NewStorageService 创建新的 Storage Service
 func NewStorageService(
 	libvirtClient libvirt.LibvirtClient,
+	dataDir string,
 ) (*StorageService, error) {
 	// 默认配置
 	defaultPoolName := "default"
-	defaultPoolPath := "/var/lib/jvp/images"
+	defaultPoolPath := fmt.Sprintf("%s/images", dataDir)
 	imagesPoolName := "images"
-	imagesPoolPath := "/var/lib/jvp/images/images"
+	imagesPoolPath := fmt.Sprintf("%s/images/images", dataDir)
 
 	service := &StorageService{
 		libvirtClient:   libvirtClient,

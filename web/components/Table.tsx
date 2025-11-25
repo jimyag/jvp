@@ -8,9 +8,10 @@ interface TableProps {
   columns: TableColumn[];
   data: any[];
   emptyMessage?: string;
+  keyField?: string;
 }
 
-export default function Table({ columns, data, emptyMessage = "No data available" }: TableProps) {
+export default function Table({ columns, data, emptyMessage = "No data available", keyField }: TableProps) {
   if (data.length === 0) {
     return (
       <div className="card text-center py-12">
@@ -38,7 +39,7 @@ export default function Table({ columns, data, emptyMessage = "No data available
           <tbody className="divide-y divide-gray-200">
             {data.map((row, index) => (
               <tr
-                key={index}
+                key={keyField && row[keyField] ? row[keyField] : index}
                 className="hover:bg-gray-50 transition-colors duration-150"
               >
                 {columns.map((column) => (

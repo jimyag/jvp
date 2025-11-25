@@ -15,6 +15,7 @@ type API struct {
 	engine *gin.Engine
 	server *http.Server
 
+	node        *NodeAPI
 	instance    *Instance
 	volume      *Volume
 	image       *Image
@@ -25,6 +26,7 @@ type API struct {
 }
 
 func New(
+	nodeService *service.NodeService,
 	instanceService *service.InstanceService,
 	volumeService *service.VolumeService,
 	imageService *service.ImageService,
@@ -38,6 +40,7 @@ func New(
 	engine := gin.Default()
 	api := &API{
 		engine:      engine,
+		node:        NewNodeAPI(nodeService),
 		instance:    NewInstance(instanceService),
 		volume:      NewVolume(volumeService),
 		image:       NewImage(imageService),
@@ -48,6 +51,7 @@ func New(
 	}
 
 	apiGroup := engine.Group("/api")
+	api.node.RegisterRoutes(apiGroup)
 	api.instance.RegisterRoutes(apiGroup)
 	api.volume.RegisterRoutes(apiGroup)
 	// Snapshot routes removed
