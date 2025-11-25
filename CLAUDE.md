@@ -88,6 +88,43 @@ curl -X POST http://localhost:8080/api/create-node \
 请运行 ./test-node-management.sh 进行测试
 ```
 
+## 实现计划管理
+
+### 5. 跟踪和更新实现计划
+
+**重要文件**：
+- `docs/implement/implementation-plan.md` - 项目总体实现计划
+
+**工作流程**：
+1. **开始新模块前**：查看 `implementation-plan.md`，了解模块依赖和实现顺序
+2. **完成模块后**：立即更新计划文档，标记任务为已完成
+3. **记录技术决策**：在完成的模块下添加"技术实现"部分，记录关键设计和决策
+
+**更新格式**：
+```markdown
+#### 1.1 Node 模块 ✅ **已完成 (2025-11-25)**
+- [x] 后端 service: node.go
+- [x] 后端 entity: node.go
+- [x] 后端 API: node.go
+- [x] 前端页面：app/nodes/
+
+功能：
+- [x] 添加/删除节点
+- [x] 列举节点
+...
+
+技术实现：
+- 使用 libvirt metadata 存储节点配置
+- 通过 libvirt API 查询硬件信息
+- 关键技术点和决策
+```
+
+**好处**：
+- 清晰跟踪项目进度
+- 记录技术决策，方便后续维护
+- 新会话可以快速了解已完成的工作
+- 避免重复实现相同功能
+
 ## 总结
 
 遵循这些规则可以：
@@ -95,3 +132,4 @@ curl -X POST http://localhost:8080/api/create-node \
 - 减少不必要的文件
 - 让用户更容易理解和使用
 - 避免维护额外的脚本和文档
+- 清晰跟踪项目进度

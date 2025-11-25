@@ -38,6 +38,10 @@ type LibvirtClient interface {
 	ListStoragePools() ([]*StoragePoolInfo, error)
 	EnsureStoragePool(poolName, poolType, poolPath string) error
 	CreateStoragePool(poolName, poolType, poolPath string) error
+	StartStoragePool(poolName string) error
+	StopStoragePool(poolName string) error
+	DeleteStoragePool(poolName string, deleteVolumes bool) error
+	RefreshStoragePool(poolName string) error
 
 	// Storage Volume 操作
 	GetVolume(poolName, volumeName string) (*VolumeInfo, error)

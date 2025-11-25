@@ -168,7 +168,6 @@ func (s *VolumeService) AttachVolume(ctx context.Context, req *entity.AttachVolu
 	}
 
 	attachment := &entity.VolumeAttachment{
-		VolumeID:   req.VolumeID,
 		InstanceID: req.InstanceID,
 		Device:     device,
 	}
@@ -229,8 +228,8 @@ func (s *VolumeService) ListVolumes(ctx context.Context) ([]entity.Volume, error
 	logger := zerolog.Ctx(ctx)
 	logger.Info().Msg("Listing volumes from libvirt storage pools")
 
-	// 从 StorageService 获取所有卷
-	pools, err := s.storageService.ListStoragePools(ctx, true)
+	// 从 StorageService 获取所有存储池
+	pools, err := s.storageService.ListStoragePools(ctx, false)
 	if err != nil {
 		logger.Error().
 			Err(err).
@@ -241,12 +240,22 @@ func (s *VolumeService) ListVolumes(ctx context.Context) ([]entity.Volume, error
 	// 收集所有卷
 	var volumes []entity.Volume
 	for _, pool := range pools {
-		for _, vol := range pool.Volumes {
-			// 跳过镜像池和模板池
-			if pool.Name == "images" || pool.Name == "template" {
-				continue
-			}
+		// 跳过镜像池和模板池
+		if pool.Name == "images" || pool.Name == "template" {
+			continue
+		}
 
+		// 获取池中的所有卷
+		poolVolumes, err := s.storageService.ListVolumes(ctx, pool.Name)
+		if err != nil {
+			logger.Warn().
+				Str("pool_name", pool.Name).
+				Err(err).
+				Msg("Failed to list volumes in pool")
+			continue
+		}
+
+		for _, vol := range poolVolumes {
 			// 查找卷的附加关系（实时查询）
 			attachments := s.findVolumeAttachments(ctx, vol.Path)
 
@@ -352,7 +361,6 @@ func (s *VolumeService) findVolumeAttachments(ctx context.Context, volumePath st
 		for _, disk := range disks {
 			if disk.Device == "disk" && disk.Source.File == volumePath {
 				attachment := entity.VolumeAttachment{
-					VolumeID:   volumePath, // 使用路径作为临时ID
 					InstanceID: domain.Name,
 					Device:     disk.Target.Dev,
 				}

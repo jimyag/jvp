@@ -74,36 +74,7 @@ type ResizeVolumeResponse struct {
 	Return bool `json:"return"`
 }
 
-// VolumeAttachment 卷附加信息
-type VolumeAttachment struct {
-	VolumeID   string `json:"volumeID"`
-	InstanceID string `json:"instanceID"`
-	Device     string `json:"device"` // /dev/vdb, /dev/vdc 等
-}
-
 // ==================== Storage Pool 相关 ====================
-
-// ListStoragePoolsRequest 列出存储池请求
-type ListStoragePoolsRequest struct {
-	IncludeVolumes bool `json:"includeVolumes"` // 是否包含卷列表
-}
-
-// ListStoragePoolsResponse 列出存储池响应
-type ListStoragePoolsResponse struct {
-	Pools []StoragePool `json:"pools"`
-}
-
-// DescribeStoragePoolRequest 描述存储池请求
-type DescribeStoragePoolRequest struct {
-	PoolName       string `json:"poolName" binding:"required"`
-	IncludeVolumes bool   `json:"includeVolumes"` // 是否包含卷列表
-}
-
-// DescribeStoragePoolResponse 描述存储池响应
-type DescribeStoragePoolResponse struct {
-	Pool *StoragePool `json:"pool"`
-}
-
 // ==================== 通用类型 ====================
 
 // Filter 过滤器

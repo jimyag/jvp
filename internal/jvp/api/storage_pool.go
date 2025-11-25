@@ -7,74 +7,132 @@ import (
 	"github.com/jimyag/jvp/internal/jvp/entity"
 	"github.com/jimyag/jvp/internal/jvp/service"
 	"github.com/jimyag/jvp/pkg/ginx"
-	"github.com/rs/zerolog"
 )
 
 // StoragePoolServiceInterface 存储池服务接口
 type StoragePoolServiceInterface interface {
-	ListStoragePools(ctx context.Context, includeVolumes bool) ([]entity.StoragePool, error)
-	GetStoragePool(ctx context.Context, poolName string, includeVolumes bool) (*entity.StoragePool, error)
+	ListStoragePools(ctx context.Context, nodeName string) ([]entity.StoragePool, error)
+	DescribeStoragePool(ctx context.Context, nodeName, poolName string) (*entity.StoragePool, error)
+	CreateStoragePool(ctx context.Context, nodeName, name, poolType, path string) (*entity.StoragePool, error)
+	DeleteStoragePool(ctx context.Context, nodeName, poolName string, deleteVolumes bool) error
+	StartStoragePool(ctx context.Context, nodeName, poolName string) (*entity.StoragePool, error)
+	StopStoragePool(ctx context.Context, nodeName, poolName string) (*entity.StoragePool, error)
+	RefreshStoragePool(ctx context.Context, nodeName, poolName string) (*entity.StoragePool, error)
 }
 
+// StoragePoolAPI 存储池 API
 type StoragePoolAPI struct {
-	storageService StoragePoolServiceInterface
+	storagePoolService StoragePoolServiceInterface
 }
 
-func NewStoragePoolAPI(storageService *service.StorageService) *StoragePoolAPI {
+// NewStoragePoolAPI 创建存储池 API
+func NewStoragePoolAPI(storagePoolService *service.StoragePoolService) *StoragePoolAPI {
 	return &StoragePoolAPI{
-		storageService: storageService,
+		storagePoolService: storagePoolService,
 	}
 }
 
-func (s *StoragePoolAPI) RegisterRoutes(router *gin.RouterGroup) {
-	poolRouter := router.Group("/storage/pools")
-	poolRouter.POST("/list", ginx.Adapt5(s.ListStoragePools))
-	poolRouter.POST("/describe", ginx.Adapt5(s.DescribeStoragePool))
+// RegisterRoutes 注册路由 - Action 风格
+func (a *StoragePoolAPI) RegisterRoutes(r *gin.RouterGroup) {
+	r.POST("/list-storage-pools", ginx.Adapt5(a.ListStoragePools))
+	r.POST("/describe-storage-pool", ginx.Adapt5(a.DescribeStoragePool))
+	r.POST("/create-storage-pool", ginx.Adapt5(a.CreateStoragePool))
+	r.POST("/delete-storage-pool", ginx.Adapt5(a.DeleteStoragePool))
+	r.POST("/start-storage-pool", ginx.Adapt5(a.StartStoragePool))
+	r.POST("/stop-storage-pool", ginx.Adapt5(a.StopStoragePool))
+	r.POST("/refresh-storage-pool", ginx.Adapt5(a.RefreshStoragePool))
 }
 
-func (s *StoragePoolAPI) ListStoragePools(ctx *gin.Context, req *entity.ListStoragePoolsRequest) (*entity.ListStoragePoolsResponse, error) {
-	logger := zerolog.Ctx(ctx)
-	logger.Info().
-		Bool("includeVolumes", req.IncludeVolumes).
-		Msg("ListStoragePools called")
-
-	pools, err := s.storageService.ListStoragePools(ctx, req.IncludeVolumes)
+// ListStoragePools 列举存储池
+func (a *StoragePoolAPI) ListStoragePools(ctx *gin.Context, req *entity.ListStoragePoolsRequest) (*entity.ListStoragePoolsResponse, error) {
+	pools, err := a.storagePoolService.ListStoragePools(ctx.Request.Context(), req.NodeName)
 	if err != nil {
-		logger.Error().
-			Err(err).
-			Msg("Failed to list storage pools")
 		return nil, err
 	}
-
-	logger.Info().
-		Int("count", len(pools)).
-		Msg("Storage pools listed successfully")
 
 	return &entity.ListStoragePoolsResponse{
 		Pools: pools,
 	}, nil
 }
 
-func (s *StoragePoolAPI) DescribeStoragePool(ctx *gin.Context, req *entity.DescribeStoragePoolRequest) (*entity.DescribeStoragePoolResponse, error) {
-	logger := zerolog.Ctx(ctx)
-	logger.Info().
-		Str("poolName", req.PoolName).
-		Bool("includeVolumes", req.IncludeVolumes).
-		Msg("DescribeStoragePool called")
-
-	pool, err := s.storageService.GetStoragePool(ctx, req.PoolName, req.IncludeVolumes)
+// DescribeStoragePool 查询存储池详情
+func (a *StoragePoolAPI) DescribeStoragePool(ctx *gin.Context, req *entity.DescribeStoragePoolRequest) (*entity.DescribeStoragePoolResponse, error) {
+	pool, err := a.storagePoolService.DescribeStoragePool(ctx.Request.Context(), req.NodeName, req.PoolName)
 	if err != nil {
-		logger.Error().
-			Err(err).
-			Msg("Failed to describe storage pool")
 		return nil, err
 	}
 
-	logger.Info().
-		Str("poolName", req.PoolName).
-		Msg("Storage pool described successfully")
-
 	return &entity.DescribeStoragePoolResponse{
+		Pool: pool,
+	}, nil
+}
+
+// CreateStoragePool 创建存储池
+func (a *StoragePoolAPI) CreateStoragePool(ctx *gin.Context, req *entity.CreateStoragePoolRequest) (*entity.CreateStoragePoolResponse, error) {
+	pool, err := a.storagePoolService.CreateStoragePool(
+		ctx.Request.Context(),
+		req.NodeName,
+		req.Name,
+		req.Type,
+		req.Path,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return &entity.CreateStoragePoolResponse{
+		Pool: pool,
+	}, nil
+}
+
+// DeleteStoragePool 删除存储池
+func (a *StoragePoolAPI) DeleteStoragePool(ctx *gin.Context, req *entity.DeleteStoragePoolRequest) (*entity.DeleteStoragePoolResponse, error) {
+	if err := a.storagePoolService.DeleteStoragePool(ctx.Request.Context(), req.NodeName, req.PoolName, req.DeleteVolumes); err != nil {
+		return nil, err
+	}
+
+	message := "Storage pool deleted successfully"
+	if req.DeleteVolumes {
+		message = "Storage pool and all volumes deleted successfully"
+	}
+
+	return &entity.DeleteStoragePoolResponse{
+		Message: message,
+	}, nil
+}
+
+// StartStoragePool 启动存储池
+func (a *StoragePoolAPI) StartStoragePool(ctx *gin.Context, req *entity.StartStoragePoolRequest) (*entity.StartStoragePoolResponse, error) {
+	pool, err := a.storagePoolService.StartStoragePool(ctx.Request.Context(), req.NodeName, req.PoolName)
+	if err != nil {
+		return nil, err
+	}
+
+	return &entity.StartStoragePoolResponse{
+		Pool: pool,
+	}, nil
+}
+
+// StopStoragePool 停止存储池
+func (a *StoragePoolAPI) StopStoragePool(ctx *gin.Context, req *entity.StopStoragePoolRequest) (*entity.StopStoragePoolResponse, error) {
+	pool, err := a.storagePoolService.StopStoragePool(ctx.Request.Context(), req.NodeName, req.PoolName)
+	if err != nil {
+		return nil, err
+	}
+
+	return &entity.StopStoragePoolResponse{
+		Pool: pool,
+	}, nil
+}
+
+// RefreshStoragePool 刷新存储池
+func (a *StoragePoolAPI) RefreshStoragePool(ctx *gin.Context, req *entity.RefreshStoragePoolRequest) (*entity.RefreshStoragePoolResponse, error) {
+	pool, err := a.storagePoolService.RefreshStoragePool(ctx.Request.Context(), req.NodeName, req.PoolName)
+	if err != nil {
+		return nil, err
+	}
+
+	return &entity.RefreshStoragePoolResponse{
 		Pool: pool,
 	}, nil
 }

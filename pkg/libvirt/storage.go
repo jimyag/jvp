@@ -177,10 +177,9 @@ func (c *Client) CreateStoragePool(poolName, poolType, poolPath string) error {
 		poolType = "dir" // 默认类型
 	}
 
-	// 确保目录存在
-	if err := os.MkdirAll(poolPath, 0o755); err != nil {
-		return fmt.Errorf("create pool directory: %w", err)
-	}
+	// 注意：不要在这里预先创建目录！
+	// libvirt 的 StoragePoolBuild 会自动创建目录，并使用正确的权限
+	// 无论是本地还是远程节点，libvirt daemon 都会以正确的用户（通常是 root）创建目录
 
 	// 构建 XML 结构
 	poolXML := &StoragePoolXML{
@@ -523,4 +522,89 @@ func extractOwnerGroupFromXML(xmlDesc string) (int, int, error) {
 	}
 
 	return int(ownerID), int(groupID), nil
+}
+
+// StartStoragePool 启动存储池
+func (c *Client) StartStoragePool(poolName string) error {
+	pool, err := c.conn.StoragePoolLookupByName(poolName)
+	if err != nil {
+		return fmt.Errorf("lookup storage pool %s: %w", poolName, err)
+	}
+
+	if err := c.conn.StoragePoolCreate(pool, 0); err != nil {
+		return fmt.Errorf("start storage pool %s: %w", poolName, err)
+	}
+
+	return nil
+}
+
+// StopStoragePool 停止存储池
+func (c *Client) StopStoragePool(poolName string) error {
+	pool, err := c.conn.StoragePoolLookupByName(poolName)
+	if err != nil {
+		return fmt.Errorf("lookup storage pool %s: %w", poolName, err)
+	}
+
+	if err := c.conn.StoragePoolDestroy(pool); err != nil {
+		return fmt.Errorf("stop storage pool %s: %w", poolName, err)
+	}
+
+	return nil
+}
+
+// DeleteStoragePool 删除存储池
+// deleteVolumes: 是否同时删除存储池中的所有卷和目录
+func (c *Client) DeleteStoragePool(poolName string, deleteVolumes bool) error {
+	pool, err := c.conn.StoragePoolLookupByName(poolName)
+	if err != nil {
+		return fmt.Errorf("lookup storage pool %s: %w", poolName, err)
+	}
+
+	// 如果需要删除卷和目录
+	if deleteVolumes {
+		// 先刷新 pool 以确保卷列表是最新的
+		_ = c.conn.StoragePoolRefresh(pool, 0)
+
+		// 获取所有卷
+		vols, _, err := c.conn.StoragePoolListAllVolumes(pool, 1000, 0)
+		if err == nil {
+			// 删除所有卷
+			for _, vol := range vols {
+				_ = c.conn.StorageVolDelete(vol, libvirt.StorageVolDeleteNormal)
+			}
+		}
+
+		// 先停止 pool（如果正在运行）
+		_ = c.conn.StoragePoolDestroy(pool)
+
+		// 删除 pool（包括目录）
+		if err := c.conn.StoragePoolDelete(pool, libvirt.StoragePoolDeleteNormal); err != nil {
+			// 如果删除失败，可能是因为目录不为空或没有权限，只记录错误
+			fmt.Printf("Warning: failed to delete pool directory: %v\n", err)
+		}
+	} else {
+		// 只停止 pool，不删除目录
+		_ = c.conn.StoragePoolDestroy(pool)
+	}
+
+	// 取消定义 pool
+	if err := c.conn.StoragePoolUndefine(pool); err != nil {
+		return fmt.Errorf("undefine storage pool %s: %w", poolName, err)
+	}
+
+	return nil
+}
+
+// RefreshStoragePool 刷新存储池
+func (c *Client) RefreshStoragePool(poolName string) error {
+	pool, err := c.conn.StoragePoolLookupByName(poolName)
+	if err != nil {
+		return fmt.Errorf("lookup storage pool %s: %w", poolName, err)
+	}
+
+	if err := c.conn.StoragePoolRefresh(pool, 0); err != nil {
+		return fmt.Errorf("refresh storage pool %s: %w", poolName, err)
+	}
+
+	return nil
 }

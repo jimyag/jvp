@@ -32,6 +32,7 @@ func New(
 	imageService *service.ImageService,
 	keyPairService *service.KeyPairService,
 	storageService *service.StorageService,
+	storagePoolService *service.StoragePoolService,
 ) (*API, error) {
 	// 先禁用 Gin 的 debug 路由输出（避免打印带函数名的路由信息）
 	// 注意：这需要在创建 engine 之前设置
@@ -46,7 +47,7 @@ func New(
 		image:       NewImage(imageService),
 		keypair:     NewKeyPair(keyPairService),
 		consoleWS:   NewConsoleWS(instanceService),
-		storagePool: NewStoragePoolAPI(storageService),
+		storagePool: NewStoragePoolAPI(storagePoolService),
 		template:    NewTemplate(instanceService),
 	}
 

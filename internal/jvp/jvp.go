@@ -76,8 +76,11 @@ func New(cfg *config.Config) (*Server, error) {
 	// 6. 创建 Volume Service（不再使用 metadataStore）
 	volumeService := service.NewVolumeService(storageService, instanceService, libvirtClient)
 
-	// 7. 创建 API（添加 nodeService）
-	apiInstance, err := api.New(nodeService, instanceService, volumeService, imageService, keyPairService, storageService)
+	// 7. 创建 Storage Pool Service
+	storagePoolService := service.NewStoragePoolService(nodeStorage)
+
+	// 8. 创建 API（添加 nodeService 和 storagePoolService）
+	apiInstance, err := api.New(nodeService, instanceService, volumeService, imageService, keyPairService, storageService, storagePoolService)
 	if err != nil {
 		return nil, err
 	}

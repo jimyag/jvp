@@ -213,46 +213,39 @@ func (s *ImageService) ListImages(ctx context.Context) ([]*entity.Image, error) 
 	}
 
 	// 从 images storage pool 查询所有卷
-	pools, err := s.storageService.ListStoragePools(ctx, true)
+	volumes, err := s.storageService.ListVolumes(ctx, s.imagesPoolName)
 	if err != nil {
-		return nil, fmt.Errorf("list storage pools: %w", err)
+		return nil, fmt.Errorf("list volumes in images pool: %w", err)
 	}
 
 	var images []*entity.Image
-	for _, pool := range pools {
-		if pool.Name != s.imagesPoolName {
-			continue
+	for _, vol := range volumes {
+		// 使用卷名作为镜像 ID（去掉 .qcow2 扩展名）
+		imageID := vol.Name
+		if len(imageID) > 6 && imageID[len(imageID)-6:] == ".qcow2" {
+			imageID = imageID[:len(imageID)-6]
 		}
 
-		// 遍历 pool 中的所有卷，转换为镜像
-		for _, vol := range pool.Volumes {
-			// 使用卷名作为镜像 ID（去掉 .qcow2 扩展名）
-			imageID := vol.Name
-			if len(imageID) > 6 && imageID[len(imageID)-6:] == ".qcow2" {
-				imageID = imageID[:len(imageID)-6]
-			}
-
-			// 检查是否是默认镜像
-			displayName := imageID
-			description := ""
-			if defaultImg := s.GetDefaultImageByName(imageID); defaultImg != nil {
-				displayName = defaultImg.DisplayName
-				description = fmt.Sprintf("Default Ubuntu image: %s", defaultImg.DisplayName)
-			}
-
-			image := &entity.Image{
-				ID:          imageID,
-				Name:        displayName,
-				Description: description,
-				Pool:        pool.Name,
-				Path:        vol.Path,
-				SizeGB:      vol.CapacityB / (1024 * 1024 * 1024),
-				Format:      "qcow2",
-				State:       "available",
-				CreatedAt:   time.Now().Format(time.RFC3339),
-			}
-			images = append(images, image)
+		// 检查是否是默认镜像
+		displayName := imageID
+		description := ""
+		if defaultImg := s.GetDefaultImageByName(imageID); defaultImg != nil {
+			displayName = defaultImg.DisplayName
+			description = fmt.Sprintf("Default Ubuntu image: %s", defaultImg.DisplayName)
 		}
+
+		image := &entity.Image{
+			ID:          imageID,
+			Name:        displayName,
+			Description: description,
+			Pool:        s.imagesPoolName,
+			Path:        vol.Path,
+			SizeGB:      vol.CapacityB / (1024 * 1024 * 1024),
+			Format:      "qcow2",
+			State:       "available",
+			CreatedAt:   time.Now().Format(time.RFC3339),
+		}
+		images = append(images, image)
 	}
 
 	logger.Info().

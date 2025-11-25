@@ -93,12 +93,12 @@ func (s *StorageService) GetPool(ctx context.Context, poolName string) (*entity.
 	}
 
 	return &entity.StoragePool{
-		Name:        poolInfo.Name,
-		State:       poolInfo.State,
-		CapacityB:   poolInfo.CapacityB,
-		AllocationB: poolInfo.AllocationB,
-		AvailableB:  poolInfo.AvailableB,
-		Path:        poolInfo.Path,
+		Name:       poolInfo.Name,
+		State:      poolInfo.State,
+		Capacity:   poolInfo.CapacityB,
+		Allocation: poolInfo.AllocationB,
+		Available:  poolInfo.AvailableB,
+		Path:       poolInfo.Path,
 	}, nil
 }
 
@@ -383,16 +383,9 @@ func (s *StorageService) ListStoragePools(ctx context.Context, includeVolumes bo
 
 	pools := make([]entity.StoragePool, 0, len(poolInfos))
 	for _, poolInfo := range poolInfos {
-		pool := entity.StoragePool{
-			Name:        poolInfo.Name,
-			State:       poolInfo.State,
-			CapacityB:   poolInfo.CapacityB,
-			AllocationB: poolInfo.AllocationB,
-			AvailableB:  poolInfo.AvailableB,
-			Path:        poolInfo.Path,
-		}
+		volumeCount := 0
 
-		// 如果需要包含卷列表
+		// 如果需要包含卷列表，获取卷数量
 		if includeVolumes {
 			volInfos, err := s.libvirtClient.ListVolumes(poolInfo.Name)
 			if err != nil {
@@ -401,28 +394,19 @@ func (s *StorageService) ListStoragePools(ctx context.Context, includeVolumes bo
 					Err(err).
 					Msg("Failed to list volumes in pool")
 				// 继续处理其他池，不中断
-				pool.Volumes = []entity.Volume{}
 			} else {
-				volumes := make([]entity.Volume, 0, len(volInfos))
-				for _, volInfo := range volInfos {
-					// 从文件名提取 volume ID（去掉 .qcow2 后缀）
-					volumeID := strings.TrimSuffix(volInfo.Name, ".qcow2")
-					volumeType := determineVolumeType(volInfo.Name, volInfo.Format, poolInfo.Name)
-
-					volumes = append(volumes, entity.Volume{
-						ID:          volumeID,
-						Name:        volInfo.Name,
-						Pool:        poolInfo.Name,
-						Path:        volInfo.Path,
-						CapacityB:   volInfo.CapacityB,
-						AllocationB: volInfo.AllocationB,
-						Format:      volInfo.Format,
-						VolumeType:  volumeType,
-					})
-				}
-				pool.Volumes = volumes
-				pool.VolumeCount = len(volumes)
+				volumeCount = len(volInfos)
 			}
+		}
+
+		pool := entity.StoragePool{
+			Name:        poolInfo.Name,
+			State:       poolInfo.State,
+			Capacity:    poolInfo.CapacityB,
+			Allocation:  poolInfo.AllocationB,
+			Available:   poolInfo.AvailableB,
+			Path:        poolInfo.Path,
+			VolumeCount: volumeCount,
 		}
 
 		pools = append(pools, pool)
@@ -446,39 +430,25 @@ func (s *StorageService) GetStoragePool(ctx context.Context, poolName string, in
 		return nil, fmt.Errorf("get storage pool %s: %w", poolName, err)
 	}
 
-	pool := &entity.StoragePool{
-		Name:        poolInfo.Name,
-		State:       poolInfo.State,
-		CapacityB:   poolInfo.CapacityB,
-		AllocationB: poolInfo.AllocationB,
-		AvailableB:  poolInfo.AvailableB,
-		Path:        poolInfo.Path,
-	}
+	volumeCount := 0
 
-	// 如果需要包含卷列表
+	// 如果需要包含卷列表，获取卷数量
 	if includeVolumes {
 		volInfos, err := s.libvirtClient.ListVolumes(poolName)
 		if err != nil {
 			return nil, fmt.Errorf("list volumes in pool %s: %w", poolName, err)
 		}
+		volumeCount = len(volInfos)
+	}
 
-		volumes := make([]entity.Volume, 0, len(volInfos))
-		for _, volInfo := range volInfos {
-			// 从文件名提取 volume ID（去掉 .qcow2 后缀）
-			volumeID := strings.TrimSuffix(volInfo.Name, ".qcow2")
-
-			volumes = append(volumes, entity.Volume{
-				ID:          volumeID,
-				Name:        volInfo.Name,
-				Pool:        poolName,
-				Path:        volInfo.Path,
-				CapacityB:   volInfo.CapacityB,
-				AllocationB: volInfo.AllocationB,
-				Format:      volInfo.Format,
-			})
-		}
-		pool.Volumes = volumes
-		pool.VolumeCount = len(volumes)
+	pool := &entity.StoragePool{
+		Name:        poolInfo.Name,
+		State:       poolInfo.State,
+		Capacity:    poolInfo.CapacityB,
+		Allocation:  poolInfo.AllocationB,
+		Available:   poolInfo.AvailableB,
+		Path:        poolInfo.Path,
+		VolumeCount: volumeCount,
 	}
 
 	logger.Info().

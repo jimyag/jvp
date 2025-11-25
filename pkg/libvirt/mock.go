@@ -159,6 +159,26 @@ func (m *MockClient) CreateStoragePool(poolName, poolType, poolPath string) erro
 	return args.Error(0)
 }
 
+func (m *MockClient) StartStoragePool(poolName string) error {
+	args := m.Called(poolName)
+	return args.Error(0)
+}
+
+func (m *MockClient) StopStoragePool(poolName string) error {
+	args := m.Called(poolName)
+	return args.Error(0)
+}
+
+func (m *MockClient) DeleteStoragePool(poolName string, deleteVolumes bool) error {
+	args := m.Called(poolName, deleteVolumes)
+	return args.Error(0)
+}
+
+func (m *MockClient) RefreshStoragePool(poolName string) error {
+	args := m.Called(poolName)
+	return args.Error(0)
+}
+
 // Storage Volume 操作
 func (m *MockClient) GetVolume(poolName, volumeName string) (*VolumeInfo, error) {
 	args := m.Called(poolName, volumeName)

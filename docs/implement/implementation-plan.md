@@ -133,29 +133,54 @@ web/
 
 ### 阶段 1：底层基础（第 1-2 周）
 
-#### 1.1 Node 模块
-- [ ] 后端 service: node.go（节点管理服务）
-- [ ] 后端 entity: node.go（节点实体定义）
-- [ ] 后端 API: node.go（节点 API 接口）
-- [ ] 前端页面：app/nodes/（节点管理页面）
+#### 1.1 Node 模块 ✅ **已完成 (2025-11-25)**
+- [x] 后端 service: node.go（节点管理服务）
+- [x] 后端 entity: node.go（节点实体定义）
+- [x] 后端 API: node.go（节点 API 接口）
+- [x] 前端页面：app/nodes/（节点管理页面）
 
 功能：
-- 添加/删除节点
-- 列举节点
-- 查询节点详情（CPU、内存、NUMA）
-- 查询硬件信息（PCI、USB、网络、磁盘）
+- [x] 添加/删除节点
+- [x] 列举节点
+- [x] 启用/禁用节点（维护模式）
+- [x] 查询节点详情（CPU、内存、NUMA、HugePages、虚拟化特性）
+- [x] 查询硬件信息（PCI、GPU、USB、网络、磁盘）
+- [x] 查询节点上的虚拟机列表
 
-#### 1.2 Storage Pool 模块（已有，需重构）
-- [ ] 重构 service/storage.go → service/storage_pool.go
-- [ ] 重构 entity/storage.go → entity/storage_pool.go
-- [ ] 重构 API 路由为 Action 风格
-- [ ] 前端页面优化
+技术实现：
+- 使用 libvirt metadata 存储节点配置（`/var/lib/jvp/metadata/nodes/<node-name>.yaml`）
+- 通过 libvirt API 查询节点硬件信息（Capabilities、Sysinfo、NodeDevices）
+- PCI 设备过滤识别 GPU（class code 0x03）
+- NVMe 磁盘类型识别（根据设备名 `/dev/nvme*`）
+- 前端使用 Modal 弹窗展示设备详情
+
+#### 1.2 Storage Pool 模块 ✅ **已完成 (2025-11-25)**
+- [x] 重构 service/storage.go → service/storage_pool.go
+- [x] 重构 entity/storage.go → entity/storage_pool.go
+- [x] 重构 API 路由为 Action 风格
+- [x] 前端页面优化
 
 功能：
 - 创建/删除存储池
 - 启动/停止存储池
 - 列举/查询存储池
 - 刷新存储池
+
+技术实现：
+- 纯 libvirt API 调用，不存储额外的元数据
+- 使用 NodeStorage 支持本地和远程节点操作
+- Action 风格 API 路由：/api/list-storage-pools, /api/create-storage-pool 等
+- 移除 StoragePool.Volumes 字段，改为只存储 VolumeCount
+- StoragePoolService 直接调用 libvirt.Client，不依赖 StorageService
+- 更新相关服务（VolumeService, ImageService）适配新的 StoragePool 结构
+
+前端实现：
+- 使用 Header 组件统一页面头部样式
+- 支持创建存储池（Modal 弹窗）
+- 支持启动/停止/刷新/删除存储池（下拉菜单）
+- 可展开/折叠查看存储池中的卷列表
+- 实时显示存储池容量使用情况（进度条）
+- 通过现有 Volume API 获取卷列表并按池名过滤
 
 ### 阶段 2：存储层（第 3-4 周）
 

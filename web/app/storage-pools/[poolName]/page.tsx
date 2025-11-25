@@ -1,0 +1,539 @@
+"use client";
+
+import { use, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import {
+  Database,
+  HardDrive,
+  ArrowLeft,
+  RefreshCw,
+  Play,
+  Square,
+  Trash2,
+} from "lucide-react";
+import { apiPost } from "@/lib/api";
+import { useToast } from "@/components/ToastContainer";
+import DashboardLayout from "@/components/DashboardLayout";
+import Header from "@/components/Header";
+
+interface Volume {
+  volumeID: string;
+  name: string;
+  pool: string;
+  path: string;
+  capacity_b: number;
+  sizeGB: number;
+  allocation_b: number;
+  format: string;
+  volumeType: string;
+  state: string;
+}
+
+interface StoragePool {
+  name: string;
+  uuid: string;
+  state: string;
+  type: string;
+  capacity: number;
+  allocation: number;
+  available: number;
+  path: string;
+  volume_count: number;
+}
+
+interface DescribeStoragePoolResponse {
+  pool: StoragePool;
+}
+
+interface ListVolumesResponse {
+  volumes: Volume[];
+}
+
+export default function StoragePoolDetailPage({
+  params,
+}: {
+  params: Promise<{ poolName: string }>;
+}) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const nodeName = searchParams.get("node") || "";
+  const { poolName: encodedPoolName } = use(params);
+  const poolName = decodeURIComponent(encodedPoolName);
+
+  const [pool, setPool] = useState<StoragePool | null>(null);
+  const [volumes, setVolumes] = useState<Volume[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadingVolumes, setLoadingVolumes] = useState(false);
+
+  // Delete modal
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteVolumesOnDelete, setDeleteVolumesOnDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const toast = useToast();
+
+  useEffect(() => {
+    fetchPoolDetail();
+    fetchVolumes();
+  }, [poolName, nodeName]);
+
+  const fetchPoolDetail = async () => {
+    setRefreshing(true);
+    try {
+      const response = await apiPost<DescribeStoragePoolResponse>(
+        "/api/describe-storage-pool",
+        {
+          node_name: nodeName,
+          pool_name: poolName,
+        }
+      );
+      setPool(response.pool);
+    } catch (error: any) {
+      console.error("Failed to fetch storage pool detail:", error);
+      toast.error(error?.message || "Failed to fetch storage pool detail");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  const fetchVolumes = async () => {
+    setLoadingVolumes(true);
+    try {
+      const response = await apiPost<ListVolumesResponse>(
+        "/api/volume/list",
+        {}
+      );
+      const filteredVolumes = (response.volumes || []).filter(
+        (v) => v.pool === poolName
+      );
+      setVolumes(filteredVolumes);
+    } catch (error: any) {
+      console.error("Failed to fetch volumes:", error);
+      toast.error(error?.message || "Failed to fetch volumes");
+    } finally {
+      setLoadingVolumes(false);
+    }
+  };
+
+  const handleStartPool = async () => {
+    try {
+      await apiPost("/api/start-storage-pool", {
+        node_name: nodeName,
+        pool_name: poolName,
+      });
+      toast.success(`Storage pool ${poolName} started successfully`);
+      await fetchPoolDetail();
+    } catch (error: any) {
+      console.error("Failed to start storage pool:", error);
+      toast.error(error?.message || "Failed to start storage pool");
+    }
+  };
+
+  const handleStopPool = async () => {
+    if (!confirm(`Are you sure you want to stop storage pool "${poolName}"?`)) {
+      return;
+    }
+
+    try {
+      await apiPost("/api/stop-storage-pool", {
+        node_name: nodeName,
+        pool_name: poolName,
+      });
+      toast.success(`Storage pool ${poolName} stopped successfully`);
+      await fetchPoolDetail();
+    } catch (error: any) {
+      console.error("Failed to stop storage pool:", error);
+      toast.error(error?.message || "Failed to stop storage pool");
+    }
+  };
+
+  const handleRefreshPool = async () => {
+    try {
+      await apiPost("/api/refresh-storage-pool", {
+        node_name: nodeName,
+        pool_name: poolName,
+      });
+      toast.success(`Storage pool ${poolName} refreshed successfully`);
+      await fetchPoolDetail();
+      await fetchVolumes();
+    } catch (error: any) {
+      console.error("Failed to refresh storage pool:", error);
+      toast.error(error?.message || "Failed to refresh storage pool");
+    }
+  };
+
+  const handleDeletePool = () => {
+    setShowDeleteModal(true);
+  };
+
+  const confirmDeletePool = async () => {
+    setDeleting(true);
+    try {
+      await apiPost("/api/delete-storage-pool", {
+        node_name: nodeName,
+        pool_name: poolName,
+        delete_volumes: deleteVolumesOnDelete,
+      });
+      toast.success(
+        deleteVolumesOnDelete
+          ? `Storage pool ${poolName} and all volumes deleted successfully`
+          : `Storage pool ${poolName} deleted successfully`
+      );
+      router.push(`/storage-pools?node=${nodeName}`);
+    } catch (error: any) {
+      console.error("Failed to delete storage pool:", error);
+      toast.error(error?.message || "Failed to delete storage pool");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const formatBytes = (bytes: number): string => {
+    if (bytes === 0) return "0 B";
+    const k = 1024;
+    const sizes = ["B", "KB", "MB", "GB", "TB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`;
+  };
+
+  const getStateColor = (state: string): string => {
+    switch (state.toLowerCase()) {
+      case "active":
+      case "running":
+        return "text-green-600 bg-green-100";
+      case "inactive":
+        return "text-gray-600 bg-gray-100";
+      case "building":
+        return "text-yellow-600 bg-yellow-100";
+      case "degraded":
+        return "text-orange-600 bg-orange-100";
+      case "inaccessible":
+        return "text-red-600 bg-red-100";
+      default:
+        return "text-gray-600 bg-gray-100";
+    }
+  };
+
+  const getVolumeTypeColor = (volumeType: string): string => {
+    switch (volumeType.toLowerCase()) {
+      case "template":
+        return "text-blue-600 bg-blue-100";
+      case "iso":
+        return "text-orange-600 bg-orange-100";
+      case "disk":
+      default:
+        return "text-purple-600 bg-purple-100";
+    }
+  };
+
+  const getVolumeTypeLabel = (volumeType: string): string => {
+    switch (volumeType.toLowerCase()) {
+      case "template":
+        return "Template";
+      case "iso":
+        return "ISO";
+      case "disk":
+      default:
+        return "Disk";
+    }
+  };
+
+  if (loading) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <RefreshCw className="w-8 h-8 animate-spin text-primary mx-auto mb-2" />
+            <p className="text-gray-600">Loading storage pool...</p>
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (!pool) {
+    return (
+      <DashboardLayout>
+        <div className="space-y-6">
+          <Header
+            title="Storage Pool Not Found"
+            description="The requested storage pool does not exist"
+          />
+          <button
+            onClick={() => router.push("/storage-pools")}
+            className="flex items-center gap-2 text-primary hover:underline"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Back to Storage Pools
+          </button>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  const usagePercent =
+    pool.capacity > 0
+      ? ((pool.allocation / pool.capacity) * 100).toFixed(1)
+      : "0";
+
+  return (
+    <DashboardLayout>
+      <div className="space-y-6">
+        {/* Header */}
+        <Header
+          title={
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => router.push(`/storage-pools?node=${nodeName}`)}
+                className="p-2 hover:bg-gray-100 rounded-lg"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+              <Database className="w-8 h-8 text-primary" />
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900">
+                  {pool.name}
+                </h1>
+                <p className="text-sm text-gray-600">{pool.path}</p>
+              </div>
+            </div>
+          }
+          description=""
+          action={
+            <div className="flex gap-2">
+              <button
+                onClick={handleRefreshPool}
+                disabled={refreshing}
+                className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+              >
+                <RefreshCw
+                  className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`}
+                />
+                Refresh
+              </button>
+              {pool.state.toLowerCase() === "inactive" ? (
+                <button
+                  onClick={handleStartPool}
+                  className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                >
+                  <Play className="w-4 h-4" />
+                  Start
+                </button>
+              ) : (
+                <button
+                  onClick={handleStopPool}
+                  className="flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+                >
+                  <Square className="w-4 h-4" />
+                  Stop
+                </button>
+              )}
+              <button
+                onClick={handleDeletePool}
+                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+              >
+                <Trash2 className="w-4 h-4" />
+                Delete
+              </button>
+            </div>
+          }
+        />
+
+        {/* Pool Info Card */}
+        <div className="bg-white border border-gray-200 rounded-lg p-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div>
+              <p className="text-sm text-gray-600 mb-1">Status</p>
+              <span
+                className={`px-3 py-1 text-sm font-medium rounded-full ${getStateColor(
+                  pool.state
+                )}`}
+              >
+                {pool.state}
+              </span>
+            </div>
+            <div>
+              <p className="text-sm text-gray-600 mb-1">Type</p>
+              <p className="text-lg font-semibold text-gray-900">{pool.type || "N/A"}</p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-600 mb-1">Capacity</p>
+              <p className="text-lg font-semibold text-gray-900">
+                {formatBytes(pool.capacity)}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-600 mb-1">Volumes</p>
+              <p className="text-lg font-semibold text-gray-900">
+                {pool.volume_count}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-6">
+            <div className="flex justify-between items-center mb-2">
+              <p className="text-sm text-gray-600">Storage Usage</p>
+              <p className="text-sm font-medium text-gray-900">
+                {formatBytes(pool.allocation)} / {formatBytes(pool.capacity)} (
+                {usagePercent}%)
+              </p>
+            </div>
+            <div className="w-full bg-gray-200 rounded-full h-3">
+              <div
+                className="bg-primary h-3 rounded-full transition-all"
+                style={{ width: `${usagePercent}%` }}
+              />
+            </div>
+            <p className="text-sm text-gray-600 mt-2">
+              {formatBytes(pool.available)} free
+            </p>
+          </div>
+        </div>
+
+        {/* Volumes List */}
+        <div className="bg-white border border-gray-200 rounded-lg">
+          <div className="p-4 border-b border-gray-200">
+            <h2 className="text-lg font-semibold text-gray-900">
+              Volumes ({volumes.length})
+            </h2>
+          </div>
+          {loadingVolumes ? (
+            <div className="p-8 text-center">
+              <RefreshCw className="w-6 h-6 animate-spin text-primary mx-auto mb-2" />
+              <p className="text-sm text-gray-600">Loading volumes...</p>
+            </div>
+          ) : volumes.length > 0 ? (
+            <div className="divide-y divide-gray-200">
+              {volumes.map((volume) => (
+                <div
+                  key={volume.volumeID}
+                  className="p-4 hover:bg-gray-50 transition-colors"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3 flex-1">
+                      <HardDrive className="w-5 h-5 text-gray-400" />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="font-medium text-gray-900 truncate">
+                            {volume.name}
+                          </p>
+                          {volume.volumeType && (
+                            <span
+                              className={`px-2 py-0.5 text-xs font-medium rounded flex-shrink-0 ${getVolumeTypeColor(
+                                volume.volumeType
+                              )}`}
+                            >
+                              {getVolumeTypeLabel(volume.volumeType)}
+                            </span>
+                          )}
+                          <span className="px-2 py-0.5 text-xs font-medium text-gray-600 bg-gray-100 rounded flex-shrink-0">
+                            {volume.format}
+                          </span>
+                          {volume.state && (
+                            <span
+                              className={`px-2 py-0.5 text-xs font-medium rounded flex-shrink-0 ${
+                                volume.state === "in-use"
+                                  ? "text-green-600 bg-green-100"
+                                  : "text-gray-600 bg-gray-100"
+                              }`}
+                            >
+                              {volume.state}
+                            </span>
+                          )}
+                        </div>
+                        <p
+                          className="text-xs text-gray-600 mt-0.5 truncate"
+                          title={volume.path}
+                        >
+                          {volume.path}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-right ml-4 flex-shrink-0">
+                      <p className="text-sm font-medium text-gray-900">
+                        {formatBytes(volume.capacity_b)}
+                      </p>
+                      <p className="text-xs text-gray-600">
+                        {formatBytes(volume.allocation_b)} used
+                        {volume.capacity_b > 0 && (
+                          <span className="ml-1">
+                            (
+                            {(
+                              (volume.allocation_b / volume.capacity_b) *
+                              100
+                            ).toFixed(0)}
+                            %)
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="p-8 text-center">
+              <HardDrive className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+              <p className="text-sm text-gray-600">No volumes in this pool</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Delete Pool Modal */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <h2 className="text-xl font-semibold mb-4 text-red-600">
+              Delete Storage Pool
+            </h2>
+            <p className="text-gray-700 mb-4">
+              Are you sure you want to delete storage pool{" "}
+              <span className="font-semibold">{poolName}</span>?
+            </p>
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={deleteVolumesOnDelete}
+                  onChange={(e) => setDeleteVolumesOnDelete(e.target.checked)}
+                  className="mt-1"
+                />
+                <div>
+                  <p className="font-medium text-yellow-800">
+                    Delete all volumes and directory
+                  </p>
+                  <p className="text-sm text-yellow-700 mt-1">
+                    This will permanently delete all volumes in the pool and the
+                    pool directory. This action cannot be undone.
+                  </p>
+                </div>
+              </label>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  setShowDeleteModal(false);
+                  setDeleteVolumesOnDelete(false);
+                }}
+                disabled={deleting}
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeletePool}
+                disabled={deleting}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+              >
+                {deleting ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </DashboardLayout>
+  );
+}
