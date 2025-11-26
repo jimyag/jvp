@@ -7,37 +7,37 @@ import (
 
 // NodeDeviceXML 节点设备 XML 结构
 type NodeDeviceXML struct {
-	XMLName     xml.Name               `xml:"device"`
-	Name        string                 `xml:"name"`
-	Path        string                 `xml:"path"`
-	Parent      string                 `xml:"parent"`
-	Capability  NodeDeviceCapability   `xml:"capability"`
+	XMLName    xml.Name             `xml:"device"`
+	Name       string               `xml:"name"`
+	Path       string               `xml:"path"`
+	Parent     string               `xml:"parent"`
+	Capability NodeDeviceCapability `xml:"capability"`
 }
 
 // NodeDeviceCapability 设备能力
 type NodeDeviceCapability struct {
-	Type        string                    `xml:"type,attr"`
+	Type string `xml:"type,attr"`
 	// 通用字段（PCI/USB 共用）
-	Domain      string                    `xml:"domain"`
-	Bus         string                    `xml:"bus"`      // PCI 的 bus 或 USB 的 bus number
-	Slot        string                    `xml:"slot"`
-	Function    string                    `xml:"function"`
-	Device      string                    `xml:"device"`   // USB 的 device number
-	Product     NodeDeviceProduct         `xml:"product"`
-	Vendor      NodeDeviceVendor          `xml:"vendor"`
-	IOMMUGroup  *NodeDeviceIOMMUGroup     `xml:"iommuGroup"`
+	Domain     string                `xml:"domain"`
+	Bus        string                `xml:"bus"` // PCI 的 bus 或 USB 的 bus number
+	Slot       string                `xml:"slot"`
+	Function   string                `xml:"function"`
+	Device     string                `xml:"device"` // USB 的 device number
+	Product    NodeDeviceProduct     `xml:"product"`
+	Vendor     NodeDeviceVendor      `xml:"vendor"`
+	IOMMUGroup *NodeDeviceIOMMUGroup `xml:"iommuGroup"`
 	// 存储设备字段
-	Block       string                    `xml:"block"`
-	DriveType   string                    `xml:"drive_type"`
-	Model       string                    `xml:"model"`
-	Serial      string                    `xml:"serial"`
-	Size        string                    `xml:"size"`
+	Block     string `xml:"block"`
+	DriveType string `xml:"drive_type"`
+	Model     string `xml:"model"`
+	Serial    string `xml:"serial"`
+	Size      string `xml:"size"`
 	// 网络接口字段
-	Interface   string                    `xml:"interface"`
-	Address     string                    `xml:"address"`
-	Link        NodeDeviceLink            `xml:"link"`
+	Interface string         `xml:"interface"`
+	Address   string         `xml:"address"`
+	Link      NodeDeviceLink `xml:"link"`
 	// 嵌套的 capability（用于识别子类型）
-	SubCapability *NodeDeviceCapability   `xml:"capability"`
+	SubCapability *NodeDeviceCapability `xml:"capability"`
 }
 
 // NodeDeviceProduct 产品信息

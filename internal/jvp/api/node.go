@@ -292,8 +292,8 @@ type DescribeNodeVMsRequest struct {
 
 // DescribeNodeVMsResponse 查询节点虚拟机响应
 type DescribeNodeVMsResponse struct {
-	Total int                    `json:"total"`   // 虚拟机总数
-	VMs   []service.NodeVMInfo   `json:"vms"`     // 虚拟机列表
+	Total int                  `json:"total"` // 虚拟机总数
+	VMs   []service.NodeVMInfo `json:"vms"`   // 虚拟机列表
 }
 
 // DescribeNodeVMs 查询节点虚拟机

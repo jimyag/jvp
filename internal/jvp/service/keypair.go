@@ -25,8 +25,8 @@ import (
 
 // KeyPairService 密钥对服务（使用文件系统存储）
 type KeyPairService struct {
-	idGen       *idgen.Generator
-	storageDir  string // 存储目录，默认 ~/.jvp/keypairs
+	idGen      *idgen.Generator
+	storageDir string // 存储目录，默认 ~/.jvp/keypairs
 }
 
 // NewKeyPairService 创建密钥对服务
@@ -40,7 +40,7 @@ func NewKeyPairService() (*KeyPairService, error) {
 	storageDir := filepath.Join(homeDir, ".jvp", "keypairs")
 
 	// 确保目录存在
-	if err := os.MkdirAll(storageDir, 0700); err != nil {
+	if err := os.MkdirAll(storageDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create keypair storage directory: %w", err)
 	}
 
@@ -292,7 +292,7 @@ func (s *KeyPairService) saveKeyPairToFile(keyPair *entity.KeyPair) error {
 		return fmt.Errorf("marshal keypair: %w", err)
 	}
 
-	if err := os.WriteFile(filePath, data, 0600); err != nil {
+	if err := os.WriteFile(filePath, data, 0o600); err != nil {
 		return fmt.Errorf("write keypair file: %w", err)
 	}
 

@@ -392,14 +392,14 @@ func (s *InstanceService) DescribeInstances(ctx context.Context, req *entity.Des
 		}
 
 		instance := entity.Instance{
-			ID:         domain.Name,                   // 使用 domain name 作为 ID
+			ID:         domain.Name, // 使用 domain name 作为 ID
 			Name:       domain.Name,
 			State:      convertDomainState(state),
 			DomainUUID: formatDomainUUID(domain.UUID),
 			DomainName: domain.Name,
 			VCPUs:      domainInfo.VCPUs,
 			MemoryMB:   domainInfo.Memory / 1024, // 转换为 MB
-			CreatedAt:  "",                        // libvirt 不提供创建时间
+			CreatedAt:  "",                       // libvirt 不提供创建时间
 		}
 
 		// TODO: 如果需要 ImageID 和 VolumeID，可以从 domain metadata 读取
@@ -493,77 +493,6 @@ func (s *InstanceService) GetInstance(ctx context.Context, instanceID string) (*
 	}
 
 	return instance, nil
-}
-
-// domainToInstance 将 libvirt Domain 转换为 Instance
-func (s *InstanceService) domainToInstance(ctx context.Context, domain libvirtlib.Domain) (*entity.Instance, error) {
-	// 获取 domain 信息
-	domainInfo, err := s.libvirtClient.GetDomainInfo(domain.UUID)
-	if err != nil {
-		return nil, fmt.Errorf("get domain info: %w", err)
-	}
-
-	// 转换状态
-	instanceState := mapLibvirtStateToInstanceState(domainInfo.State)
-
-	// 获取磁盘信息（用于获取 VolumeID）
-	disks, err := s.libvirtClient.GetDomainDisks(domain.Name)
-	if err != nil {
-		// 如果获取磁盘失败，不影响基本信息
-		disks = []libvirt.DomainDisk{}
-	}
-
-	var volumeID string
-	if len(disks) > 0 && disks[0].Source.File != "" {
-		// 从磁盘路径提取 volume ID（假设路径格式为 /var/lib/jvp/images/{volumeID}.qcow2）
-		// TODO: 更可靠的方式是从存储服务查询
-		volumeID = extractVolumeIDFromPath(disks[0].Source.File)
-	}
-
-	instance := &entity.Instance{
-		ID:         domain.Name,
-		Name:       domain.Name,
-		State:      instanceState,
-		ImageID:    "", // TODO: 从元数据或标签获取
-		VolumeID:   volumeID,
-		MemoryMB:   domainInfo.Memory / 1024, // 转换为 MB
-		VCPUs:      domainInfo.VCPUs,
-		CreatedAt:  "", // TODO: 从文件系统或元数据获取
-		DomainUUID: formatDomainUUID(domain.UUID),
-		DomainName: domain.Name,
-	}
-
-	return instance, nil
-}
-
-// mapLibvirtStateToInstanceState 将 libvirt 状态映射到实例状态
-func mapLibvirtStateToInstanceState(libvirtState string) string {
-	switch libvirtState {
-	case "Running":
-		return "running"
-	case "ShutOff":
-		return "stopped"
-	case "ShuttingDown":
-		return "stopping"
-	case "Paused":
-		return "paused"
-	case "Crashed":
-		return "failed"
-	default:
-		return "pending"
-	}
-}
-
-// extractVolumeIDFromPath 从磁盘路径提取 volume ID
-func extractVolumeIDFromPath(path string) string {
-	// 假设路径格式为 /var/lib/jvp/images/{volumeID}.qcow2
-	// 提取文件名并去掉 .qcow2 后缀
-	parts := strings.Split(path, "/")
-	if len(parts) > 0 {
-		filename := parts[len(parts)-1]
-		return strings.TrimSuffix(filename, ".qcow2")
-	}
-	return ""
 }
 
 // TerminateInstances 终止实例

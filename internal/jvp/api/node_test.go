@@ -76,12 +76,41 @@ func (m *MockNodeService) DescribeNodeDisks(ctx context.Context, nodeName string
 	return args.Get(0).([]entity.Disk), args.Error(1)
 }
 
+func (m *MockNodeService) DescribeNodeGPU(ctx context.Context, nodeName string) ([]entity.GPUDevice, error) {
+	args := m.Called(ctx, nodeName)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]entity.GPUDevice), args.Error(1)
+}
+
+func (m *MockNodeService) DescribeNodeVMs(ctx context.Context, nodeName string) ([]service.NodeVMInfo, error) {
+	args := m.Called(ctx, nodeName)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]service.NodeVMInfo), args.Error(1)
+}
+
 func (m *MockNodeService) EnableNode(ctx context.Context, nodeName string) error {
 	args := m.Called(ctx, nodeName)
 	return args.Error(0)
 }
 
 func (m *MockNodeService) DisableNode(ctx context.Context, nodeName string) error {
+	args := m.Called(ctx, nodeName)
+	return args.Error(0)
+}
+
+func (m *MockNodeService) CreateNode(ctx context.Context, name, uri string, nodeType entity.NodeType) (*entity.Node, error) {
+	args := m.Called(ctx, name, uri, nodeType)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*entity.Node), args.Error(1)
+}
+
+func (m *MockNodeService) DeleteNode(ctx context.Context, nodeName string) error {
 	args := m.Called(ctx, nodeName)
 	return args.Error(0)
 }

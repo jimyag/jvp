@@ -185,9 +185,9 @@ type DomainSerialTargetModel struct {
 
 // DomainConsole represents console device configuration
 type DomainConsole struct {
-	Type   string               `xml:"type,attr"`
-	Source DomainConsoleSource  `xml:"source,omitempty"`
-	Target DomainConsoleTarget  `xml:"target"`
+	Type   string              `xml:"type,attr"`
+	Source DomainConsoleSource `xml:"source,omitempty"`
+	Target DomainConsoleTarget `xml:"target"`
 }
 
 // DomainConsoleSource represents console source configuration (PTY path)

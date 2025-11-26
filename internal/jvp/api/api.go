@@ -33,6 +33,7 @@ func New(
 	keyPairService *service.KeyPairService,
 	storageService *service.StorageService,
 	storagePoolService *service.StoragePoolService,
+	templateService *service.TemplateService,
 ) (*API, error) {
 	// 先禁用 Gin 的 debug 路由输出（避免打印带函数名的路由信息）
 	// 注意：这需要在创建 engine 之前设置
@@ -48,7 +49,7 @@ func New(
 		keypair:     NewKeyPair(keyPairService),
 		consoleWS:   NewConsoleWS(instanceService),
 		storagePool: NewStoragePoolAPI(storagePoolService),
-		template:    NewTemplate(instanceService),
+		template:    NewTemplate(templateService),
 	}
 
 	apiGroup := engine.Group("/api")

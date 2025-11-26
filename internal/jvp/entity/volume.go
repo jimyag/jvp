@@ -41,9 +41,9 @@ type DescribeVolumeResponse struct {
 
 // ResizeVolumeRequest 扩容卷请求
 type ResizeVolumeRequest struct {
-	NodeName  string `json:"node_name"`                     // 节点名称(可选,默认本地节点)
-	PoolName  string `json:"pool_name" binding:"required"`  // 存储池名称
-	VolumeID  string `json:"volume_id" binding:"required"`  // 卷 ID
+	NodeName  string `json:"node_name"`                      // 节点名称(可选,默认本地节点)
+	PoolName  string `json:"pool_name" binding:"required"`   // 存储池名称
+	VolumeID  string `json:"volume_id" binding:"required"`   // 卷 ID
 	NewSizeGB uint64 `json:"new_size_gb" binding:"required"` // 新大小(GB)
 }
 

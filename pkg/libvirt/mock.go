@@ -204,6 +204,11 @@ func (m *MockClient) CreateVolume(poolName, volumeName string, sizeGB uint64, fo
 	return args.Get(0).(*VolumeInfo), args.Error(1)
 }
 
+func (m *MockClient) ResizeVolume(poolName, volumeName string, newSizeGB uint64) error {
+	args := m.Called(poolName, volumeName, newSizeGB)
+	return args.Error(0)
+}
+
 func (m *MockClient) DeleteVolume(poolName, volumeName string) error {
 	args := m.Called(poolName, volumeName)
 	return args.Error(0)

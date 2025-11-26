@@ -33,7 +33,7 @@ type NodeStorage struct {
 // NewNodeStorage 创建节点存储
 func NewNodeStorage(dataDir string) (*NodeStorage, error) {
 	storageDir := filepath.Join(dataDir, "nodes")
-	if err := os.MkdirAll(storageDir, 0755); err != nil {
+	if err := os.MkdirAll(storageDir, 0o755); err != nil {
 		return nil, fmt.Errorf("failed to create nodes directory: %w", err)
 	}
 
@@ -59,7 +59,7 @@ func (s *NodeStorage) Save(config *NodeConfig) error {
 		return fmt.Errorf("failed to marshal node config: %w", err)
 	}
 
-	if err := os.WriteFile(configPath, data, 0644); err != nil {
+	if err := os.WriteFile(configPath, data, 0o644); err != nil {
 		return fmt.Errorf("failed to write node config: %w", err)
 	}
 

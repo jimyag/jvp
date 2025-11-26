@@ -64,7 +64,7 @@ type ListStoragePoolsResponse struct {
 
 // DescribeStoragePoolRequest 查询存储池详情请求
 type DescribeStoragePoolRequest struct {
-	NodeName string `json:"node_name"` // 节点名称（可选，为空表示本地节点）
+	NodeName string `json:"node_name"`                    // 节点名称（可选，为空表示本地节点）
 	PoolName string `json:"pool_name" binding:"required"` // 存储池名称
 }
 
@@ -75,10 +75,10 @@ type DescribeStoragePoolResponse struct {
 
 // CreateStoragePoolRequest 创建存储池请求
 type CreateStoragePoolRequest struct {
-	NodeName string `json:"node_name"`                    // 节点名称（可选，为空表示本地节点）
-	Name     string `json:"name" binding:"required"`      // 存储池名称
-	Type     string `json:"type"`                         // 类型：dir, fs, netfs（默认：dir）
-	Path     string `json:"path" binding:"required"`      // 存储池路径
+	NodeName string `json:"node_name"`               // 节点名称（可选，为空表示本地节点）
+	Name     string `json:"name" binding:"required"` // 存储池名称
+	Type     string `json:"type"`                    // 类型：dir, fs, netfs（默认：dir）
+	Path     string `json:"path" binding:"required"` // 存储池路径
 }
 
 // CreateStoragePoolResponse 创建存储池响应

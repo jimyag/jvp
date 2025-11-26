@@ -35,10 +35,10 @@ type Node struct {
 
 // NodeSummary 节点概要信息
 type NodeSummary struct {
-	CPU          CPUInfo          `json:"cpu"`
-	Memory       MemoryInfo       `json:"memory"`
-	NUMA         NUMAInfo         `json:"numa"`
-	HugePages    HugePagesInfo    `json:"hugepages"`
+	CPU            CPUInfo            `json:"cpu"`
+	Memory         MemoryInfo         `json:"memory"`
+	NUMA           NUMAInfo           `json:"numa"`
+	HugePages      HugePagesInfo      `json:"hugepages"`
 	Virtualization VirtualizationInfo `json:"virtualization"`
 }
 
@@ -56,12 +56,12 @@ type CPUInfo struct {
 
 // MemoryInfo 内存信息
 type MemoryInfo struct {
-	Total       int64   `json:"total"`        // 总内存 (bytes)
-	Available   int64   `json:"available"`    // 可用内存 (bytes)
-	Used        int64   `json:"used"`         // 已用内存 (bytes)
+	Total        int64   `json:"total"`         // 总内存 (bytes)
+	Available    int64   `json:"available"`     // 可用内存 (bytes)
+	Used         int64   `json:"used"`          // 已用内存 (bytes)
 	UsagePercent float64 `json:"usage_percent"` // 使用率 (%)
-	SwapTotal   int64   `json:"swap_total"`   // Swap 总量 (bytes)
-	SwapUsed    int64   `json:"swap_used"`    // Swap 已用 (bytes)
+	SwapTotal    int64   `json:"swap_total"`    // Swap 总量 (bytes)
+	SwapUsed     int64   `json:"swap_used"`     // Swap 已用 (bytes)
 }
 
 // NUMAInfo NUMA 信息
@@ -72,16 +72,16 @@ type NUMAInfo struct {
 
 // NUMANode NUMA 节点
 type NUMANode struct {
-	ID       int    `json:"id"`        // NUMA 节点 ID
-	CPUs     []int  `json:"cpus"`      // CPU 列表
-	Memory   int64  `json:"memory"`    // 内存大小 (bytes)
-	Distance []int  `json:"distance"`  // 到其他节点的距离
+	ID       int   `json:"id"`       // NUMA 节点 ID
+	CPUs     []int `json:"cpus"`     // CPU 列表
+	Memory   int64 `json:"memory"`   // 内存大小 (bytes)
+	Distance []int `json:"distance"` // 到其他节点的距离
 }
 
 // HugePagesInfo 大页内存信息
 type HugePagesInfo struct {
-	Enabled   bool              `json:"enabled"`    // 是否启用
-	PageSizes []HugePageSize    `json:"page_sizes"` // 页面大小列表
+	Enabled   bool           `json:"enabled"`    // 是否启用
+	PageSizes []HugePageSize `json:"page_sizes"` // 页面大小列表
 }
 
 // HugePageSize 大页内存大小配置
@@ -94,22 +94,22 @@ type HugePageSize struct {
 
 // VirtualizationInfo 虚拟化特性
 type VirtualizationInfo struct {
-	VTx         bool `json:"vtx"`          // VT-x / AMD-V
-	EPT         bool `json:"ept"`          // EPT / NPT
-	IOMMU       bool `json:"iommu"`        // IOMMU (VT-d / AMD-Vi)
-	NestedVirt  bool `json:"nested_virt"`  // 嵌套虚拟化
+	VTx        bool `json:"vtx"`         // VT-x / AMD-V
+	EPT        bool `json:"ept"`         // EPT / NPT
+	IOMMU      bool `json:"iommu"`       // IOMMU (VT-d / AMD-Vi)
+	NestedVirt bool `json:"nested_virt"` // 嵌套虚拟化
 }
 
 // PCIDevice PCI 设备
 type PCIDevice struct {
-	Address     string   `json:"address"`      // PCI 地址
-	Vendor      string   `json:"vendor"`       // 厂商
-	Device      string   `json:"device"`       // 设备型号
-	Class       string   `json:"class"`        // 设备类型
-	Driver      string   `json:"driver"`       // 驱动程序
-	IOMMUGroup  int      `json:"iommu_group"`  // IOMMU 组
-	Passthrough bool     `json:"passthrough"`  // 是否支持直通
-	InUse       bool     `json:"in_use"`       // 是否正在使用
+	Address     string `json:"address"`     // PCI 地址
+	Vendor      string `json:"vendor"`      // 厂商
+	Device      string `json:"device"`      // 设备型号
+	Class       string `json:"class"`       // 设备类型
+	Driver      string `json:"driver"`      // 驱动程序
+	IOMMUGroup  int    `json:"iommu_group"` // IOMMU 组
+	Passthrough bool   `json:"passthrough"` // 是否支持直通
+	InUse       bool   `json:"in_use"`      // 是否正在使用
 }
 
 // GPUDevice GPU 设备
@@ -121,21 +121,21 @@ type GPUDevice struct {
 // NetworkController 网卡设备
 type NetworkController struct {
 	PCIDevice
-	Speed     string `json:"speed"`      // 速率 (1G/10G/25G)
-	SRIOVCap  bool   `json:"sriov_cap"`  // 是否支持 SR-IOV
-	VFCount   int    `json:"vf_count"`   // VF 数量
-	MaxVFs    int    `json:"max_vfs"`    // 最大 VF 数量
+	Speed    string `json:"speed"`     // 速率 (1G/10G/25G)
+	SRIOVCap bool   `json:"sriov_cap"` // 是否支持 SR-IOV
+	VFCount  int    `json:"vf_count"`  // VF 数量
+	MaxVFs   int    `json:"max_vfs"`   // 最大 VF 数量
 }
 
 // USBDevice USB 设备
 type USBDevice struct {
-	Bus         int    `json:"bus"`          // USB 总线
-	Device      int    `json:"device"`       // 设备号
-	VendorID    string `json:"vendor_id"`    // 厂商 ID
-	ProductID   string `json:"product_id"`   // 产品 ID
-	Vendor      string `json:"vendor"`       // 厂商名称
-	Product     string `json:"product"`      // 产品名称
-	Passthrough bool   `json:"passthrough"`  // 是否支持直通
+	Bus         int    `json:"bus"`         // USB 总线
+	Device      int    `json:"device"`      // 设备号
+	VendorID    string `json:"vendor_id"`   // 厂商 ID
+	ProductID   string `json:"product_id"`  // 产品 ID
+	Vendor      string `json:"vendor"`      // 厂商名称
+	Product     string `json:"product"`     // 产品名称
+	Passthrough bool   `json:"passthrough"` // 是否支持直通
 }
 
 // NetworkInterface 网络接口
@@ -156,50 +156,50 @@ type NetworkInterface struct {
 
 // Bridge 网桥
 type Bridge struct {
-	Name       string   `json:"name"`        // 网桥名称
-	Interfaces []string `json:"interfaces"`  // 绑定的物理接口
-	STP        bool     `json:"stp"`         // STP 状态
+	Name       string   `json:"name"`       // 网桥名称
+	Interfaces []string `json:"interfaces"` // 绑定的物理接口
+	STP        bool     `json:"stp"`        // STP 状态
 }
 
 // Bond 绑定接口
 type Bond struct {
-	Name       string   `json:"name"`        // 绑定名称
-	Mode       string   `json:"mode"`        // 绑定模式
-	Slaves     []string `json:"slaves"`      // 成员接口
-	ActiveSlave string  `json:"active_slave"` // 当前活动接口
+	Name        string   `json:"name"`         // 绑定名称
+	Mode        string   `json:"mode"`         // 绑定模式
+	Slaves      []string `json:"slaves"`       // 成员接口
+	ActiveSlave string   `json:"active_slave"` // 当前活动接口
 }
 
 // SRIOVInfo SR-IOV 配置
 type SRIOVInfo struct {
-	PF         string `json:"pf"`          // 物理功能
-	VFCount    int    `json:"vf_count"`    // VF 数量
-	MaxVFs     int    `json:"max_vfs"`     // 最大 VF 数量
-	VFsInUse   int    `json:"vfs_in_use"`  // 已分配 VF 数量
+	PF       string `json:"pf"`         // 物理功能
+	VFCount  int    `json:"vf_count"`   // VF 数量
+	MaxVFs   int    `json:"max_vfs"`    // 最大 VF 数量
+	VFsInUse int    `json:"vfs_in_use"` // 已分配 VF 数量
 }
 
 // Disk 物理磁盘
 type Disk struct {
-	Name       string     `json:"name"`        // 设备名称 (sda/nvme0n1)
-	Type       string     `json:"type"`        // 类型 (HDD/SSD/NVMe)
-	Size       int64      `json:"size"`        // 容量 (bytes)
-	Model      string     `json:"model"`       // 型号
-	Serial     string     `json:"serial"`      // 序列号
-	Firmware   string     `json:"firmware"`    // 固件版本
-	RPM        int        `json:"rpm"`         // 转速 (HDD)
-	Interface  string     `json:"interface"`   // 接口类型 (SATA/SAS/NVMe)
-	SMART      SMARTInfo  `json:"smart"`       // SMART 信息
-	InUse      bool       `json:"in_use"`      // 是否被使用
+	Name       string      `json:"name"`       // 设备名称 (sda/nvme0n1)
+	Type       string      `json:"type"`       // 类型 (HDD/SSD/NVMe)
+	Size       int64       `json:"size"`       // 容量 (bytes)
+	Model      string      `json:"model"`      // 型号
+	Serial     string      `json:"serial"`     // 序列号
+	Firmware   string      `json:"firmware"`   // 固件版本
+	RPM        int         `json:"rpm"`        // 转速 (HDD)
+	Interface  string      `json:"interface"`  // 接口类型 (SATA/SAS/NVMe)
+	SMART      SMARTInfo   `json:"smart"`      // SMART 信息
+	InUse      bool        `json:"in_use"`     // 是否被使用
 	Partitions []Partition `json:"partitions"` // 分区列表
 }
 
 // SMARTInfo SMART 健康信息
 type SMARTInfo struct {
-	Health       string  `json:"health"`        // 健康状态
-	Temperature  int     `json:"temperature"`   // 温度 (°C)
+	Health       string  `json:"health"`         // 健康状态
+	Temperature  int     `json:"temperature"`    // 温度 (°C)
 	PowerOnHours int64   `json:"power_on_hours"` // 通电时间
-	ReadCount    int64   `json:"read_count"`    // 读取次数
-	WriteCount   int64   `json:"write_count"`   // 写入次数
-	WearLevel    float64 `json:"wear_level"`    // 剩余寿命 (%)
+	ReadCount    int64   `json:"read_count"`     // 读取次数
+	WriteCount   int64   `json:"write_count"`    // 写入次数
+	WearLevel    float64 `json:"wear_level"`     // 剩余寿命 (%)
 }
 
 // Partition 分区

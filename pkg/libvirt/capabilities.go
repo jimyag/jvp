@@ -6,31 +6,31 @@ import (
 
 // CapabilitiesXML 是 libvirt capabilities 的 XML 结构
 type CapabilitiesXML struct {
-	XMLName xml.Name        `xml:"capabilities"`
+	XMLName xml.Name         `xml:"capabilities"`
 	Host    CapabilitiesHost `xml:"host"`
 }
 
 // CapabilitiesHost 主机信息
 type CapabilitiesHost struct {
-	UUID     string              `xml:"uuid"`
-	CPU      CapabilitiesCPU     `xml:"cpu"`
-	IOMMU    CapabilitiesIOMMU   `xml:"iommu"`
+	UUID     string               `xml:"uuid"`
+	CPU      CapabilitiesCPU      `xml:"cpu"`
+	IOMMU    CapabilitiesIOMMU    `xml:"iommu"`
 	Topology CapabilitiesTopology `xml:"topology"`
-	Cache    CapabilitiesCache   `xml:"cache"`
+	Cache    CapabilitiesCache    `xml:"cache"`
 }
 
 // CapabilitiesCPU CPU 信息
 type CapabilitiesCPU struct {
-	Arch       string                       `xml:"arch"`
-	Model      string                       `xml:"model"`
-	Vendor     string                       `xml:"vendor"`
-	Microcode  CapabilitiesMicrocode        `xml:"microcode"`
-	Signature  CapabilitiesSignature        `xml:"signature"`
-	Counter    CapabilitiesCounter          `xml:"counter"`
-	Topology   CapabilitiesCPUTopology      `xml:"topology"`
-	MaxPhysAddr CapabilitiesMaxPhysAddr     `xml:"maxphysaddr"`
-	Features   []CapabilitiesFeature        `xml:"feature"`
-	Pages      []CapabilitiesPage           `xml:"pages"`
+	Arch        string                  `xml:"arch"`
+	Model       string                  `xml:"model"`
+	Vendor      string                  `xml:"vendor"`
+	Microcode   CapabilitiesMicrocode   `xml:"microcode"`
+	Signature   CapabilitiesSignature   `xml:"signature"`
+	Counter     CapabilitiesCounter     `xml:"counter"`
+	Topology    CapabilitiesCPUTopology `xml:"topology"`
+	MaxPhysAddr CapabilitiesMaxPhysAddr `xml:"maxphysaddr"`
+	Features    []CapabilitiesFeature   `xml:"feature"`
+	Pages       []CapabilitiesPage      `xml:"pages"`
 }
 
 // CapabilitiesMicrocode 微代码版本
@@ -95,11 +95,11 @@ type CapabilitiesCells struct {
 
 // CapabilitiesCell NUMA cell
 type CapabilitiesCell struct {
-	ID        string                   `xml:"id,attr"`
-	Memory    CapabilitiesCellMemory   `xml:"memory"`
-	Pages     []CapabilitiesPage       `xml:"pages"`
-	Distances CapabilitiesDistances    `xml:"distances"`
-	CPUs      CapabilitiesCellCPUs     `xml:"cpus"`
+	ID        string                 `xml:"id,attr"`
+	Memory    CapabilitiesCellMemory `xml:"memory"`
+	Pages     []CapabilitiesPage     `xml:"pages"`
+	Distances CapabilitiesDistances  `xml:"distances"`
+	CPUs      CapabilitiesCellCPUs   `xml:"cpus"`
 }
 
 // CapabilitiesCellMemory Cell 内存
@@ -121,7 +121,7 @@ type CapabilitiesSibling struct {
 
 // CapabilitiesCellCPUs Cell CPUs
 type CapabilitiesCellCPUs struct {
-	Num  string               `xml:"num,attr"`
+	Num  string                `xml:"num,attr"`
 	CPUs []CapabilitiesCellCPU `xml:"cpu"`
 }
 

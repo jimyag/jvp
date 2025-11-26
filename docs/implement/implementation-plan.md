@@ -199,7 +199,7 @@ web/
 - [x] 重构 service/volume.go
 - [x] 重构 entity/volume.go
 - [x] 重构 API 路由为 Action 风格
-- [x] 前端页面优化(集成到 Storage Pool 详情页)
+- [x] 前端页面优化 (集成到 Storage Pool 详情页)
 
 基础功能（已完成）：
 - [x] 创建 Volume(空白卷)
@@ -252,13 +252,13 @@ web/
 
 技术实现：
 - Volume 就是 Storage Pool 中的 libvirt volume
-- 通过 Storage Pool 查询和管理 Volume,不需要全局 Volume 列表
-- 移除了 Volume 类型区分(disk/template/iso),简化为纯存储卷管理
-- 移除了 InstanceService 依赖,Volume 不关心附加关系
-- API 采用 Action 风格: `/api/create-volume`, `/api/list-volumes` 等
-- 支持多节点操作,通过 NodeService.GetNodeStorage 获取节点连接
+- 通过 Storage Pool 查询和管理 Volume，不需要全局 Volume 列表
+- 移除了 Volume 类型区分 (disk/template/iso),简化为纯存储卷管理
+- 移除了 InstanceService 依赖，Volume 不关心附加关系
+- API 采用 Action 风格：`/api/create-volume`, `/api/list-volumes` 等
+- 支持多节点操作，通过 NodeService.GetNodeStorage 获取节点连接
 - 所有远程操作使用 libvirt API 而不是本地命令行工具
-- 前端集成在 Storage Pool 详情页,按池显示卷列表
+- 前端集成在 Storage Pool 详情页，按池显示卷列表
 
 依赖关系：
 ```
@@ -279,7 +279,7 @@ StoragePoolService → VolumeService
 - 删除模板
 - 更新模板
 
-注意：Template 本质上是存储在 `images` 池中的特殊 Volume,需要额外的元数据管理
+注意：Template 本质上是存储在 `images` 池中的特殊 Volume，需要额外的元数据管理
 
 #### 2.3 Snapshot 模块（新增）
 - [ ] 后端 service: snapshot.go（快照服务）

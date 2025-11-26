@@ -32,16 +32,9 @@ func DefaultGenerator() *Generator {
 
 // New 创建新的 ID 生成器
 func New() *Generator {
-	// 使用默认设置创建 Sonyflake
-	// 如果需要自定义机器 ID，可以通过 Settings 配置
-	sf := sonyflake.NewSonyflake(sonyflake.Settings{
-		StartTime: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), // 起始时间
-	})
+	sf := newSonyflake(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 	if sf == nil {
-		// 如果创建失败，使用当前时间作为起始时间
-		sf = sonyflake.NewSonyflake(sonyflake.Settings{
-			StartTime: time.Now(),
-		})
+		sf = newSonyflake(time.Now())
 	}
 
 	return &Generator{
@@ -56,6 +49,16 @@ func (g *Generator) generateIDWithPrefix(prefix, errorMsg string) (string, error
 		return "", fmt.Errorf("%s: %w", errorMsg, err)
 	}
 	return fmt.Sprintf("%s-%d", prefix, id), nil
+}
+
+func newSonyflake(start time.Time) *sonyflake.Sonyflake {
+	settings := sonyflake.Settings{
+		StartTime: start,
+		MachineID: func() (uint16, error) {
+			return 1, nil
+		},
+	}
+	return sonyflake.NewSonyflake(settings)
 }
 
 // GenerateImageID 生成镜像 ID（格式：ami-{递增 ID}）
@@ -76,6 +79,11 @@ func (g *Generator) GenerateInstanceID() (string, error) {
 // GenerateSnapshotID 生成 Snapshot ID（格式：snap-{递增 ID}）
 func (g *Generator) GenerateSnapshotID() (string, error) {
 	return g.generateIDWithPrefix("snap", "generate snapshot ID")
+}
+
+// GenerateTemplateID 生成 Template ID（格式：tmpl-{递增 ID}）
+func (g *Generator) GenerateTemplateID() (string, error) {
+	return g.generateIDWithPrefix("tmpl", "generate template ID")
 }
 
 // GenerateKeyPairID 生成密钥对 ID（格式：kp-{递增 ID}）
@@ -108,6 +116,11 @@ func GenerateInstanceID() (string, error) {
 // GenerateSnapshotID 使用默认生成器生成 Snapshot ID
 func GenerateSnapshotID() (string, error) {
 	return DefaultGenerator().GenerateSnapshotID()
+}
+
+// GenerateTemplateID 使用默认生成器生成 Template ID
+func GenerateTemplateID() (string, error) {
+	return DefaultGenerator().GenerateTemplateID()
 }
 
 // GenerateKeyPairID 使用默认生成器生成密钥对 ID

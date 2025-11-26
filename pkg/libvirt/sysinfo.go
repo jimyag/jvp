@@ -7,15 +7,15 @@ import (
 
 // SysinfoXML 是 libvirt sysinfo 的 XML 结构
 type SysinfoXML struct {
-	XMLName   xml.Name            `xml:"sysinfo"`
-	Type      string              `xml:"type,attr"`
-	BIOS      SysinfoBIOS         `xml:"bios"`
-	System    SysinfoSystem       `xml:"system"`
-	BaseBoard SysinfoBaseBoard    `xml:"baseBoard"`
-	Chassis   SysinfoChassis      `xml:"chassis"`
-	Processor SysinfoProcessor    `xml:"processor"`
-	Memory    []SysinfoMemory     `xml:"memory_device"`
-	OEMStrings SysinfoOEMStrings  `xml:"oemStrings"`
+	XMLName    xml.Name          `xml:"sysinfo"`
+	Type       string            `xml:"type,attr"`
+	BIOS       SysinfoBIOS       `xml:"bios"`
+	System     SysinfoSystem     `xml:"system"`
+	BaseBoard  SysinfoBaseBoard  `xml:"baseBoard"`
+	Chassis    SysinfoChassis    `xml:"chassis"`
+	Processor  SysinfoProcessor  `xml:"processor"`
+	Memory     []SysinfoMemory   `xml:"memory_device"`
+	OEMStrings SysinfoOEMStrings `xml:"oemStrings"`
 }
 
 // SysinfoBIOS BIOS 信息

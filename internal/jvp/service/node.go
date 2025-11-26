@@ -24,7 +24,7 @@ func NewNodeService(storage *NodeStorage) (*NodeService, error) {
 
 // GetNodeStorage 获取节点的 libvirt 连接(用于存储操作)
 // nodeName 为空时返回本地节点连接
-func (s *NodeService) GetNodeStorage(ctx context.Context, nodeName string) (*libvirt.Client, error) {
+func (s *NodeService) GetNodeStorage(ctx context.Context, nodeName string) (libvirt.LibvirtClient, error) {
 	// 如果 nodeName 为空或为 "local",返回本地连接
 	if nodeName == "" || nodeName == "local" {
 		// 本地连接使用默认的 qemu:///system
@@ -270,10 +270,10 @@ func (s *NodeService) DescribeNodeSummary(ctx context.Context, nodeName string) 
 
 	// 构建虚拟化信息
 	virtualizationInfo := entity.VirtualizationInfo{
-		VTx:        true,                              // 假设支持（因为能运行 libvirt）
-		EPT:        true,                              // 假设支持
-		IOMMU:      caps.Host.IOMMU.Support == "yes",  // 从 capabilities 获取
-		NestedVirt: false,                             // 简化假设
+		VTx:        true,                             // 假设支持（因为能运行 libvirt）
+		EPT:        true,                             // 假设支持
+		IOMMU:      caps.Host.IOMMU.Support == "yes", // 从 capabilities 获取
+		NestedVirt: false,                            // 简化假设
 	}
 
 	summary := &entity.NodeSummary{
@@ -706,4 +706,3 @@ func (s *NodeService) DescribeNodeVMs(ctx context.Context, nodeName string) ([]N
 
 	return vms, nil
 }
-

@@ -79,8 +79,24 @@ func New(cfg *config.Config) (*Server, error) {
 		return nil, err
 	}
 
-	// 8. 创建 API（添加 nodeService 和 storagePoolService）
-	apiInstance, err := api.New(nodeService, instanceService, volumeService, imageService, keyPairService, storageService, storagePoolService)
+	// 8. 创建 Template Service
+	templateStore, err := service.NewTemplateStore(cfg.DataDir)
+	if err != nil {
+		return nil, fmt.Errorf("create template store: %w", err)
+	}
+	templateService := service.NewTemplateService(nodeService.GetNodeStorage, templateStore)
+
+	// 9. 创建 API（添加 nodeService 和 storagePoolService）
+	apiInstance, err := api.New(
+		nodeService,
+		instanceService,
+		volumeService,
+		imageService,
+		keyPairService,
+		storageService,
+		storagePoolService,
+		templateService,
+	)
 	if err != nil {
 		return nil, err
 	}

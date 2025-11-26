@@ -9,9 +9,9 @@ import (
 
 // ConsoleInfo 控制台连接信息
 type ConsoleInfo struct {
-	VNCSocket    string `json:"vnc_socket"`     // VNC Unix Socket 路径
-	SerialDevice string `json:"serial_device"`  // Serial PTY 设备路径
-	Type         string `json:"type"`           // 控制台类型: vnc, serial
+	VNCSocket    string `json:"vnc_socket"`    // VNC Unix Socket 路径
+	SerialDevice string `json:"serial_device"` // Serial PTY 设备路径
+	Type         string `json:"type"`          // 控制台类型: vnc, serial
 }
 
 // GetDomainConsoleInfo 获取 Domain 的控制台连接信息
