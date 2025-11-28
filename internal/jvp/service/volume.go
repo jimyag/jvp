@@ -128,6 +128,11 @@ func (s *VolumeService) ListVolumes(ctx context.Context, req *entity.ListVolumes
 
 	volumes := make([]entity.Volume, 0, len(volInfos))
 	for _, volInfo := range volInfos {
+		// 跳过 _templates_ 目录本身和目录中的文件
+		if volInfo.Name == TemplatesDirName || strings.Contains(volInfo.Path, "/"+TemplatesDirName+"/") {
+			continue
+		}
+
 		// 从文件名提取 volume ID (去掉扩展名)
 		volumeID := strings.TrimSuffix(volInfo.Name, ".qcow2")
 		volumeID = strings.TrimSuffix(volumeID, ".raw")
@@ -294,4 +299,58 @@ func (s *VolumeService) DeleteVolume(ctx context.Context, req *entity.DeleteVolu
 		Msg("Volume deleted successfully")
 
 	return nil
+}
+
+// CreateVolumeFromURL 从 URL 下载并创建存储卷
+func (s *VolumeService) CreateVolumeFromURL(ctx context.Context, req *entity.CreateVolumeFromURLRequest) (*entity.Volume, error) {
+	logger := zerolog.Ctx(ctx)
+	logger.Info().
+		Str("node_name", req.NodeName).
+		Str("pool_name", req.PoolName).
+		Str("name", req.Name).
+		Str("url", req.URL).
+		Msg("Creating volume from URL")
+
+	// 生成 Volume ID
+	volumeID, err := s.idGen.GenerateVolumeID()
+	if err != nil {
+		return nil, fmt.Errorf("generate volume ID: %w", err)
+	}
+
+	// 获取节点的存储服务
+	nodeStorage, err := s.nodeService.GetNodeStorage(ctx, req.NodeName)
+	if err != nil {
+		return nil, fmt.Errorf("get node storage: %w", err)
+	}
+
+	// 下载文件到存储池
+	if err := downloadToPool(nodeStorage, req.PoolName, req.Name, req.URL); err != nil {
+		return nil, fmt.Errorf("download volume from URL: %w", err)
+	}
+
+	// 获取下载后的卷信息
+	volInfo, err := nodeStorage.GetVolume(req.PoolName, req.Name)
+	if err != nil {
+		return nil, fmt.Errorf("get volume info: %w", err)
+	}
+
+	// 构建返回的 Volume 对象
+	volume := &entity.Volume{
+		ID:          volumeID,
+		Name:        volInfo.Name,
+		NodeName:    req.NodeName,
+		Pool:        req.PoolName,
+		Path:        volInfo.Path,
+		CapacityB:   volInfo.CapacityB,
+		SizeGB:      volInfo.CapacityB / (1024 * 1024 * 1024),
+		AllocationB: volInfo.AllocationB,
+		Format:      volInfo.Format,
+	}
+
+	logger.Info().
+		Str("volume_id", volumeID).
+		Str("path", volInfo.Path).
+		Msg("Volume created from URL successfully")
+
+	return volume, nil
 }

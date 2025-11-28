@@ -3,7 +3,9 @@ package libvirt
 import (
 	"encoding/xml"
 	"fmt"
+	"net/url"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"syscall"
@@ -420,7 +422,24 @@ func (c *Client) ResizeVolume(poolName, volumeName string, newSizeGB uint64) err
 
 // extractPoolPath 从 pool XML 中提取路径
 func extractPoolPath(xmlDesc string) string {
-	// 查找 <path> 标签
+	// 优先查找 <target><path> 标签（这是存储池的实际路径）
+	targetStart := strings.Index(xmlDesc, "<target>")
+	if targetStart != -1 {
+		targetEnd := strings.Index(xmlDesc[targetStart:], "</target>")
+		if targetEnd != -1 {
+			targetSection := xmlDesc[targetStart : targetStart+targetEnd]
+			pathStart := strings.Index(targetSection, "<path>")
+			if pathStart != -1 {
+				pathStart += len("<path>")
+				pathEnd := strings.Index(targetSection[pathStart:], "</path>")
+				if pathEnd != -1 {
+					return targetSection[pathStart : pathStart+pathEnd]
+				}
+			}
+		}
+	}
+
+	// 回退到查找任意 <path> 标签
 	pathStart := strings.Index(xmlDesc, "<path>")
 	if pathStart == -1 {
 		return ""
@@ -630,4 +649,120 @@ func (c *Client) RefreshStoragePool(poolName string) error {
 	}
 
 	return nil
+}
+
+// GetConnectionURI 获取当前连接的 URI
+// 返回创建连接时使用的原始 URI（而非远程 libvirtd 返回的 URI）
+func (c *Client) GetConnectionURI() string {
+	return c.uri
+}
+
+// IsRemoteConnection 判断是否是远程连接
+func (c *Client) IsRemoteConnection() bool {
+	uri := c.GetConnectionURI()
+	if uri == "" {
+		return false
+	}
+
+	// 解析 URI
+	parsedURI, err := url.Parse(uri)
+	if err != nil {
+		return false
+	}
+
+	// 检查是否是远程连接（包含 ssh、tcp 等）
+	scheme := strings.ToLower(parsedURI.Scheme)
+	return strings.Contains(scheme, "ssh") ||
+		strings.Contains(scheme, "tcp") ||
+		strings.Contains(scheme, "tls") ||
+		parsedURI.Host != ""
+}
+
+// getSSHTarget 从 libvirt URI 获取 SSH 目标
+func (c *Client) getSSHTarget() (string, error) {
+	uri := c.GetConnectionURI()
+	parsedURI, err := url.Parse(uri)
+	if err != nil {
+		return "", fmt.Errorf("parse URI: %w", err)
+	}
+
+	host := parsedURI.Hostname()
+	user := parsedURI.User.Username()
+	if user == "" {
+		user = "root"
+	}
+
+	return fmt.Sprintf("%s@%s", user, host), nil
+}
+
+// ExecuteRemoteCommand 在远程节点执行命令
+func (c *Client) ExecuteRemoteCommand(command string) error {
+	if !c.IsRemoteConnection() {
+		return fmt.Errorf("not a remote connection")
+	}
+
+	sshTarget, err := c.getSSHTarget()
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.Command("ssh", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes", sshTarget, command)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ssh command failed: %w, output: %s", err, string(output))
+	}
+
+	return nil
+}
+
+// ReadRemoteFile 从远程节点读取文件
+func (c *Client) ReadRemoteFile(path string) ([]byte, error) {
+	if !c.IsRemoteConnection() {
+		return nil, fmt.Errorf("not a remote connection")
+	}
+
+	sshTarget, err := c.getSSHTarget()
+	if err != nil {
+		return nil, err
+	}
+
+	cmd := exec.Command("ssh", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes", sshTarget, fmt.Sprintf("cat '%s'", path))
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("ssh cat failed: %w", err)
+	}
+
+	return output, nil
+}
+
+// ListRemoteFiles 列举远程目录中的文件
+func (c *Client) ListRemoteFiles(dir, pattern string) ([]string, error) {
+	if !c.IsRemoteConnection() {
+		return nil, fmt.Errorf("not a remote connection")
+	}
+
+	sshTarget, err := c.getSSHTarget()
+	if err != nil {
+		return nil, err
+	}
+
+	// 使用 find 命令查找匹配的文件
+	findCmd := fmt.Sprintf("find '%s' -maxdepth 1 -name '%s' -type f -printf '%%f\\n' 2>/dev/null || ls '%s'/%s 2>/dev/null | xargs -n1 basename 2>/dev/null", dir, pattern, dir, pattern)
+	cmd := exec.Command("ssh", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes", sshTarget, findCmd)
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("ssh find failed: %w", err)
+	}
+
+	// 解析输出
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	files := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			files = append(files, line)
+		}
+	}
+
+	return files, nil
 }

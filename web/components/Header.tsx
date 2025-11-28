@@ -3,7 +3,7 @@
 import { RefreshCw } from "lucide-react";
 
 interface HeaderProps {
-  title: string;
+  title: React.ReactNode;
   description?: string;
   action?: React.ReactNode;
   onRefresh?: () => void;

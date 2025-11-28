@@ -13,6 +13,7 @@ import (
 // VolumeServiceInterface 定义卷服务的接口
 type VolumeServiceInterface interface {
 	CreateVolume(ctx context.Context, req *entity.CreateVolumeRequest) (*entity.Volume, error)
+	CreateVolumeFromURL(ctx context.Context, req *entity.CreateVolumeFromURLRequest) (*entity.Volume, error)
 	ListVolumes(ctx context.Context, req *entity.ListVolumesRequest) ([]entity.Volume, error)
 	DescribeVolume(ctx context.Context, req *entity.DescribeVolumeRequest) (*entity.Volume, error)
 	ResizeVolume(ctx context.Context, req *entity.ResizeVolumeRequest) (*entity.Volume, error)
@@ -32,6 +33,7 @@ func NewVolume(volumeService *service.VolumeService) *Volume {
 func (v *Volume) RegisterRoutes(router *gin.RouterGroup) {
 	// Action 风格 API
 	router.POST("/create-volume", ginx.Adapt5(v.CreateVolume))
+	router.POST("/create-volume-from-url", ginx.Adapt5(v.CreateVolumeFromURL))
 	router.POST("/list-volumes", ginx.Adapt5(v.ListVolumes))
 	router.POST("/describe-volume", ginx.Adapt5(v.DescribeVolume))
 	router.POST("/resize-volume", ginx.Adapt5(v.ResizeVolume))
@@ -163,5 +165,32 @@ func (v *Volume) DeleteVolume(ctx *gin.Context, req *entity.DeleteVolumeRequest)
 
 	return &entity.DeleteVolumeResponse{
 		Message: "Volume deleted successfully",
+	}, nil
+}
+
+func (v *Volume) CreateVolumeFromURL(ctx *gin.Context, req *entity.CreateVolumeFromURLRequest) (*entity.CreateVolumeFromURLResponse, error) {
+	logger := zerolog.Ctx(ctx)
+	logger.Info().
+		Str("node_name", req.NodeName).
+		Str("pool_name", req.PoolName).
+		Str("name", req.Name).
+		Str("url", req.URL).
+		Msg("API: CreateVolumeFromURL called")
+
+	volume, err := v.volumeService.CreateVolumeFromURL(ctx, req)
+	if err != nil {
+		logger.Error().
+			Err(err).
+			Msg("Failed to create volume from URL")
+		return nil, err
+	}
+
+	logger.Info().
+		Str("volume_id", volume.ID).
+		Str("path", volume.Path).
+		Msg("Volume created from URL successfully")
+
+	return &entity.CreateVolumeFromURLResponse{
+		Volume: volume,
 	}, nil
 }

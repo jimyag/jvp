@@ -13,7 +13,7 @@ type Template struct {
 	Path        string           `json:"path" yaml:"path"`
 	Format      string           `json:"format" yaml:"format"`
 	SizeBytes   uint64           `json:"size_bytes" yaml:"size_bytes"`
-	SizeGB      uint64           `json:"size_gb" yaml:"size_gb"`
+	SizeGB      float64          `json:"size_gb" yaml:"size_gb"`
 	Source      *TemplateSource  `json:"source,omitempty" yaml:"source,omitempty"`
 	OS          TemplateOS       `json:"os" yaml:"os"`
 	Features    TemplateFeatures `json:"features" yaml:"features"`
@@ -70,7 +70,36 @@ type RegisterTemplateRequest struct {
 
 // RegisterTemplateResponse 注册模板响应
 type RegisterTemplateResponse struct {
-	Template *Template `json:"template"`
+	Template     *Template     `json:"template,omitempty"`
+	DownloadTask *DownloadTask `json:"download_task,omitempty"` // 如果需要下载，返回下载任务信息
+}
+
+// DownloadTask 下载任务信息
+type DownloadTask struct {
+	ID         string `json:"id"`
+	NodeName   string `json:"node_name"`
+	PoolName   string `json:"pool_name"`
+	VolumeName string `json:"volume_name"`
+	Status     string `json:"status"` // pending, running, completed, failed
+	Error      string `json:"error,omitempty"`
+}
+
+// GetDownloadTaskRequest 获取下载任务状态请求
+type GetDownloadTaskRequest struct {
+	TaskID string `json:"task_id" binding:"required"`
+}
+
+// GetDownloadTaskResponse 获取下载任务状态响应
+type GetDownloadTaskResponse struct {
+	Task *DownloadTask `json:"task"`
+}
+
+// ListDownloadTasksRequest 列出下载任务请求
+type ListDownloadTasksRequest struct{}
+
+// ListDownloadTasksResponse 列出下载任务响应
+type ListDownloadTasksResponse struct {
+	Tasks []*DownloadTask `json:"tasks"`
 }
 
 // ListTemplatesRequest 列举模板请求
@@ -87,6 +116,7 @@ type ListTemplatesResponse struct {
 // DescribeTemplateRequest 查询模板详情请求
 type DescribeTemplateRequest struct {
 	NodeName   string `json:"node_name" binding:"required"`   // 节点名称
+	PoolName   string `json:"pool_name" binding:"required"`   // 存储池名称
 	TemplateID string `json:"template_id" binding:"required"` // 模板 ID
 }
 
@@ -98,6 +128,7 @@ type DescribeTemplateResponse struct {
 // UpdateTemplateRequest 更新模板请求
 type UpdateTemplateRequest struct {
 	NodeName    string            `json:"node_name" binding:"required"`
+	PoolName    string            `json:"pool_name" binding:"required"`
 	TemplateID  string            `json:"template_id" binding:"required"`
 	Description *string           `json:"description"`
 	Tags        *[]string         `json:"tags"`
@@ -113,6 +144,7 @@ type UpdateTemplateResponse struct {
 // DeleteTemplateRequest 删除模板请求
 type DeleteTemplateRequest struct {
 	NodeName     string `json:"node_name" binding:"required"`
+	PoolName     string `json:"pool_name" binding:"required"`
 	TemplateID   string `json:"template_id" binding:"required"`
 	DeleteVolume bool   `json:"delete_volume"`
 }

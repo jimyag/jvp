@@ -67,4 +67,11 @@ type LibvirtClient interface {
 	// Node Device 操作
 	ListNodeDevices(cap string) ([]libvirt.NodeDevice, error)
 	GetNodeDeviceXMLDesc(dev libvirt.NodeDevice) (string, error)
+
+	// Remote File 操作（用于远程节点）
+	IsRemoteConnection() bool
+	GetConnectionURI() string
+	ExecuteRemoteCommand(cmd string) error
+	ReadRemoteFile(path string) ([]byte, error)
+	ListRemoteFiles(dir, pattern string) ([]string, error)
 }

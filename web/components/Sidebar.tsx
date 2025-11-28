@@ -2,15 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Server, HardDrive, Image, Key, Menu, X, Database, Package, Boxes } from "lucide-react";
+import { Server, Key, Menu, X, Database, Package, Boxes } from "lucide-react";
 import { useState } from "react";
 
 const navigation = [
   { name: "Nodes", href: "/nodes", icon: Boxes },
   { name: "Instances", href: "/instances", icon: Server },
-  { name: "Volumes", href: "/volumes", icon: HardDrive },
   { name: "Storage Pools", href: "/storage-pools", icon: Database },
-  { name: "Images", href: "/images", icon: Image },
   { name: "Templates", href: "/templates", icon: Package },
   { name: "Key Pairs", href: "/keypairs", icon: Key },
 ];

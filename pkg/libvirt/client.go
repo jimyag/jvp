@@ -18,6 +18,7 @@ import (
 
 type Client struct {
 	conn *libvirt.Libvirt
+	uri  string // 保存原始连接 URI
 }
 
 // DomainInfo 包含域的详细信息
@@ -88,7 +89,7 @@ func NewWithURI(uri string) (*Client, error) {
 		return nil, fmt.Errorf("failed to connect to libvirt: %v", err)
 	}
 
-	return &Client{conn: l}, nil
+	return &Client{conn: l, uri: uri}, nil
 }
 
 // formatLibvirtVersion converts libvirt version number to human readable format

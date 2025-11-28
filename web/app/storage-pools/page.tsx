@@ -4,33 +4,16 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Database,
-  HardDrive,
-  ChevronDown,
-  ChevronRight,
   RefreshCw,
   Plus,
   Play,
   Square,
-  MoreVertical,
   ExternalLink,
 } from "lucide-react";
 import { apiPost } from "@/lib/api";
 import { useToast } from "@/components/ToastContainer";
 import DashboardLayout from "@/components/DashboardLayout";
 import Header from "@/components/Header";
-
-interface Volume {
-  volumeID: string;
-  name: string;
-  pool: string;
-  path: string;
-  capacity_b: number;
-  sizeGB: number;
-  allocation_b: number;
-  format: string;
-  volumeType: string;
-  state: string;
-}
 
 interface StoragePool {
   name: string;
@@ -48,10 +31,6 @@ interface ListStoragePoolsResponse {
   pools: StoragePool[];
 }
 
-interface ListVolumesResponse {
-  volumes: Volume[];
-}
-
 interface Node {
   name: string;
   uuid: string;
@@ -65,9 +44,6 @@ export default function StoragePoolsPage() {
   const [pools, setPools] = useState<StoragePool[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [expandedPools, setExpandedPools] = useState<Set<string>>(new Set());
-  const [poolVolumes, setPoolVolumes] = useState<Record<string, Volume[]>>({});
-  const [loadingVolumes, setLoadingVolumes] = useState<Set<string>>(new Set());
 
   // Node selection
   const [nodes, setNodes] = useState<Node[]>([]);
@@ -82,9 +58,6 @@ export default function StoragePoolsPage() {
     path: "",
   });
   const [creating, setCreating] = useState(false);
-
-  // Dropdown menu
-  const [openMenuPool, setOpenMenuPool] = useState<string | null>(null);
 
   const toast = useToast();
 
@@ -137,51 +110,6 @@ export default function StoragePoolsPage() {
     }
   };
 
-  const fetchPoolVolumes = async (poolName: string) => {
-    if (poolVolumes[poolName]) {
-      return; // Already loaded
-    }
-
-    setLoadingVolumes((prev) => new Set(prev).add(poolName));
-    try {
-      // Use the existing volume list API and filter by pool
-      const response = await apiPost<ListVolumesResponse>(
-        "/api/volume/list",
-        {}
-      );
-      // Filter volumes by pool name
-      const filteredVolumes = (response.volumes || []).filter(
-        (v) => v.pool === poolName
-      );
-      setPoolVolumes((prev) => ({
-        ...prev,
-        [poolName]: filteredVolumes,
-      }));
-    } catch (error: any) {
-      console.error("Failed to fetch volumes:", error);
-      toast.error(error?.message || "Failed to fetch volumes");
-    } finally {
-      setLoadingVolumes((prev) => {
-        const newSet = new Set(prev);
-        newSet.delete(poolName);
-        return newSet;
-      });
-    }
-  };
-
-  const togglePoolExpansion = (poolName: string) => {
-    setExpandedPools((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(poolName)) {
-        newSet.delete(poolName);
-      } else {
-        newSet.add(poolName);
-        fetchPoolVolumes(poolName);
-      }
-      return newSet;
-    });
-  };
-
   const handleCreatePool = async () => {
     if (!createForm.name || !createForm.path) {
       toast.error("Please fill in all required fields");
@@ -220,7 +148,6 @@ export default function StoragePoolsPage() {
       console.error("Failed to start storage pool:", error);
       toast.error(error?.message || "Failed to start storage pool");
     }
-    setOpenMenuPool(null);
   };
 
   const handleStopPool = async (poolName: string) => {
@@ -239,7 +166,6 @@ export default function StoragePoolsPage() {
       console.error("Failed to stop storage pool:", error);
       toast.error(error?.message || "Failed to stop storage pool");
     }
-    setOpenMenuPool(null);
   };
 
   const handleRefreshPool = async (poolName: string) => {
@@ -249,21 +175,11 @@ export default function StoragePoolsPage() {
         pool_name: poolName,
       });
       toast.success(`Storage pool ${poolName} refreshed successfully`);
-      // Refresh the pool info and clear volumes cache
-      setPoolVolumes((prev) => {
-        const newVolumes = { ...prev };
-        delete newVolumes[poolName];
-        return newVolumes;
-      });
-      if (expandedPools.has(poolName)) {
-        await fetchPoolVolumes(poolName);
-      }
       await fetchPools();
     } catch (error: any) {
       console.error("Failed to refresh storage pool:", error);
       toast.error(error?.message || "Failed to refresh storage pool");
     }
-    setOpenMenuPool(null);
   };
 
   const formatBytes = (bytes: number): string => {
@@ -289,30 +205,6 @@ export default function StoragePoolsPage() {
         return "text-red-600 bg-red-100";
       default:
         return "text-gray-600 bg-gray-100";
-    }
-  };
-
-  const getVolumeTypeColor = (volumeType: string): string => {
-    switch (volumeType.toLowerCase()) {
-      case "template":
-        return "text-blue-600 bg-blue-100";
-      case "iso":
-        return "text-orange-600 bg-orange-100";
-      case "disk":
-      default:
-        return "text-purple-600 bg-purple-100";
-    }
-  };
-
-  const getVolumeTypeLabel = (volumeType: string): string => {
-    switch (volumeType.toLowerCase()) {
-      case "template":
-        return "Template";
-      case "iso":
-        return "ISO";
-      case "disk":
-      default:
-        return "Disk";
     }
   };
 
@@ -408,9 +300,6 @@ export default function StoragePoolsPage() {
         ) : (
           <div className="space-y-4">
             {pools.map((pool) => {
-              const isExpanded = expandedPools.has(pool.name);
-              const isLoadingVolumes = loadingVolumes.has(pool.name);
-              const volumes = poolVolumes[pool.name] || [];
               const usagePercent =
                 pool.capacity > 0
                   ? ((pool.allocation / pool.capacity) * 100).toFixed(1)
@@ -425,16 +314,6 @@ export default function StoragePoolsPage() {
                   <div className="p-4">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3 flex-1">
-                        <button
-                          onClick={() => togglePoolExpansion(pool.name)}
-                          className="text-gray-600 hover:text-gray-900"
-                        >
-                          {isExpanded ? (
-                            <ChevronDown className="w-5 h-5" />
-                          ) : (
-                            <ChevronRight className="w-5 h-5" />
-                          )}
-                        </button>
                         <Database className="w-8 h-8 text-primary" />
                         <div className="flex-1">
                           <div className="flex items-center gap-3">
@@ -479,59 +358,48 @@ export default function StoragePoolsPage() {
                           </div>
                         </div>
 
-                        {/* Actions Dropdown */}
-                        <div className="relative">
+                        {/* Action Buttons */}
+                        <div className="flex items-center gap-2">
+                          {pool.state.toLowerCase() === "inactive" ? (
+                            <button
+                              onClick={() => handleStartPool(pool.name)}
+                              className="flex items-center gap-1 px-3 py-1.5 text-sm text-green-700 bg-green-50 hover:bg-green-100 rounded-lg"
+                              title="Start"
+                            >
+                              <Play className="w-4 h-4" />
+                              Start
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handleStopPool(pool.name)}
+                              className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg"
+                              title="Stop"
+                            >
+                              <Square className="w-4 h-4" />
+                              Stop
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleRefreshPool(pool.name)}
+                            className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg"
+                            title="Refresh"
+                          >
+                            <RefreshCw className="w-4 h-4" />
+                          </button>
                           <button
                             onClick={() =>
-                              setOpenMenuPool(
-                                openMenuPool === pool.name ? null : pool.name
+                              router.push(
+                                `/storage-pools/${encodeURIComponent(
+                                  pool.name
+                                )}?node=${selectedNode}`
                               )
                             }
-                            className="p-2 hover:bg-gray-100 rounded-lg"
+                            className="flex items-center gap-1 px-3 py-1.5 text-sm text-primary bg-blue-50 hover:bg-blue-100 rounded-lg"
+                            title="View Details"
                           >
-                            <MoreVertical className="w-5 h-5 text-gray-600" />
+                            <ExternalLink className="w-4 h-4" />
+                            Details
                           </button>
-                          {openMenuPool === pool.name && (
-                            <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 z-10">
-                              {pool.state.toLowerCase() === "inactive" ? (
-                                <button
-                                  onClick={() => handleStartPool(pool.name)}
-                                  className="w-full flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                                >
-                                  <Play className="w-4 h-4" />
-                                  Start
-                                </button>
-                              ) : (
-                                <button
-                                  onClick={() => handleStopPool(pool.name)}
-                                  className="w-full flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                                >
-                                  <Square className="w-4 h-4" />
-                                  Stop
-                                </button>
-                              )}
-                              <button
-                                onClick={() => handleRefreshPool(pool.name)}
-                                className="w-full flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                              >
-                                <RefreshCw className="w-4 h-4" />
-                                Refresh
-                              </button>
-                              <button
-                                onClick={() =>
-                                  router.push(
-                                    `/storage-pools/${encodeURIComponent(
-                                      pool.name
-                                    )}?node=${selectedNode}`
-                                  )
-                                }
-                                className="w-full flex items-center gap-2 px-4 py-2 text-sm text-primary hover:bg-blue-50"
-                              >
-                                <ExternalLink className="w-4 h-4" />
-                                View Details
-                              </button>
-                            </div>
-                          )}
                         </div>
                       </div>
                     </div>
@@ -544,92 +412,6 @@ export default function StoragePoolsPage() {
                       />
                     </div>
                   </div>
-
-                  {/* Volumes List (Expanded) */}
-                  {isExpanded && (
-                    <div className="border-t border-gray-200 bg-gray-50">
-                      {isLoadingVolumes ? (
-                        <div className="p-8 text-center">
-                          <RefreshCw className="w-6 h-6 animate-spin text-primary mx-auto mb-2" />
-                          <p className="text-sm text-gray-600">Loading volumes...</p>
-                        </div>
-                      ) : volumes.length > 0 ? (
-                        <div className="divide-y divide-gray-200">
-                          {volumes.map((volume) => (
-                            <div
-                              key={volume.volumeID}
-                              className="p-4 hover:bg-gray-100 transition-colors"
-                            >
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-3 flex-1">
-                                  <HardDrive className="w-5 h-5 text-gray-400" />
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2">
-                                      <p className="font-medium text-gray-900 truncate">
-                                        {volume.name}
-                                      </p>
-                                      {volume.volumeType && (
-                                        <span
-                                          className={`px-2 py-0.5 text-xs font-medium rounded flex-shrink-0 ${getVolumeTypeColor(
-                                            volume.volumeType
-                                          )}`}
-                                        >
-                                          {getVolumeTypeLabel(volume.volumeType)}
-                                        </span>
-                                      )}
-                                      <span className="px-2 py-0.5 text-xs font-medium text-gray-600 bg-gray-100 rounded flex-shrink-0">
-                                        {volume.format}
-                                      </span>
-                                      {volume.state && (
-                                        <span
-                                          className={`px-2 py-0.5 text-xs font-medium rounded flex-shrink-0 ${
-                                            volume.state === "in-use"
-                                              ? "text-green-600 bg-green-100"
-                                              : "text-gray-600 bg-gray-100"
-                                          }`}
-                                        >
-                                          {volume.state}
-                                        </span>
-                                      )}
-                                    </div>
-                                    <p
-                                      className="text-xs text-gray-600 mt-0.5 truncate"
-                                      title={volume.path}
-                                    >
-                                      {volume.path}
-                                    </p>
-                                  </div>
-                                </div>
-                                <div className="text-right ml-4 flex-shrink-0">
-                                  <p className="text-sm font-medium text-gray-900">
-                                    {formatBytes(volume.capacity_b)}
-                                  </p>
-                                  <p className="text-xs text-gray-600">
-                                    {formatBytes(volume.allocation_b)} used
-                                    {volume.capacity_b > 0 && (
-                                      <span className="ml-1">
-                                        (
-                                        {(
-                                          (volume.allocation_b / volume.capacity_b) *
-                                          100
-                                        ).toFixed(0)}
-                                        %)
-                                      </span>
-                                    )}
-                                  </p>
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="p-8 text-center">
-                          <HardDrive className="w-8 h-8 text-gray-400 mx-auto mb-2" />
-                          <p className="text-sm text-gray-600">No volumes in this pool</p>
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </div>
               );
             })}
@@ -708,14 +490,6 @@ export default function StoragePoolsPage() {
             </div>
           </div>
         </div>
-      )}
-
-      {/* Click outside to close dropdown */}
-      {openMenuPool && (
-        <div
-          className="fixed inset-0 z-0"
-          onClick={() => setOpenMenuPool(null)}
-        />
       )}
     </DashboardLayout>
   );

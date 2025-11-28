@@ -64,6 +64,19 @@ type DeleteVolumeResponse struct {
 	Message string `json:"message"`
 }
 
+// CreateVolumeFromURLRequest 从 URL 下载并创建卷请求
+type CreateVolumeFromURLRequest struct {
+	NodeName string `json:"node_name"`                    // 节点名称(可选,默认本地节点)
+	PoolName string `json:"pool_name" binding:"required"` // 存储池名称
+	Name     string `json:"name" binding:"required"`      // 卷名称(文件名)
+	URL      string `json:"url" binding:"required"`       // 下载 URL
+}
+
+// CreateVolumeFromURLResponse 从 URL 下载并创建卷响应
+type CreateVolumeFromURLResponse struct {
+	Volume *Volume `json:"volume"`
+}
+
 // ==================== Storage Pool 相关 ====================
 // ==================== 通用类型 ====================
 

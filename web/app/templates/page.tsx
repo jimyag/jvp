@@ -33,8 +33,26 @@ interface ListTemplatesResponse {
   templates: Template[];
 }
 
+interface DownloadTask {
+  id: string;
+  node_name: string;
+  pool_name: string;
+  volume_name: string;
+  status: string; // pending, running, completed, failed
+  error?: string;
+}
+
 interface RegisterTemplateResponse {
-  template: Template;
+  template?: Template;
+  download_task?: DownloadTask;
+}
+
+interface GetDownloadTaskResponse {
+  task: DownloadTask;
+}
+
+interface ListDownloadTasksResponse {
+  tasks: DownloadTask[] | null;
 }
 
 interface NodeItem {
@@ -80,6 +98,8 @@ export default function TemplatesPage() {
   const [registerPools, setRegisterPools] = useState<StoragePoolItem[]>([]);
   const [loadingFilterPools, setLoadingFilterPools] = useState(false);
   const [loadingRegisterPools, setLoadingRegisterPools] = useState(false);
+  const [downloadTask, setDownloadTask] = useState<DownloadTask | null>(null);
+  const [downloadTasks, setDownloadTasks] = useState<DownloadTask[]>([]);
 
   const fetchTemplates = useCallback(async () => {
     setLoading(true);
@@ -221,6 +241,73 @@ export default function TemplatesPage() {
     setShowRegisterModal(true);
   };
 
+  const pollDownloadTask = useCallback(async (taskId: string) => {
+    try {
+      const response = await apiPost<GetDownloadTaskResponse>("/api/get-download-task", {
+        task_id: taskId,
+      });
+
+      const task = response.task;
+      setDownloadTask(task);
+      // Update task in list
+      setDownloadTasks((prev) => {
+        const exists = prev.some((t) => t.id === task.id);
+        if (exists) {
+          return prev.map((t) => (t.id === task.id ? task : t));
+        }
+        return [...prev, task];
+      });
+
+      if (task.status === "completed") {
+        toast.success(`Download completed! Template "${task.volume_name}" registered successfully.`);
+        setDownloadTask(null);
+        setShowRegisterModal(false);
+        setDownloadTasks((prev) => prev.filter((t) => t.id !== taskId));
+        fetchTemplates();
+        setRegisterForm({
+          ...initialRegisterForm,
+          nodeName: registerForm.nodeName,
+          poolName: registerForm.poolName,
+        });
+      } else if (task.status === "failed") {
+        toast.error(`Download failed: ${task.error || "Unknown error"}`);
+        setDownloadTask(null);
+        setDownloadTasks((prev) => prev.filter((t) => t.id !== taskId));
+      } else {
+        // 继续轮询
+        setTimeout(() => pollDownloadTask(taskId), 5000);
+      }
+    } catch (error: any) {
+      console.error("Failed to poll download task:", error);
+      // Task not found on server
+      setDownloadTasks((prev) => prev.filter((t) => t.id !== taskId));
+      setDownloadTask(null);
+    }
+  }, [fetchTemplates, registerForm.nodeName, registerForm.poolName, toast]);
+
+  // Fetch active download tasks and resume polling
+  const fetchAndResumeDownloadTasks = useCallback(async () => {
+    try {
+      const response = await apiPost<ListDownloadTasksResponse>("/api/list-download-tasks", {});
+      const tasks = response.tasks || [];
+      setDownloadTasks(tasks);
+
+      // Resume polling for each active task
+      for (const task of tasks) {
+        if (task.status === "pending" || task.status === "running") {
+          pollDownloadTask(task.id);
+        }
+      }
+    } catch (error: any) {
+      console.error("Failed to fetch download tasks:", error);
+    }
+  }, [pollDownloadTask]);
+
+  // On page load, fetch active download tasks and resume polling
+  useEffect(() => {
+    fetchAndResumeDownloadTasks();
+  }, [fetchAndResumeDownloadTasks]);
+
   const handleRegisterTemplate = async () => {
     if (!registerForm.name || !registerForm.volumeName) {
       toast.error("Template name and volume name are required");
@@ -275,18 +362,28 @@ export default function TemplatesPage() {
         "/api/register-template",
         payload
       );
-      if (response?.template) {
-        setTemplates((prev) => [response.template, ...prev]);
+
+      // 如果返回了下载任务，开始轮询
+      if (response?.download_task) {
+        const task = response.download_task;
+        setDownloadTask(task);
+        setDownloadTasks((prev) => [...prev, task]);
+        toast.info("Download started. This may take a few minutes...");
+        setTimeout(() => pollDownloadTask(task.id), 5000);
+      } else if (response?.template) {
+        setTemplates((prev) => [response.template!, ...prev]);
+        toast.success(`Template ${registerForm.name} registered`);
+        setShowRegisterModal(false);
+        setRegisterForm({
+          ...initialRegisterForm,
+          nodeName: registerForm.nodeName,
+          poolName: registerForm.poolName,
+        });
       } else {
         fetchTemplates();
+        toast.success(`Template ${registerForm.name} registered`);
+        setShowRegisterModal(false);
       }
-      toast.success(`Template ${registerForm.name} registered`);
-      setShowRegisterModal(false);
-      setRegisterForm({
-        ...initialRegisterForm,
-        nodeName: registerForm.nodeName,
-        poolName: registerForm.poolName,
-      });
     } catch (error: any) {
       console.error("Failed to register template:", error);
       toast.error(error?.message || "Failed to register template");
@@ -426,6 +523,26 @@ export default function TemplatesPage() {
             </button>
           }
         />
+
+        {/* Active Download Tasks Banner */}
+        {downloadTasks.length > 0 && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <h3 className="text-sm font-medium text-blue-800 mb-2 flex items-center gap-2">
+              <RefreshCw className="w-4 h-4 animate-spin" />
+              Active Downloads ({downloadTasks.length})
+            </h3>
+            <div className="space-y-2">
+              {downloadTasks.map((task) => (
+                <div key={task.id} className="flex items-center gap-3 text-sm">
+                  <span className="text-blue-600 font-mono">{task.volume_name}</span>
+                  <span className="text-blue-500">→</span>
+                  <span className="text-blue-600">{task.node_name}/{task.pool_name}</span>
+                  <span className="text-xs text-blue-500 capitalize">({task.status})</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="card space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -709,20 +826,38 @@ export default function TemplatesPage() {
                 </div>
               </div>
 
+              {/* Download Progress */}
+              {downloadTask && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <div className="flex items-center gap-3">
+                    <RefreshCw className="w-5 h-5 animate-spin text-blue-600" />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-blue-800">
+                        {downloadTask.status === "pending" && "Preparing download..."}
+                        {downloadTask.status === "running" && "Downloading image..."}
+                      </p>
+                      <p className="text-xs text-blue-600 mt-1">
+                        {downloadTask.volume_name} - This may take several minutes
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="flex gap-3 pt-4">
                 <button
                   className="btn-secondary flex-1"
                   onClick={() => setShowRegisterModal(false)}
-                  disabled={submitting}
+                  disabled={submitting || !!downloadTask}
                 >
                   Cancel
                 </button>
                 <button
                   className="btn-primary flex-1"
                   onClick={handleRegisterTemplate}
-                  disabled={submitting}
+                  disabled={submitting || !!downloadTask}
                 >
-                  {submitting ? "Registering..." : "Register Template"}
+                  {submitting ? "Starting..." : downloadTask ? "Downloading..." : "Register Template"}
                 </button>
               </div>
             </div>

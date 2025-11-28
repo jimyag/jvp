@@ -269,6 +269,38 @@ func (m *MockClient) GetNodeDeviceXMLDesc(dev libvirt.NodeDevice) (string, error
 	return args.String(0), args.Error(1)
 }
 
+// Remote File 操作
+func (m *MockClient) IsRemoteConnection() bool {
+	args := m.Called()
+	return args.Bool(0)
+}
+
+func (m *MockClient) GetConnectionURI() string {
+	args := m.Called()
+	return args.String(0)
+}
+
+func (m *MockClient) ExecuteRemoteCommand(cmd string) error {
+	args := m.Called(cmd)
+	return args.Error(0)
+}
+
+func (m *MockClient) ReadRemoteFile(path string) ([]byte, error) {
+	args := m.Called(path)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]byte), args.Error(1)
+}
+
+func (m *MockClient) ListRemoteFiles(dir, pattern string) ([]string, error) {
+	args := m.Called(dir, pattern)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]string), args.Error(1)
+}
+
 // NewMockClient 创建新的 MockClient
 // 这是一个便捷函数，用于在测试中创建 mock client
 func NewMockClient() *MockClient {

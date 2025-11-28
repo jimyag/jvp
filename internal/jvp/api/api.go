@@ -18,7 +18,6 @@ type API struct {
 	node        *NodeAPI
 	instance    *Instance
 	volume      *Volume
-	image       *Image
 	keypair     *KeyPair
 	consoleWS   *ConsoleWS
 	storagePool *StoragePoolAPI
@@ -29,9 +28,7 @@ func New(
 	nodeService *service.NodeService,
 	instanceService *service.InstanceService,
 	volumeService *service.VolumeService,
-	imageService *service.ImageService,
 	keyPairService *service.KeyPairService,
-	storageService *service.StorageService,
 	storagePoolService *service.StoragePoolService,
 	templateService *service.TemplateService,
 ) (*API, error) {
@@ -45,7 +42,6 @@ func New(
 		node:        NewNodeAPI(nodeService),
 		instance:    NewInstance(instanceService),
 		volume:      NewVolume(volumeService),
-		image:       NewImage(imageService),
 		keypair:     NewKeyPair(keyPairService),
 		consoleWS:   NewConsoleWS(instanceService),
 		storagePool: NewStoragePoolAPI(storagePoolService),
@@ -56,8 +52,6 @@ func New(
 	api.node.RegisterRoutes(apiGroup)
 	api.instance.RegisterRoutes(apiGroup)
 	api.volume.RegisterRoutes(apiGroup)
-	// Snapshot routes removed
-	api.image.RegisterRoutes(apiGroup)
 	api.keypair.RegisterRoutes(apiGroup)
 	api.consoleWS.RegisterRoutes(apiGroup)
 	api.storagePool.RegisterRoutes(apiGroup)

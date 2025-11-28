@@ -25,12 +25,16 @@ func NewNodeService(storage *NodeStorage) (*NodeService, error) {
 // GetNodeStorage 获取节点的 libvirt 连接(用于存储操作)
 // nodeName 为空时返回本地节点连接
 func (s *NodeService) GetNodeStorage(ctx context.Context, nodeName string) (libvirt.LibvirtClient, error) {
+	fmt.Printf("[GetNodeStorage] nodeName=%q\n", nodeName)
+
 	// 如果 nodeName 为空或为 "local",返回本地连接
 	if nodeName == "" || nodeName == "local" {
+		fmt.Printf("[GetNodeStorage] Using local connection\n")
 		// 本地连接使用默认的 qemu:///system
 		return libvirt.NewWithURI("qemu:///system")
 	}
 
+	fmt.Printf("[GetNodeStorage] Getting remote connection for %s\n", nodeName)
 	// 获取远程节点连接
 	return s.storage.GetConnection(nodeName)
 }

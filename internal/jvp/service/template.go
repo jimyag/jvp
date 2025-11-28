@@ -21,22 +21,32 @@ type NodeStorageGetter func(ctx context.Context, nodeName string) (libvirt.Libvi
 
 // TemplateService 管理模板元数据以及与存储层的交互
 type TemplateService struct {
-	nodeStorageFn NodeStorageGetter
-	store         *TemplateStore
-	idGen         *idgen.Generator
+	nodeStorageFn   NodeStorageGetter
+	store           *TemplateStore
+	idGen           *idgen.Generator
+	downloadManager *DownloadTaskManager
 }
 
 // NewTemplateService 创建新的 TemplateService
 func NewTemplateService(nodeStorageFn NodeStorageGetter, store *TemplateStore) *TemplateService {
 	return &TemplateService{
-		nodeStorageFn: nodeStorageFn,
-		store:         store,
-		idGen:         idgen.New(),
+		nodeStorageFn:   nodeStorageFn,
+		store:           store,
+		idGen:           idgen.New(),
+		downloadManager: NewDownloadTaskManager(),
 	}
 }
 
+// RegisterTemplateResult 注册模板结果
+type RegisterTemplateResult struct {
+	Template     *entity.Template
+	DownloadTask *DownloadTask
+	IsAsync      bool // 是否是异步下载
+}
+
 // RegisterTemplate 基于现有卷注册模板
-func (s *TemplateService) RegisterTemplate(ctx context.Context, req *entity.RegisterTemplateRequest) (*entity.Template, error) {
+// 如果 Source.Type 为 "url"，则异步下载文件到存储池
+func (s *TemplateService) RegisterTemplate(ctx context.Context, req *entity.RegisterTemplateRequest) (*RegisterTemplateResult, error) {
 	logger := zerolog.Ctx(ctx)
 	if req == nil {
 		return nil, apierror.NewErrorWithStatus("InvalidParameter", "request body is required", http.StatusBadRequest)
@@ -57,6 +67,104 @@ func (s *TemplateService) RegisterTemplate(ctx context.Context, req *entity.Regi
 	if err != nil {
 		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get node storage", err)
 	}
+
+	// 如果 Source.Type 为 "url"，启动异步下载
+	if req.Source != nil && req.Source.Type == "url" && req.Source.URL != "" {
+		// 检查是否已有下载任务
+		existingTask := s.downloadManager.GetTaskByVolume(nodeName, req.PoolName, req.VolumeName)
+		if existingTask != nil && (existingTask.Status == DownloadTaskStatusPending || existingTask.Status == DownloadTaskStatusRunning) {
+			logger.Info().
+				Str("task_id", existingTask.ID).
+				Str("status", string(existingTask.Status)).
+				Msg("Download task already in progress")
+
+			return &RegisterTemplateResult{
+				DownloadTask: existingTask,
+				IsAsync:      true,
+			}, nil
+		}
+
+		// 生成任务 ID
+		taskIDNum, err := s.idGen.GenerateID()
+		if err != nil {
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to generate task ID", err)
+		}
+		taskID := fmt.Sprintf("task-%d", taskIDNum)
+
+		// 创建下载任务
+		task, isNew := s.downloadManager.CreateTask(taskID, nodeName, req.PoolName, req.VolumeName, req.Source.URL)
+
+		if !isNew {
+			// 任务已存在
+			logger.Info().
+				Str("task_id", task.ID).
+				Str("status", string(task.Status)).
+				Msg("Download task already exists")
+
+			return &RegisterTemplateResult{
+				DownloadTask: task,
+				IsAsync:      true,
+			}, nil
+		}
+
+		logger.Info().
+			Str("task_id", task.ID).
+			Str("url", req.Source.URL).
+			Str("volume_name", req.VolumeName).
+			Msg("Starting async download")
+
+		// 保存请求信息以便下载完成后注册模板
+		reqCopy := *req
+		s.downloadManager.StartDownload(ctx, task, client, func(completedTask *DownloadTask, downloadErr error) {
+			if downloadErr != nil {
+				logger.Error().
+					Err(downloadErr).
+					Str("task_id", completedTask.ID).
+					Msg("Download failed, template not registered")
+				return
+			}
+
+			// 下载成功，自动注册模板
+			logger.Info().
+				Str("task_id", completedTask.ID).
+				Msg("Download completed, registering template")
+
+			template, err := s.registerTemplateFromVolume(ctx, &reqCopy, client, nodeName)
+			if err != nil {
+				logger.Error().
+					Err(err).
+					Str("task_id", completedTask.ID).
+					Msg("Failed to register template after download")
+				return
+			}
+
+			logger.Info().
+				Str("task_id", completedTask.ID).
+				Str("template_id", template.ID).
+				Msg("Template registered successfully after download")
+		})
+
+		return &RegisterTemplateResult{
+			DownloadTask: task,
+			IsAsync:      true,
+		}, nil
+	}
+
+	// 同步注册（卷已存在）
+	template, err := s.registerTemplateFromVolume(ctx, req, client, nodeName)
+	if err != nil {
+		return nil, err
+	}
+
+	return &RegisterTemplateResult{
+		Template: template,
+		IsAsync:  false,
+	}, nil
+}
+
+// registerTemplateFromVolume 从已存在的卷注册模板
+func (s *TemplateService) registerTemplateFromVolume(ctx context.Context, req *entity.RegisterTemplateRequest, client libvirt.LibvirtClient, nodeName string) (*entity.Template, error) {
+	logger := zerolog.Ctx(ctx)
 
 	volumeInfo, err := s.lookupVolume(client, req.PoolName, req.VolumeName)
 	if err != nil {
@@ -79,7 +187,7 @@ func (s *TemplateService) RegisterTemplate(ctx context.Context, req *entity.Regi
 		Path:        volumeInfo.Path,
 		Format:      volumeInfo.Format,
 		SizeBytes:   volumeInfo.CapacityB,
-		SizeGB:      volumeInfo.CapacityB / (1024 * 1024 * 1024),
+		SizeGB:      float64(volumeInfo.CapacityB) / (1024 * 1024 * 1024),
 		Source:      cloneTemplateSource(req.Source),
 		OS:          req.OS,
 		Features:    req.Features,
@@ -89,7 +197,7 @@ func (s *TemplateService) RegisterTemplate(ctx context.Context, req *entity.Regi
 		UpdatedAt:   now,
 	}
 
-	if err := s.store.Save(template); err != nil {
+	if err := s.store.Save(ctx, template); err != nil {
 		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to persist template metadata", err)
 	}
 
@@ -102,32 +210,40 @@ func (s *TemplateService) RegisterTemplate(ctx context.Context, req *entity.Regi
 	return template, nil
 }
 
+// GetDownloadTask 获取下载任务状态
+func (s *TemplateService) GetDownloadTask(ctx context.Context, taskID string) (*DownloadTask, error) {
+	task := s.downloadManager.GetTask(taskID)
+	if task == nil {
+		return nil, apierror.NewErrorWithStatus("NotFound", "Download task not found", http.StatusNotFound)
+	}
+	return task, nil
+}
+
+// ListDownloadTasks 列出所有活跃的下载任务
+func (s *TemplateService) ListDownloadTasks(ctx context.Context) []*DownloadTask {
+	return s.downloadManager.ListActiveTasks()
+}
+
 // ListTemplates 列举模板
 func (s *TemplateService) ListTemplates(ctx context.Context, req *entity.ListTemplatesRequest) ([]entity.Template, error) {
 	if req == nil {
 		req = &entity.ListTemplatesRequest{}
 	}
-	nodeName := req.NodeName
-	if nodeName != "" {
-		nodeName = normalizeNodeName(nodeName)
-	}
+	nodeName := normalizeNodeName(req.NodeName)
 
-	templates, err := s.store.List(nodeName)
-	if err != nil {
-		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to list templates", err)
-	}
-
-	if req.PoolName == "" {
+	// 如果指定了存储池，直接查询
+	if req.PoolName != "" {
+		templates, err := s.store.List(ctx, nodeName, req.PoolName)
+		if err != nil {
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to list templates", err)
+		}
 		return templates, nil
 	}
 
-	filtered := make([]entity.Template, 0, len(templates))
-	for _, tpl := range templates {
-		if tpl.PoolName == req.PoolName {
-			filtered = append(filtered, tpl)
-		}
-	}
-	return filtered, nil
+	// 否则需要遍历存储池
+	// 暂时返回空列表，因为需要提供存储池
+	// TODO: 遍历所有存储池
+	return []entity.Template{}, nil
 }
 
 // DescribeTemplate 查询模板详情
@@ -141,14 +257,17 @@ func (s *TemplateService) DescribeTemplate(ctx context.Context, req *entity.Desc
 	if req.NodeName == "" {
 		return nil, invalidParameterError("node_name")
 	}
+	if req.PoolName == "" {
+		return nil, invalidParameterError("pool_name")
+	}
 
 	nodeName := normalizeNodeName(req.NodeName)
-	template, err := s.store.Get(nodeName, req.TemplateID)
+	template, err := s.store.Get(ctx, nodeName, req.PoolName, req.TemplateID)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, apierror.NewErrorWithStatus(
 				"Template.NotFound",
-				fmt.Sprintf("template %s not found on node %s", req.TemplateID, nodeName),
+				fmt.Sprintf("template %s not found on node %s pool %s", req.TemplateID, nodeName, req.PoolName),
 				http.StatusNotFound,
 			)
 		}
@@ -168,14 +287,17 @@ func (s *TemplateService) UpdateTemplate(ctx context.Context, req *entity.Update
 	if req.NodeName == "" {
 		return nil, invalidParameterError("node_name")
 	}
+	if req.PoolName == "" {
+		return nil, invalidParameterError("pool_name")
+	}
 
 	nodeName := normalizeNodeName(req.NodeName)
-	template, err := s.store.Get(nodeName, req.TemplateID)
+	template, err := s.store.Get(ctx, nodeName, req.PoolName, req.TemplateID)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, apierror.NewErrorWithStatus(
 				"Template.NotFound",
-				fmt.Sprintf("template %s not found on node %s", req.TemplateID, nodeName),
+				fmt.Sprintf("template %s not found on node %s pool %s", req.TemplateID, nodeName, req.PoolName),
 				http.StatusNotFound,
 			)
 		}
@@ -202,7 +324,7 @@ func (s *TemplateService) UpdateTemplate(ctx context.Context, req *entity.Update
 
 	if modified {
 		template.UpdatedAt = time.Now().UTC()
-		if err := s.store.Save(template); err != nil {
+		if err := s.store.Save(ctx, template); err != nil {
 			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to update template metadata", err)
 		}
 	}
@@ -221,14 +343,17 @@ func (s *TemplateService) DeleteTemplate(ctx context.Context, req *entity.Delete
 	if req.NodeName == "" {
 		return invalidParameterError("node_name")
 	}
+	if req.PoolName == "" {
+		return invalidParameterError("pool_name")
+	}
 
 	nodeName := normalizeNodeName(req.NodeName)
-	template, err := s.store.Get(nodeName, req.TemplateID)
+	template, err := s.store.Get(ctx, nodeName, req.PoolName, req.TemplateID)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return apierror.NewErrorWithStatus(
 				"Template.NotFound",
-				fmt.Sprintf("template %s not found on node %s", req.TemplateID, nodeName),
+				fmt.Sprintf("template %s not found on node %s pool %s", req.TemplateID, nodeName, req.PoolName),
 				http.StatusNotFound,
 			)
 		}
@@ -245,7 +370,7 @@ func (s *TemplateService) DeleteTemplate(ctx context.Context, req *entity.Delete
 		}
 	}
 
-	if err := s.store.Delete(nodeName, req.TemplateID); err != nil {
+	if err := s.store.Delete(ctx, nodeName, req.PoolName, req.TemplateID); err != nil {
 		return apierror.WrapError(apierror.ErrInternalError, "Failed to delete template metadata", err)
 	}
 
@@ -258,16 +383,68 @@ func (s *TemplateService) DeleteTemplate(ctx context.Context, req *entity.Delete
 }
 
 func (s *TemplateService) lookupVolume(client libvirt.LibvirtClient, poolName, volumeName string) (*libvirt.VolumeInfo, error) {
+	// 获取存储池信息
+	poolInfo, err := client.GetStoragePool(poolName)
+	if err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get storage pool", err)
+	}
+
+	if poolInfo.Path == "" {
+		return nil, apierror.NewErrorWithStatus(
+			"Template.InvalidPool",
+			fmt.Sprintf("storage pool %s has no path", poolName),
+			http.StatusBadRequest,
+		)
+	}
+
+	// 在 _templates_ 目录中查找文件
+	templatesDir := poolInfo.Path + "/" + TemplatesDirName
 	candidates := buildVolumeCandidates(volumeName)
+
 	for _, candidate := range candidates {
-		vol, err := client.GetVolume(poolName, candidate)
-		if err == nil {
-			return vol, nil
+		filePath := templatesDir + "/" + candidate
+		var fileExists bool
+		var fileSize int64
+
+		if client.IsRemoteConnection() {
+			// 远程：通过 SSH 检查文件是否存在
+			checkCmd := fmt.Sprintf("test -f '%s'", filePath)
+			if err := client.ExecuteRemoteCommand(checkCmd); err == nil {
+				fileExists = true
+				// 对于远程文件，暂时不获取文件大小（需要读取整个文件太慢）
+				// 文件大小会在需要时从卷信息中获取
+				fileSize = 0
+			}
+		} else {
+			// 本地：直接检查文件
+			if info, err := os.Stat(filePath); err == nil && !info.IsDir() {
+				fileExists = true
+				fileSize = info.Size()
+			}
+		}
+
+		if fileExists {
+			// 根据文件扩展名判断格式
+			format := "raw"
+			if strings.HasSuffix(candidate, ".qcow2") {
+				format = "qcow2"
+			} else if strings.HasSuffix(candidate, ".img") {
+				format = "raw"
+			}
+
+			return &libvirt.VolumeInfo{
+				Name:        candidate,
+				Path:        filePath,
+				CapacityB:   uint64(fileSize),
+				AllocationB: uint64(fileSize),
+				Format:      format,
+			}, nil
 		}
 	}
+
 	return nil, apierror.NewErrorWithStatus(
 		"Template.VolumeNotFound",
-		fmt.Sprintf("volume %s not found in pool %s", volumeName, poolName),
+		fmt.Sprintf("volume %s not found in pool %s/_templates_", volumeName, poolName),
 		http.StatusBadRequest,
 	)
 }

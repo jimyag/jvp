@@ -18,7 +18,7 @@ func TestNew(t *testing.T) {
 		t.Parallel()
 
 		// 创建 mock services（使用 nil，因为 New 函数会创建新的实例）
-		api, err := New(nil, nil, nil, nil, nil, nil, nil, nil)
+		api, err := New(nil, nil, nil, nil, nil, nil)
 		require.NoError(t, err)
 		assert.NotNil(t, api)
 		assert.NotNil(t, api.engine)
@@ -26,14 +26,13 @@ func TestNew(t *testing.T) {
 		assert.NotNil(t, api.node)
 		assert.NotNil(t, api.instance)
 		assert.NotNil(t, api.volume)
-		assert.NotNil(t, api.image)
 		assert.Equal(t, ":8080", api.server.Addr)
 	})
 
 	t.Run("API has registered routes", func(t *testing.T) {
 		t.Parallel()
 
-		api, err := New(nil, nil, nil, nil, nil, nil, nil, nil)
+		api, err := New(nil, nil, nil, nil, nil, nil)
 		require.NoError(t, err)
 
 		// 验证路由已注册
@@ -50,7 +49,7 @@ func TestNew(t *testing.T) {
 		assert.True(t, routePaths["/api/list-nodes"] || routePaths["/api/describe-node"], "should have node routes")
 		assert.True(t, routePaths["/api/instances/run"] || routePaths["/api/instances/describe"], "should have instance routes")
 		assert.True(t, routePaths["/api/create-volume"] || routePaths["/api/describe-volume"], "should have volume routes")
-		assert.True(t, routePaths["/api/images/create"] || routePaths["/api/images/describe"], "should have image routes")
+		assert.True(t, routePaths["/api/register-template"] || routePaths["/api/describe-template"], "should have template routes")
 	})
 }
 
@@ -60,7 +59,7 @@ func TestAPI_Name(t *testing.T) {
 	t.Run("returns correct name", func(t *testing.T) {
 		t.Parallel()
 
-		api, err := New(nil, nil, nil, nil, nil, nil, nil, nil)
+		api, err := New(nil, nil, nil, nil, nil, nil)
 		require.NoError(t, err)
 
 		name := api.Name()
@@ -74,7 +73,7 @@ func TestAPI_Run(t *testing.T) {
 	t.Run("run with context cancellation", func(t *testing.T) {
 		t.Parallel()
 
-		api, err := New(nil, nil, nil, nil, nil, nil, nil, nil)
+		api, err := New(nil, nil, nil, nil, nil, nil)
 		require.NoError(t, err)
 
 		// 使用一个未使用的端口避免冲突
@@ -110,7 +109,7 @@ func TestAPI_Run(t *testing.T) {
 	t.Run("run with server error", func(t *testing.T) {
 		t.Parallel()
 
-		api, err := New(nil, nil, nil, nil, nil, nil, nil, nil)
+		api, err := New(nil, nil, nil, nil, nil, nil)
 		require.NoError(t, err)
 
 		// 使用一个无效的地址来触发错误
@@ -133,7 +132,7 @@ func TestAPI_Shutdown(t *testing.T) {
 	t.Run("shutdown running server", func(t *testing.T) {
 		t.Parallel()
 
-		api, err := New(nil, nil, nil, nil, nil, nil, nil, nil)
+		api, err := New(nil, nil, nil, nil, nil, nil)
 		require.NoError(t, err)
 
 		// 使用一个未使用的端口
@@ -164,7 +163,7 @@ func TestAPI_Shutdown(t *testing.T) {
 	t.Run("shutdown with timeout", func(t *testing.T) {
 		t.Parallel()
 
-		api, err := New(nil, nil, nil, nil, nil, nil, nil, nil)
+		api, err := New(nil, nil, nil, nil, nil, nil)
 		require.NoError(t, err)
 
 		// 使用一个未使用的端口
@@ -203,7 +202,7 @@ func TestPrintRoutes(t *testing.T) {
 	t.Run("print routes for engine with routes", func(t *testing.T) {
 		t.Parallel()
 
-		api, err := New(nil, nil, nil, nil, nil, nil, nil, nil)
+		api, err := New(nil, nil, nil, nil, nil, nil)
 		require.NoError(t, err)
 
 		// printRoutes 是私有函数，但可以通过 New 间接测试
@@ -228,7 +227,7 @@ func TestPrintRoutes(t *testing.T) {
 
 		// 验证 printRoutes 在 New 中被调用
 		// 由于 printRoutes 会输出到 stdout，我们通过验证路由存在来间接验证
-		api, err := New(nil, nil, nil, nil, nil, nil, nil, nil)
+		api, err := New(nil, nil, nil, nil, nil, nil)
 		require.NoError(t, err)
 
 		// 验证路由已注册（printRoutes 在 New 中被调用，会打印路由）

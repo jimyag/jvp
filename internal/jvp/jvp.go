@@ -45,22 +45,6 @@ func New(cfg *config.Config) (*Server, error) {
 		return nil, err
 	}
 
-	// 4. 创建 Storage Service
-	storageService, err := service.NewStorageService(libvirtClient, cfg.DataDir)
-	if err != nil {
-		return nil, err
-	}
-
-	// 3. 创建 Image Service（不再使用 metadataStore）
-	imageService, err := service.NewImageService(storageService, libvirtClient)
-	if err != nil {
-		return nil, err
-	}
-
-	// 注意：不再在启动时自动下载默认镜像
-	// 用户可以通过 API 手动下载需要的镜像
-	logger.Info().Msg("Image service initialized. Use API to download images as needed.")
-
 	// 4. 创建 KeyPair Service（使用文件存储）
 	keyPairService, err := service.NewKeyPairService()
 	if err != nil {
@@ -73,27 +57,22 @@ func New(cfg *config.Config) (*Server, error) {
 	// 6. 创建 Volume Service
 	volumeService := service.NewVolumeService(nodeService, storagePoolService)
 
-	// 7. 创建 Instance Service（不再使用 metadataStore）
-	instanceService, err := service.NewInstanceService(storageService, imageService, keyPairService, libvirtClient)
+	// 7. 创建 Instance Service
+	instanceService, err := service.NewInstanceService(keyPairService, libvirtClient)
 	if err != nil {
 		return nil, err
 	}
 
 	// 8. 创建 Template Service
-	templateStore, err := service.NewTemplateStore(cfg.DataDir)
-	if err != nil {
-		return nil, fmt.Errorf("create template store: %w", err)
-	}
+	templateStore := service.NewTemplateStore(nodeService.GetNodeStorage)
 	templateService := service.NewTemplateService(nodeService.GetNodeStorage, templateStore)
 
-	// 9. 创建 API（添加 nodeService 和 storagePoolService）
+	// 9. 创建 API
 	apiInstance, err := api.New(
 		nodeService,
 		instanceService,
 		volumeService,
-		imageService,
 		keyPairService,
-		storageService,
 		storagePoolService,
 		templateService,
 	)

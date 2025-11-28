@@ -23,8 +23,6 @@ import (
 
 // InstanceService 实例服务，管理虚拟机实例
 type InstanceService struct {
-	storageService      *StorageService
-	imageService        *ImageService
 	keyPairService      *KeyPairService
 	libvirtClient       libvirt.LibvirtClient
 	virtCustomizeClient virtcustomize.VirtCustomizeClient
@@ -33,8 +31,6 @@ type InstanceService struct {
 
 // NewInstanceService 创建新的 Instance Service
 func NewInstanceService(
-	storageService *StorageService,
-	imageService *ImageService,
 	keyPairService *KeyPairService,
 	libvirtClient libvirt.LibvirtClient,
 ) (*InstanceService, error) {
@@ -42,8 +38,6 @@ func NewInstanceService(
 	virtCustomizeClient, _ := virtcustomize.NewClient()
 
 	return &InstanceService{
-		storageService:      storageService,
-		imageService:        imageService,
 		keyPairService:      keyPairService,
 		libvirtClient:       libvirtClient,
 		virtCustomizeClient: virtCustomizeClient,
@@ -57,174 +51,13 @@ func (s *InstanceService) GetLibvirtClient() libvirt.LibvirtClient {
 }
 
 // RunInstance 创建并启动实例
+// TODO: 需要重新实现，使用 Template 替代 Image
 func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstanceRequest) (*entity.Instance, error) {
-	logger := zerolog.Ctx(ctx)
-	logger.Info().Msg("Creating instance")
-
-	// 1. 生成 Instance ID
-	instanceID, err := s.idGen.GenerateInstanceID()
-	if err != nil {
-		return nil, fmt.Errorf("generate instance ID: %w", err)
-	}
-
-	// 2. 确定镜像（默认使用 ubuntu-jammy）
-	imageID := req.ImageID
-	if imageID == "" {
-		imageID = "ubuntu-jammy"
-	}
-
-	// 获取镜像信息
-	image, err := s.imageService.GetImage(ctx, imageID)
-	if err != nil {
-		return nil, fmt.Errorf("get image: %w", err)
-	}
-
-	logger.Info().
-		Str("instance_id", instanceID).
-		Str("image_id", imageID).
-		Msg("Using image for instance")
-
-	// 3. 确定实例配置（写死参数）
-	sizeGB := req.SizeGB
-	if sizeGB == 0 {
-		sizeGB = 20 // 默认 20GB
-	}
-
-	memoryMB := req.MemoryMB
-	if memoryMB == 0 {
-		memoryMB = 2048 // 默认 2GB
-	}
-
-	vcpus := req.VCPUs
-	if vcpus == 0 {
-		vcpus = 2 // 默认 2 核
-	}
-
-	// 4. 从镜像创建 Volume
-	volumeReq := &entity.CreateVolumeFromImageRequest{
-		ImageID:  imageID,
-		VolumeID: "", // 自动生成
-		SizeGB:   sizeGB,
-	}
-
-	volume, err := s.storageService.CreateVolumeFromImage(ctx, volumeReq, image.Path, image.SizeGB)
-	if err != nil {
-		return nil, fmt.Errorf("create volume from image: %w", err)
-	}
-
-	logger.Info().
-		Str("volume_id", volume.ID).
-		Str("volume_path", volume.Path).
-		Msg("Volume created from image")
-
-	// 5. 创建 Libvirt Domain
-	domainConfig := &libvirt.CreateVMConfig{
-		Name:     instanceID,      // 使用 instance ID 作为 domain 名称
-		Memory:   memoryMB * 1024, // 转换为 KB
-		VCPUs:    vcpus,
-		DiskPath: volume.Path,
-		// 使用默认值
-		DiskBus:       "virtio",
-		NetworkType:   "bridge",
-		NetworkSource: "br0",
-		OSType:        "hvm",
-		Architecture:  "x86_64",
-		Autostart:     false,
-	}
-
-	// 处理密钥对（如果指定）
-	if len(req.KeyPairIDs) > 0 && s.keyPairService != nil {
-		var publicKeys []string
-		for _, keyPairID := range req.KeyPairIDs {
-			keyPair, err := s.keyPairService.GetKeyPairByID(ctx, keyPairID)
-			if err != nil {
-				// 清理已创建的 volume
-				_ = s.storageService.DeleteVolume(ctx, volume.ID)
-				return nil, fmt.Errorf("get keypair %s: %w", keyPairID, err)
-			}
-			publicKeys = append(publicKeys, keyPair.PublicKey)
-		}
-
-		// 将公钥注入到 UserData 配置中
-		if req.UserData == nil {
-			req.UserData = &entity.UserDataConfig{}
-		}
-		if req.UserData.StructuredUserData == nil {
-			req.UserData.StructuredUserData = &entity.StructuredUserData{}
-		}
-
-		// 合并公钥到现有用户配置
-		if len(req.UserData.StructuredUserData.Users) == 0 {
-			// 如果没有用户配置，创建默认用户
-			req.UserData.StructuredUserData.Users = []entity.User{
-				{
-					Name:              "ubuntu",
-					SSHAuthorizedKeys: publicKeys,
-				},
-			}
-		} else {
-			// 合并到第一个用户
-			req.UserData.StructuredUserData.Users[0].SSHAuthorizedKeys = append(
-				req.UserData.StructuredUserData.Users[0].SSHAuthorizedKeys,
-				publicKeys...,
-			)
-		}
-	}
-
-	// 处理 UserData（如果提供）
-	if req.UserData != nil {
-		cloudInitConfig, cloudInitUserData, err := s.convertUserDataToCloudInit(ctx, instanceID, req.UserData)
-		if err != nil {
-			// 清理已创建的 volume
-			_ = s.storageService.DeleteVolume(ctx, volume.ID)
-			return nil, fmt.Errorf("convert userdata to cloud-init: %w", err)
-		}
-
-		if cloudInitConfig != nil {
-			domainConfig.CloudInit = cloudInitConfig
-			logger.Info().Msg("Cloud-init config added to domain")
-		}
-		if cloudInitUserData != nil {
-			domainConfig.CloudInitUserData = cloudInitUserData
-			logger.Info().Msg("Cloud-init userdata added to domain")
-		}
-	}
-
-	domain, err := s.libvirtClient.CreateDomain(domainConfig, true) // true = 立即启动
-	if err != nil {
-		// 清理已创建的 volume
-		_ = s.storageService.DeleteVolume(ctx, volume.ID)
-		return nil, fmt.Errorf("create libvirt domain: %w", err)
-	}
-
-	logger.Info().
-		Str("domain_name", domain.Name).
-		Msg("Libvirt domain created and started")
-
-	// 6. 格式化 Domain UUID
-	domainUUIDStr := formatDomainUUID(domain.UUID)
-
-	// 7. 构建 Instance 对象
-	instance := &entity.Instance{
-		ID:         instanceID,
-		Name:       instanceID, // 默认使用 ID 作为名称
-		State:      "running",  // 刚创建并启动，状态为 running
-		ImageID:    imageID,
-		VolumeID:   volume.ID,
-		MemoryMB:   memoryMB,
-		VCPUs:      vcpus,
-		CreatedAt:  time.Now().Format(time.RFC3339),
-		DomainUUID: domainUUIDStr,
-		DomainName: domain.Name,
-	}
-
-	logger.Info().
-		Str("instance_id", instanceID).
-		Str("domain_name", domain.Name).
-		Msg("Instance created successfully")
-
-	// Instance 已存储在 libvirt 中，不需要额外保存
-	return instance, nil
+	return nil, apierror.NewErrorWithStatus(
+		"NotImplemented",
+		"RunInstance is not implemented yet, please use Template to create instances",
+		501,
+	)
 }
 
 // formatDomainUUID 格式化 Domain UUID
@@ -547,20 +380,7 @@ func (s *InstanceService) TerminateInstances(ctx context.Context, req *entity.Te
 			Str("instanceID", instanceID).
 			Msg("Domain deleted successfully")
 
-		// 删除关联的 volume（可选，根据配置决定）
-		if instance.VolumeID != "" {
-			logger.Info().
-				Str("instanceID", instanceID).
-				Str("volumeID", instance.VolumeID).
-				Msg("Deleting associated volume")
-			if err := s.storageService.DeleteVolume(ctx, instance.VolumeID); err != nil {
-				logger.Warn().
-					Str("instanceID", instanceID).
-					Str("volumeID", instance.VolumeID).
-					Err(err).
-					Msg("Failed to delete associated volume, continuing")
-			}
-		}
+		// TODO: 删除关联的 volume（需要重新实现）
 
 		// Domain 已从 libvirt 删除，不需要额外操作
 		changes = append(changes, entity.InstanceStateChange{
