@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 
 interface VNCConsoleProps {
   wsUrl: string;
@@ -15,6 +15,7 @@ export default function VNCConsole({
   onDisconnect,
 }: VNCConsoleProps) {
   const [iframeUrl, setIframeUrl] = useState<string>("");
+  const hasConnected = useRef(false);
 
   useEffect(() => {
     if (wsUrl) {
@@ -22,14 +23,20 @@ export default function VNCConsole({
       const url = `/vnc.html?ws=${encodeURIComponent(wsUrl)}`;
       setIframeUrl(url);
 
-      // 简单的连接状态模拟 (实际状态由iframe内部管理)
-      const timer = setTimeout(() => {
-        onConnect?.();
-      }, 2000);
+      // 只在首次连接时触发 onConnect
+      if (!hasConnected.current) {
+        const timer = setTimeout(() => {
+          if (!hasConnected.current) {
+            hasConnected.current = true;
+            onConnect?.();
+          }
+        }, 2000);
 
-      return () => clearTimeout(timer);
+        return () => clearTimeout(timer);
+      }
     }
-  }, [wsUrl, onConnect]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wsUrl]);
 
   if (!iframeUrl) {
     return (

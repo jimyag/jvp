@@ -3,6 +3,8 @@
 import { createContext, useContext, useState, useCallback, ReactNode } from "react";
 import Toast, { ToastType } from "./Toast";
 
+const MAX_TOASTS = 3;
+
 interface ToastMessage {
   id: string;
   type: ToastType;
@@ -36,7 +38,14 @@ export function ToastProvider({ children }: ToastProviderProps) {
 
   const showToast = useCallback((type: ToastType, message: string) => {
     const id = Date.now().toString();
-    setToasts((prev) => [...prev, { id, type, message }]);
+    setToasts((prev) => {
+      const newToasts = [...prev, { id, type, message }];
+      // 只保留最新的 MAX_TOASTS 个
+      if (newToasts.length > MAX_TOASTS) {
+        return newToasts.slice(-MAX_TOASTS);
+      }
+      return newToasts;
+    });
   }, []);
 
   const removeToast = useCallback((id: string) => {
@@ -52,7 +61,7 @@ export function ToastProvider({ children }: ToastProviderProps) {
     <ToastContext.Provider value={{ showToast, success, error, warning, info }}>
       {children}
 
-      {/* Toast Container */}
+      {/* Toast Container - 只显示最新的 MAX_TOASTS 个 */}
       <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-md">
         {toasts.map((toast) => (
           <Toast
