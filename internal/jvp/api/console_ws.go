@@ -118,25 +118,49 @@ func (c *ConsoleWS) HandleVNCWebSocket(ctx *gin.Context) {
 		return
 	}
 
+	// 判断是远程连接还是本地连接
+	isRemote := client.IsRemoteConnection()
+	var sshTarget string
+	if isRemote {
+		sshTarget, err = client.GetSSHTarget()
+		if err != nil {
+			logger.Error().
+				Err(err).
+				Str("node_name", nodeName).
+				Msg("Failed to get SSH target")
+			wsConn.WriteMessage(websocket.CloseMessage, []byte("Failed to get SSH target"))
+			return
+		}
+	}
+
 	logger.Info().
 		Str("instance_id", instanceID).
 		Str("vnc_socket", consoleInfo.VNCSocket).
 		Str("ws_remote_addr", ctx.Request.RemoteAddr).
+		Bool("is_remote", isRemote).
+		Str("ssh_target", sshTarget).
 		Msg("Starting VNC proxy")
 
-	// 验证 VNC socket 文件是否存在
-	if _, err := os.Stat(consoleInfo.VNCSocket); err != nil {
-		logger.Error().
-			Err(err).
-			Str("instance_id", instanceID).
-			Str("vnc_socket", consoleInfo.VNCSocket).
-			Msg("VNC socket file not accessible")
-		wsConn.WriteMessage(websocket.CloseMessage, []byte("VNC socket file not accessible"))
-		return
+	// 对于本地连接，验证 VNC socket 文件是否存在
+	if !isRemote {
+		if _, err := os.Stat(consoleInfo.VNCSocket); err != nil {
+			logger.Error().
+				Err(err).
+				Str("instance_id", instanceID).
+				Str("vnc_socket", consoleInfo.VNCSocket).
+				Msg("VNC socket file not accessible")
+			wsConn.WriteMessage(websocket.CloseMessage, []byte("VNC socket file not accessible"))
+			return
+		}
 	}
 
 	// 创建并启动 VNC 代理
-	proxy := wsproxy.NewVNCProxy(consoleInfo.VNCSocket, wsConn)
+	var proxy *wsproxy.VNCProxy
+	if isRemote {
+		proxy = wsproxy.NewRemoteVNCProxy(consoleInfo.VNCSocket, wsConn, sshTarget)
+	} else {
+		proxy = wsproxy.NewVNCProxy(consoleInfo.VNCSocket, wsConn)
+	}
 	if err := proxy.Start(); err != nil {
 		logger.Error().
 			Err(err).
@@ -230,14 +254,36 @@ func (c *ConsoleWS) HandleSerialWebSocket(ctx *gin.Context) {
 		return
 	}
 
+	// 判断是远程连接还是本地连接
+	isRemote := client.IsRemoteConnection()
+	var sshTarget string
+	if isRemote {
+		sshTarget, err = client.GetSSHTarget()
+		if err != nil {
+			logger.Error().
+				Err(err).
+				Str("node_name", nodeName).
+				Msg("Failed to get SSH target")
+			wsConn.WriteMessage(websocket.CloseMessage, []byte("Failed to get SSH target"))
+			return
+		}
+	}
+
 	logger.Info().
 		Str("instance_id", instanceID).
 		Str("serial_device", consoleInfo.SerialDevice).
+		Bool("is_remote", isRemote).
+		Str("ssh_target", sshTarget).
 		Msg("Starting Serial proxy")
 
 	// 创建并启动 Serial 代理
-	proxy := wsproxy.NewSerialProxy(consoleInfo.SerialDevice, wsConn)
-	if err := proxy.Start(); err != nil {
+	var serialProxy *wsproxy.SerialProxy
+	if isRemote {
+		serialProxy = wsproxy.NewRemoteSerialProxy(consoleInfo.SerialDevice, wsConn, sshTarget)
+	} else {
+		serialProxy = wsproxy.NewSerialProxy(consoleInfo.SerialDevice, wsConn)
+	}
+	if err := serialProxy.Start(); err != nil {
 		logger.Error().
 			Err(err).
 			Str("instance_id", instanceID).

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import "@xterm/xterm/css/xterm.css";
 
 interface SerialConsoleProps {
@@ -19,21 +19,31 @@ export default function SerialConsole({
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<any>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const fitAddonRef = useRef<any>(null);
   const [loading, setLoading] = useState(true);
+  const [isInitialized, setIsInitialized] = useState(false);
 
   useEffect(() => {
+    // 如果已经初始化过，不要重复初始化
+    if (isInitialized || xtermRef.current) return;
+
     let term: any = null;
     let ws: WebSocket | null = null;
     let fitAddon: any = null;
+    let isMounted = true;
 
     const initTerminal = async () => {
-      if (!terminalRef.current) return;
+      // 确保 DOM 元素存在
+      if (!terminalRef.current || !isMounted) return;
 
       try {
         // 动态导入 xterm 以避免 SSR 问题
         const { Terminal } = await import("@xterm/xterm");
         const { FitAddon } = await import("@xterm/addon-fit");
         const { WebLinksAddon } = await import("@xterm/addon-web-links");
+
+        // 再次检查 DOM 元素和挂载状态
+        if (!terminalRef.current || !isMounted) return;
 
         // 创建终端
         term = new Terminal({
@@ -54,10 +64,31 @@ export default function SerialConsole({
         term.loadAddon(fitAddon);
         term.loadAddon(new WebLinksAddon());
 
-        term.open(terminalRef.current);
-        fitAddon.fit();
+        // 确保容器有尺寸
+        const container = terminalRef.current;
+        if (container.clientWidth === 0 || container.clientHeight === 0) {
+          // 等待容器有尺寸
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+
+        if (!isMounted) return;
+
+        term.open(container);
+
+        // 延迟 fit 以确保 DOM 完全渲染
+        setTimeout(() => {
+          if (fitAddon && isMounted) {
+            try {
+              fitAddon.fit();
+            } catch (e) {
+              console.warn("Initial fit failed:", e);
+            }
+          }
+        }, 50);
 
         xtermRef.current = term;
+        fitAddonRef.current = fitAddon;
+        setIsInitialized(true);
 
         // 连接 WebSocket
         ws = new WebSocket(wsUrl);
@@ -103,9 +134,9 @@ export default function SerialConsole({
 
         // 窗口调整大小时重新 fit
         const handleResize = () => {
-          if (fitAddon) {
+          if (fitAddonRef.current) {
             try {
-              fitAddon.fit();
+              fitAddonRef.current.fit();
             } catch (error) {
               console.error("Error fitting terminal:", error);
             }
@@ -117,27 +148,34 @@ export default function SerialConsole({
         // 初始欢迎信息
         term.write("Connecting to serial console...\r\n");
 
+        // 清理函数
         return () => {
           window.removeEventListener("resize", handleResize);
         };
       } catch (error) {
         console.error("Failed to initialize terminal:", error);
-        setLoading(false);
-        onError?.("Failed to initialize terminal");
+        if (isMounted) {
+          setLoading(false);
+          onError?.("Failed to initialize terminal");
+        }
       }
     };
 
     initTerminal();
 
     return () => {
-      if (ws) {
-        ws.close();
+      isMounted = false;
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
       }
-      if (term) {
-        term.dispose();
+      if (xtermRef.current) {
+        xtermRef.current.dispose();
+        xtermRef.current = null;
       }
+      setIsInitialized(false);
     };
-  }, [wsUrl, onConnect, onDisconnect, onError]);
+  }, [wsUrl]); // 只依赖 wsUrl，避免不必要的重新初始化
 
   return (
     <div className="relative w-full h-full bg-black">

@@ -296,6 +296,11 @@ func (m *MockClient) GetConnectionURI() string {
 	return args.String(0)
 }
 
+func (m *MockClient) GetSSHTarget() (string, error) {
+	args := m.Called()
+	return args.String(0), args.Error(1)
+}
+
 func (m *MockClient) ExecuteRemoteCommand(cmd string) error {
 	args := m.Called(cmd)
 	return args.Error(0)

@@ -20,7 +20,7 @@
             height: 100vh;
             display: flex;
             align-items: center;
-            justify-center;
+            justify-content: center;
         }
         #status {
             position: absolute;
@@ -49,8 +49,8 @@
     <div id="screen"></div>
 
     <script type="module">
-        // 使用 CDN 加载 noVNC
-        import RFB from 'https://cdn.jsdelivr.net/npm/@novnc/novnc@1.4.0/lib/rfb.js';
+        // 使用本地的 noVNC ES module
+        import RFB from '/novnc/rfb.js';
 
         const status = document.getElementById('status');
         const screen = document.getElementById('screen');
@@ -102,7 +102,7 @@
 
             } catch (error) {
                 console.error('Failed to initialize VNC:', error);
-                status.textContent = `Error: ${error.message}`;
+                status.textContent = 'Error: ' + error.message;
                 status.className = 'disconnected';
             }
         }

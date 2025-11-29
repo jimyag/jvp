@@ -2,18 +2,18 @@
 
 import { useEffect, useState } from "react";
 
-interface VNCConsoleIframeProps {
+interface VNCConsoleProps {
   wsUrl: string;
   onConnect?: () => void;
   onDisconnect?: () => void;
   onError?: (error: string) => void;
 }
 
-export default function VNCConsoleIframe({
+export default function VNCConsole({
   wsUrl,
   onConnect,
   onDisconnect,
-}: VNCConsoleIframeProps) {
+}: VNCConsoleProps) {
   const [iframeUrl, setIframeUrl] = useState<string>("");
 
   useEffect(() => {

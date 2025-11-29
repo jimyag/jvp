@@ -9,7 +9,7 @@ import { Monitor, Terminal as TerminalIcon, ArrowLeft, AlertCircle } from "lucid
 import dynamic from "next/dynamic";
 
 // 动态导入避免 SSR 问题
-const VNCConsole = dynamic(() => import("@/components/VNCConsoleIframe"), { ssr: false });
+const VNCConsole = dynamic(() => import("@/components/VNCConsole"), { ssr: false });
 const SerialConsole = dynamic(() => import("@/components/SerialConsole"), { ssr: false });
 
 type ConsoleType = "vnc" | "serial";

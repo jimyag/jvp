@@ -73,6 +73,7 @@ type LibvirtClient interface {
 	// Remote File 操作（用于远程节点）
 	IsRemoteConnection() bool
 	GetConnectionURI() string
+	GetSSHTarget() (string, error)
 	ExecuteRemoteCommand(cmd string) error
 	ReadRemoteFile(path string) ([]byte, error)
 	ListRemoteFiles(dir, pattern string) ([]string, error)

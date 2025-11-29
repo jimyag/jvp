@@ -517,7 +517,7 @@ func (c *Client) UploadFileToPool(poolName string, volumeName string, localFileP
 	// 由于 go-libvirt 对 stream 的支持有限，我们使用 SSH 方式作为后备
 	if c.IsRemoteConnection() {
 		// 远程连接使用 SSH 上传
-		sshTarget, err := c.getSSHTarget()
+		sshTarget, err := c.GetSSHTarget()
 		if err != nil {
 			return nil, fmt.Errorf("get SSH target: %w", err)
 		}
@@ -867,8 +867,9 @@ func (c *Client) IsRemoteConnection() bool {
 		parsedURI.Host != ""
 }
 
-// getSSHTarget 从 libvirt URI 获取 SSH 目标
-func (c *Client) getSSHTarget() (string, error) {
+// GetSSHTarget 从 libvirt URI 获取 SSH 目标
+// 返回格式: user@host
+func (c *Client) GetSSHTarget() (string, error) {
 	uri := c.GetConnectionURI()
 	parsedURI, err := url.Parse(uri)
 	if err != nil {
@@ -890,7 +891,7 @@ func (c *Client) ExecuteRemoteCommand(command string) error {
 		return fmt.Errorf("not a remote connection")
 	}
 
-	sshTarget, err := c.getSSHTarget()
+	sshTarget, err := c.GetSSHTarget()
 	if err != nil {
 		return err
 	}
@@ -910,7 +911,7 @@ func (c *Client) ReadRemoteFile(path string) ([]byte, error) {
 		return nil, fmt.Errorf("not a remote connection")
 	}
 
-	sshTarget, err := c.getSSHTarget()
+	sshTarget, err := c.GetSSHTarget()
 	if err != nil {
 		return nil, err
 	}
@@ -930,7 +931,7 @@ func (c *Client) ListRemoteFiles(dir, pattern string) ([]string, error) {
 		return nil, fmt.Errorf("not a remote connection")
 	}
 
-	sshTarget, err := c.getSSHTarget()
+	sshTarget, err := c.GetSSHTarget()
 	if err != nil {
 		return nil, err
 	}
@@ -1007,7 +1008,7 @@ func (c *Client) createCloudInitISOLocal(outputDir, vmName, metaData, userData, 
 
 // createCloudInitISORemote 在远程节点创建 cloud-init ISO
 func (c *Client) createCloudInitISORemote(outputDir, vmName, metaData, userData, isoPath string) (string, error) {
-	sshTarget, err := c.getSSHTarget()
+	sshTarget, err := c.GetSSHTarget()
 	if err != nil {
 		return "", err
 	}
