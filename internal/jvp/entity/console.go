@@ -2,8 +2,9 @@ package entity
 
 // GetConsoleRequest 获取控制台连接信息请求
 type GetConsoleRequest struct {
-	InstanceID string `json:"instance_id" binding:"required"`
-	Type       string `json:"type"` // vnc, serial, 为空则返回两种都支持的信息
+	NodeName   string `json:"node_name" binding:"required"`   // 节点名称
+	InstanceID string `json:"instance_id" binding:"required"` // 实例 ID
+	Type       string `json:"type"`                           // vnc, serial, 为空则返回两种都支持的信息
 }
 
 // GetConsoleResponse 获取控制台连接信息响应

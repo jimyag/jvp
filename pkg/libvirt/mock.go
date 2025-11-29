@@ -204,6 +204,22 @@ func (m *MockClient) CreateVolume(poolName, volumeName string, sizeGB uint64, fo
 	return args.Get(0).(*VolumeInfo), args.Error(1)
 }
 
+func (m *MockClient) CreateVolumeWithBackingStore(poolName, volumeName string, capacityGB uint64, format string, backingPath string, backingFormat string) (*VolumeInfo, error) {
+	args := m.Called(poolName, volumeName, capacityGB, format, backingPath, backingFormat)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*VolumeInfo), args.Error(1)
+}
+
+func (m *MockClient) UploadFileToPool(poolName string, volumeName string, localFilePath string) (*VolumeInfo, error) {
+	args := m.Called(poolName, volumeName, localFilePath)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*VolumeInfo), args.Error(1)
+}
+
 func (m *MockClient) ResizeVolume(poolName, volumeName string, newSizeGB uint64) error {
 	args := m.Called(poolName, volumeName, newSizeGB)
 	return args.Error(0)
@@ -299,6 +315,12 @@ func (m *MockClient) ListRemoteFiles(dir, pattern string) ([]string, error) {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]string), args.Error(1)
+}
+
+// Cloud-Init 操作
+func (m *MockClient) CreateCloudInitISO(outputDir, vmName, metaData, userData string) (string, error) {
+	args := m.Called(outputDir, vmName, metaData, userData)
+	return args.String(0), args.Error(1)
 }
 
 // NewMockClient 创建新的 MockClient

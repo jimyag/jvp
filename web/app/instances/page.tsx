@@ -15,19 +15,32 @@ interface Instance {
   id: string;
   name: string;
   state: string;
+  node_name: string;
+  template_id?: string;
   vcpus: number;
   memory_mb: number;
-  image_id?: string;
-  volume_id?: string;
   created_at: string;
   domain_uuid?: string;
   domain_name?: string;
 }
 
-interface Image {
-  id: string;
+interface Node {
+  name: string;
+  uri: string;
+  status: string;
+}
+
+interface StoragePool {
   name: string;
   state: string;
+  path: string;
+}
+
+interface Template {
+  id: string;
+  name: string;
+  format: string;
+  size_gb: number;
 }
 
 interface KeyPair {
@@ -39,32 +52,34 @@ interface KeyPair {
 export default function InstancesPage() {
   const toast = useToast();
   const [instances, setInstances] = useState<Instance[]>([]);
-  const [images, setImages] = useState<Image[]>([]);
+  const [nodes, setNodes] = useState<Node[]>([]);
+  const [storagePools, setStoragePools] = useState<StoragePool[]>([]);
+  const [templates, setTemplates] = useState<Template[]>([]);
   const [keypairs, setKeypairs] = useState<KeyPair[]>([]);
   const [loading, setLoading] = useState(true);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-  const [instanceToDelete, setInstanceToDelete] = useState<string>("");
+  const [instanceToDelete, setInstanceToDelete] = useState<{id: string, nodeName: string} | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedNode, setSelectedNode] = useState<string>("");
   const [currentStep, setCurrentStep] = useState(0);
   const [keypairInputMethod, setKeypairInputMethod] = useState<"select" | "upload" | "manual">("select");
   const [manualPublicKey, setManualPublicKey] = useState("");
   const [formData, setFormData] = useState({
-    // 基础配置
-    image_id: "",
+    node_name: "",
+    pool_name: "",
+    template_id: "",
     size_gb: 20,
     memory_mb: 2048,
     vcpus: 2,
+    network_type: "bridge",
+    network_source: "br0",
     keypair_ids: [] as string[],
-
-    // UserData 配置
     hostname: "",
     timezone: "Asia/Shanghai",
     disable_root: false,
     packages: [] as string[],
     run_cmd: [] as string[],
-
-    // 用户配置
     username: "",
     user_password: "",
     user_sudo: "ALL=(ALL) NOPASSWD:ALL",
@@ -73,24 +88,50 @@ export default function InstancesPage() {
   });
 
   const filteredInstances = useMemo(() => {
-    if (!searchQuery) return instances;
+    let filtered = instances;
+    if (selectedNode) {
+      filtered = filtered.filter(i => i.node_name === selectedNode);
+    }
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(
+        (instance) =>
+          instance.id.toLowerCase().includes(query) ||
+          instance.name?.toLowerCase().includes(query) ||
+          instance.state.toLowerCase().includes(query) ||
+          instance.node_name?.toLowerCase().includes(query)
+      );
+    }
+    return filtered;
+  }, [instances, searchQuery, selectedNode]);
 
-    const query = searchQuery.toLowerCase();
-    return instances.filter(
-      (instance) =>
-        instance.id.toLowerCase().includes(query) ||
-        instance.name?.toLowerCase().includes(query) ||
-        instance.state.toLowerCase().includes(query)
-    );
-  }, [instances, searchQuery]);
+  const fetchNodes = async () => {
+    try {
+      const response = await fetch("/api/list-nodes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setNodes(data.nodes || []);
+        if (data.nodes?.length > 0 && !selectedNode) {
+          setSelectedNode(data.nodes[0].name);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to fetch nodes:", error);
+    }
+  };
 
   const fetchInstances = async () => {
+    if (!selectedNode) return;
     setLoading(true);
     try {
       const response = await fetch("/api/instances/describe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ node_name: selectedNode }),
       });
       if (response.ok) {
         const data = await response.json();
@@ -106,19 +147,37 @@ export default function InstancesPage() {
     }
   };
 
-  const fetchImages = async () => {
+  const fetchStoragePools = async (nodeName: string) => {
+    if (!nodeName) return;
     try {
-      const response = await fetch("/api/images/describe", {
+      const response = await fetch("/api/list-storage-pools", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ node_name: nodeName }),
       });
       if (response.ok) {
         const data = await response.json();
-        setImages(data.images || []);
+        setStoragePools(data.pools || []);
       }
     } catch (error) {
-      console.error("Failed to fetch images:", error);
+      console.error("Failed to fetch storage pools:", error);
+    }
+  };
+
+  const fetchTemplates = async (nodeName: string, poolName: string) => {
+    if (!nodeName || !poolName) return;
+    try {
+      const response = await fetch("/api/list-templates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ node_name: nodeName, pool_name: poolName }),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setTemplates(data.templates || []);
+      }
+    } catch (error) {
+      console.error("Failed to fetch templates:", error);
     }
   };
 
@@ -139,15 +198,37 @@ export default function InstancesPage() {
   };
 
   useEffect(() => {
-    fetchInstances();
-    fetchImages();
+    fetchNodes();
     fetchKeypairs();
   }, []);
 
+  useEffect(() => {
+    if (selectedNode) {
+      fetchInstances();
+    }
+  }, [selectedNode]);
+
+  useEffect(() => {
+    if (formData.node_name) {
+      fetchStoragePools(formData.node_name);
+    }
+  }, [formData.node_name]);
+
+  useEffect(() => {
+    if (formData.node_name && formData.pool_name) {
+      fetchTemplates(formData.node_name, formData.pool_name);
+    }
+  }, [formData.node_name, formData.pool_name]);
+
   const handleCreateInstance = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // 只有在最后一步才能提交
+    if (currentStep < 2) {
+      return;
+    }
+
     try {
-      // 如果是手动输入或上传公钥，先创建密钥对
       let finalKeypairIds = [...formData.keypair_ids];
       if (keypairInputMethod === "manual" && manualPublicKey.trim()) {
         try {
@@ -176,23 +257,17 @@ export default function InstancesPage() {
         }
       }
 
-      // 构建 UserData 配置
       const userData: any = {};
-
-      // 构建结构化 UserData
       const structuredUserData: any = {};
 
       if (formData.hostname) {
         structuredUserData.hostname = formData.hostname;
       }
-
       if (formData.timezone) {
         structuredUserData.timezone = formData.timezone;
       }
-
       structuredUserData.disable_root = formData.disable_root;
 
-      // 添加用户配置
       if (formData.username) {
         structuredUserData.users = [{
           name: formData.username,
@@ -200,31 +275,30 @@ export default function InstancesPage() {
           sudo: formData.user_sudo,
           groups: formData.user_groups,
           shell: formData.user_shell,
-          ssh_authorized_keys: formData.keypair_ids.length > 0 ? formData.keypair_ids : undefined,
         }];
       }
 
-      // 添加软件包
       if (formData.packages.length > 0) {
         structuredUserData.packages = formData.packages;
       }
-
-      // 添加运行命令
       if (formData.run_cmd.length > 0) {
         structuredUserData.run_cmd = formData.run_cmd;
       }
 
-      // 只有当有配置时才添加 user_data
       const hasUserData = Object.keys(structuredUserData).length > 0;
       if (hasUserData) {
         userData.structured_user_data = structuredUserData;
       }
 
       const requestBody: any = {
-        image_id: formData.image_id,
+        node_name: formData.node_name,
+        pool_name: formData.pool_name,
+        template_id: formData.template_id || undefined,
         size_gb: formData.size_gb,
         memory_mb: formData.memory_mb,
         vcpus: formData.vcpus,
+        network_type: formData.network_type,
+        network_source: formData.network_source,
         keypair_ids: finalKeypairIds.length > 0 ? finalKeypairIds : undefined,
       };
 
@@ -241,14 +315,18 @@ export default function InstancesPage() {
       if (response.ok) {
         setIsCreateModalOpen(false);
         setCurrentStep(0);
+        setSelectedNode(formData.node_name);
         fetchInstances();
-        fetchKeypairs(); // 刷新密钥对列表
-        // 重置表单
+        fetchKeypairs();
         setFormData({
-          image_id: "",
+          node_name: "",
+          pool_name: "",
+          template_id: "",
           size_gb: 20,
           memory_mb: 2048,
           vcpus: 2,
+          network_type: "bridge",
+          network_source: "br0",
           keypair_ids: [],
           hostname: "",
           timezone: "Asia/Shanghai",
@@ -274,19 +352,20 @@ export default function InstancesPage() {
     }
   };
 
-  const handleAction = async (instanceId: string, action: string) => {
+  const handleAction = async (instance: Instance, action: string) => {
     try {
       const response = await fetch(`/api/instances/${action}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instanceIDs: [instanceId] }),
+        body: JSON.stringify({
+          node_name: instance.node_name,
+          instance_ids: [instance.id]
+        }),
       });
 
       if (response.ok) {
         const actionName = action === "start" ? "started" : action === "stop" ? "stopped" : "rebooted";
         toast.success(`Instance ${actionName} successfully!`);
-
-        // 延迟刷新以等待后端状态更新
         setTimeout(() => {
           fetchInstances();
         }, 2000);
@@ -300,17 +379,21 @@ export default function InstancesPage() {
     }
   };
 
-  const handleDeleteClick = (instanceId: string) => {
-    setInstanceToDelete(instanceId);
+  const handleDeleteClick = (instance: Instance) => {
+    setInstanceToDelete({id: instance.id, nodeName: instance.node_name});
     setIsDeleteDialogOpen(true);
   };
 
   const handleDeleteConfirm = async () => {
+    if (!instanceToDelete) return;
     try {
       const response = await fetch("/api/instances/terminate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instanceIDs: [instanceToDelete] }),
+        body: JSON.stringify({
+          node_name: instanceToDelete.nodeName,
+          instance_ids: [instanceToDelete.id]
+        }),
       });
 
       if (response.ok) {
@@ -330,8 +413,8 @@ export default function InstancesPage() {
     {
       key: "id",
       label: "ID",
-      render: (value: unknown) => (
-        <a href={`/instances/${value}`} className="text-accent hover:underline font-mono text-xs">
+      render: (value: unknown, row: any) => (
+        <a href={`/instances/${row.node_name}/${value}`} className="text-accent hover:underline font-mono text-xs">
           {String(value).substring(0, 12)}...
         </a>
       ),
@@ -340,10 +423,15 @@ export default function InstancesPage() {
       key: "name",
       label: "Name",
       render: (_: unknown, row: any) => (
-        <a href={`/instances/${row.id}`} className="text-primary hover:text-accent font-medium">
+        <a href={`/instances/${row.node_name}/${row.id}`} className="text-primary hover:text-accent font-medium">
           {row.name || row.domain_name || "N/A"}
         </a>
       ),
+    },
+    {
+      key: "node_name",
+      label: "Node",
+      render: (value: unknown) => <span className="text-gray-600">{String(value)}</span>,
     },
     {
       key: "state",
@@ -361,8 +449,8 @@ export default function InstancesPage() {
       render: (value: unknown) => <span>{(Number(value) / 1024).toFixed(1)} GB</span>,
     },
     {
-      key: "image_id",
-      label: "Image",
+      key: "template_id",
+      label: "Template",
       render: (value: unknown) => <span>{value ? String(value).substring(0, 12) + "..." : "N/A"}</span>
     },
     {
@@ -374,7 +462,7 @@ export default function InstancesPage() {
           <div className="flex gap-2">
             {instance.state === "running" ? (
               <button
-                onClick={() => handleAction(instance.id, "stop")}
+                onClick={() => handleAction(instance, "stop")}
                 className="p-2 text-gray-600 hover:text-red-600 transition-colors"
                 title="Stop"
               >
@@ -382,7 +470,7 @@ export default function InstancesPage() {
               </button>
             ) : (
               <button
-                onClick={() => handleAction(instance.id, "start")}
+                onClick={() => handleAction(instance, "start")}
                 className="p-2 text-gray-600 hover:text-green-600 transition-colors"
                 title="Start"
               >
@@ -390,14 +478,14 @@ export default function InstancesPage() {
               </button>
             )}
             <button
-              onClick={() => handleAction(instance.id, "reboot")}
+              onClick={() => handleAction(instance, "reboot")}
               className="p-2 text-gray-600 hover:text-blue-600 transition-colors"
               title="Reboot"
             >
               <RefreshCw size={16} />
             </button>
             <button
-              onClick={() => handleDeleteClick(instance.id)}
+              onClick={() => handleDeleteClick(instance)}
               className="p-2 text-gray-600 hover:text-red-600 transition-colors"
               title="Delete"
             >
@@ -426,6 +514,22 @@ export default function InstancesPage() {
         onRefresh={fetchInstances}
       />
 
+      {/* Node selector */}
+      <div className="mb-4 flex gap-4 items-center">
+        <label className="text-sm font-medium text-gray-700">Node:</label>
+        <select
+          className="input w-48"
+          value={selectedNode}
+          onChange={(e) => setSelectedNode(e.target.value)}
+        >
+          {nodes.map((node) => (
+            <option key={node.name} value={node.name}>
+              {node.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
       {loading ? (
         <div className="card text-center py-12">
           <p className="text-gray-500">Loading instances...</p>
@@ -435,7 +539,7 @@ export default function InstancesPage() {
           <div className="mb-4">
             <SearchFilter
               onSearch={setSearchQuery}
-              placeholder="Search instances by ID, name, or state..."
+              placeholder="Search instances by ID, name, state, or node..."
             />
           </div>
           <Table
@@ -459,20 +563,32 @@ export default function InstancesPage() {
         title="Create New Instance"
         maxWidth="xl"
       >
-        <form onSubmit={handleCreateInstance} className="space-y-6">
-          {/* 步骤指示器 */}
+        <form
+          onSubmit={handleCreateInstance}
+          onKeyDown={(e) => {
+            // 阻止 Enter 键在非最后一步时提交表单
+            if (e.key === "Enter" && currentStep < 2) {
+              e.preventDefault();
+            }
+          }}
+          className="space-y-6"
+        >
+          {/* Step indicator */}
           <div className="flex items-center justify-between border-b pb-4">
             {["Basic", "User & System", "Advanced"].map((step, index) => (
               <div key={step} className="flex items-center">
-                <div
+                <button
+                  type="button"
+                  onClick={() => setCurrentStep(index)}
+                  disabled={index === 0 ? false : (index === 1 ? !formData.node_name || !formData.pool_name : false)}
                   className={`flex items-center justify-center w-8 h-8 rounded-full border-2 transition-colors ${
                     currentStep >= index
                       ? "border-accent bg-accent text-white"
                       : "border-gray-300 text-gray-400"
-                  }`}
+                  } ${index > 0 && (!formData.node_name || !formData.pool_name) ? "cursor-not-allowed opacity-50" : "cursor-pointer hover:opacity-80"}`}
                 >
                   {index + 1}
-                </div>
+                </button>
                 <span
                   className={`ml-2 text-sm font-medium ${
                     currentStep >= index ? "text-accent" : "text-gray-400"
@@ -491,30 +607,71 @@ export default function InstancesPage() {
             ))}
           </div>
 
-          {/* Step 1: 基础配置 */}
+          {/* Step 1: Basic Configuration */}
           {currentStep === 0 && (
             <div className="space-y-4">
-              <h3 className="font-semibold text-gray-900">基础配置</h3>
+              <h3 className="font-semibold text-gray-900">Basic Configuration</h3>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="label">Node *</label>
+                  <select
+                    className="input"
+                    value={formData.node_name}
+                    onChange={(e) =>
+                      setFormData({ ...formData, node_name: e.target.value, pool_name: "", template_id: "" })
+                    }
+                    required
+                  >
+                    <option value="">Select Node</option>
+                    {nodes.map((node) => (
+                      <option key={node.name} value={node.name}>
+                        {node.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="label">Storage Pool *</label>
+                  <select
+                    className="input"
+                    value={formData.pool_name}
+                    onChange={(e) =>
+                      setFormData({ ...formData, pool_name: e.target.value, template_id: "" })
+                    }
+                    required
+                    disabled={!formData.node_name}
+                  >
+                    <option value="">Select Storage Pool</option>
+                    {storagePools.map((pool) => (
+                      <option key={pool.name} value={pool.name}>
+                        {pool.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
 
               <div>
-                <label className="label">镜像 (Image) *</label>
+                <label className="label">Template</label>
                 <select
                   className="input"
-                  value={formData.image_id}
+                  value={formData.template_id}
                   onChange={(e) =>
-                    setFormData({ ...formData, image_id: e.target.value })
+                    setFormData({ ...formData, template_id: e.target.value })
                   }
-                  required
+                  disabled={!formData.pool_name}
                 >
-                  <option value="">请选择镜像</option>
-                  {images.map((image) => (
-                    <option key={image.id} value={image.id}>
-                      {image.name} ({image.id})
+                  <option value="">No Template (Empty Disk)</option>
+                  {templates.map((template) => (
+                    <option key={template.id} value={template.id}>
+                      {template.name} ({template.size_gb}GB, {template.format})
                     </option>
                   ))}
                 </select>
                 <p className="text-xs text-gray-500 mt-1">
-                  选择用于创建实例的系统镜像
+                  Select a template to create instance from, or leave empty for blank disk
                 </p>
               </div>
 
@@ -535,7 +692,7 @@ export default function InstancesPage() {
                 </div>
 
                 <div>
-                  <label className="label">内存 (Memory MB) *</label>
+                  <label className="label">Memory (MB) *</label>
                   <input
                     type="number"
                     className="input"
@@ -554,7 +711,7 @@ export default function InstancesPage() {
               </div>
 
               <div>
-                <label className="label">磁盘大小 (Disk Size GB) *</label>
+                <label className="label">Disk Size (GB) *</label>
                 <input
                   type="number"
                   className="input"
@@ -567,10 +724,42 @@ export default function InstancesPage() {
                 />
               </div>
 
-              <div>
-                <label className="label">密钥对 (Key Pairs)</label>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="label">Network Type</label>
+                  <select
+                    className="input"
+                    value={formData.network_type}
+                    onChange={(e) =>
+                      setFormData({ ...formData, network_type: e.target.value })
+                    }
+                  >
+                    <option value="bridge">Bridge</option>
+                    <option value="network">NAT Network</option>
+                  </select>
+                </div>
 
-                {/* 输入方式选择 */}
+                <div>
+                  <label className="label">Network Source</label>
+                  <input
+                    type="text"
+                    className="input"
+                    value={formData.network_source}
+                    onChange={(e) =>
+                      setFormData({ ...formData, network_source: e.target.value })
+                    }
+                    placeholder={formData.network_type === "bridge" ? "br0" : "default"}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    {formData.network_type === "bridge"
+                      ? "Bridge interface name (e.g., br0, virbr0)"
+                      : "Libvirt network name (e.g., default)"}
+                  </p>
+                </div>
+              </div>
+
+              <div>
+                <label className="label">Key Pairs</label>
                 <div className="flex gap-4 mb-3">
                   <label className="flex items-center">
                     <input
@@ -581,7 +770,7 @@ export default function InstancesPage() {
                       onChange={(e) => setKeypairInputMethod(e.target.value as "select" | "upload" | "manual")}
                       className="mr-2"
                     />
-                    <span className="text-sm">选择已有</span>
+                    <span className="text-sm">Select Existing</span>
                   </label>
                   <label className="flex items-center">
                     <input
@@ -592,7 +781,7 @@ export default function InstancesPage() {
                       onChange={(e) => setKeypairInputMethod(e.target.value as "select" | "upload" | "manual")}
                       className="mr-2"
                     />
-                    <span className="text-sm">上传文件</span>
+                    <span className="text-sm">Upload File</span>
                   </label>
                   <label className="flex items-center">
                     <input
@@ -603,87 +792,69 @@ export default function InstancesPage() {
                       onChange={(e) => setKeypairInputMethod(e.target.value as "select" | "upload" | "manual")}
                       className="mr-2"
                     />
-                    <span className="text-sm">手动输入</span>
+                    <span className="text-sm">Manual Input</span>
                   </label>
                 </div>
 
-                {/* 选择已有密钥对 */}
                 {keypairInputMethod === "select" && (
-                  <>
-                    <select
-                      className="input"
-                      value={formData.keypair_ids[0] || ""}
-                      onChange={(e) => {
-                        setFormData({
-                          ...formData,
-                          keypair_ids: e.target.value ? [e.target.value] : []
-                        });
-                      }}
-                    >
-                      <option value="">请选择密钥对（可选）</option>
-                      {keypairs.map((keypair) => (
-                        <option key={keypair.id} value={keypair.id}>
-                          {keypair.name}
-                        </option>
-                      ))}
-                    </select>
-                    <p className="text-xs text-gray-500 mt-1">
-                      选择用于SSH登录的密钥对
-                    </p>
-                  </>
+                  <select
+                    className="input"
+                    value={formData.keypair_ids[0] || ""}
+                    onChange={(e) => {
+                      setFormData({
+                        ...formData,
+                        keypair_ids: e.target.value ? [e.target.value] : []
+                      });
+                    }}
+                  >
+                    <option value="">Select Key Pair (Optional)</option>
+                    {keypairs.map((keypair) => (
+                      <option key={keypair.id} value={keypair.id}>
+                        {keypair.name}
+                      </option>
+                    ))}
+                  </select>
                 )}
 
-                {/* 上传公钥文件 */}
                 {keypairInputMethod === "upload" && (
-                  <>
-                    <input
-                      type="file"
-                      className="input"
-                      accept=".pub,.pem,.key"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          const reader = new FileReader();
-                          reader.onload = (event) => {
-                            const content = event.target?.result as string;
-                            setManualPublicKey(content);
-                          };
-                          reader.readAsText(file);
-                        }
-                      }}
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      上传公钥文件 (*.pub, *.pem, *.key)
-                    </p>
-                  </>
+                  <input
+                    type="file"
+                    className="input"
+                    accept=".pub,.pem,.key"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        const reader = new FileReader();
+                        reader.onload = (event) => {
+                          const content = event.target?.result as string;
+                          setManualPublicKey(content);
+                        };
+                        reader.readAsText(file);
+                      }
+                    }}
+                  />
                 )}
 
-                {/* 手动输入公钥 */}
                 {keypairInputMethod === "manual" && (
-                  <>
-                    <textarea
-                      className="input font-mono text-xs"
-                      rows={4}
-                      value={manualPublicKey}
-                      onChange={(e) => setManualPublicKey(e.target.value)}
-                      placeholder="ssh-rsa AAAAB3NzaC1yc2E..."
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      粘贴公钥内容 (通常来自 ~/.ssh/id_rsa.pub)
-                    </p>
-                  </>
+                  <textarea
+                    className="input font-mono text-xs"
+                    rows={4}
+                    value={manualPublicKey}
+                    onChange={(e) => setManualPublicKey(e.target.value)}
+                    placeholder="ssh-rsa AAAAB3NzaC1yc2E..."
+                  />
                 )}
               </div>
             </div>
           )}
 
-          {/* Step 2: 用户和系统配置 */}
+          {/* Step 2: User and System Configuration */}
           {currentStep === 1 && (
             <div className="space-y-4">
-              <h3 className="font-semibold text-gray-900">用户和系统配置</h3>
+              <h3 className="font-semibold text-gray-900">User and System Configuration</h3>
 
               <div>
-                <label className="label">主机名 (Hostname)</label>
+                <label className="label">Hostname</label>
                 <input
                   type="text"
                   className="input"
@@ -696,7 +867,7 @@ export default function InstancesPage() {
               </div>
 
               <div>
-                <label className="label">时区 (Timezone)</label>
+                <label className="label">Timezone</label>
                 <select
                   className="input"
                   value={formData.timezone}
@@ -713,11 +884,11 @@ export default function InstancesPage() {
               </div>
 
               <div className="border-t pt-4">
-                <h4 className="font-medium text-gray-900 mb-3">创建用户 (Optional)</h4>
+                <h4 className="font-medium text-gray-900 mb-3">Create User (Optional)</h4>
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="label">用户名 (Username)</label>
+                    <label className="label">Username</label>
                     <input
                       type="text"
                       className="input"
@@ -730,7 +901,7 @@ export default function InstancesPage() {
                   </div>
 
                   <div>
-                    <label className="label">密码 (Password)</label>
+                    <label className="label">Password</label>
                     <input
                       type="password"
                       className="input"
@@ -738,14 +909,14 @@ export default function InstancesPage() {
                       onChange={(e) =>
                         setFormData({ ...formData, user_password: e.target.value })
                       }
-                      placeholder="用户密码"
+                      placeholder="User password"
                     />
                   </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4 mt-4">
                   <div>
-                    <label className="label">用户组 (Groups)</label>
+                    <label className="label">Groups</label>
                     <input
                       type="text"
                       className="input"
@@ -774,7 +945,7 @@ export default function InstancesPage() {
                 </div>
 
                 <div className="mt-4">
-                  <label className="label">Sudo 权限</label>
+                  <label className="label">Sudo Permissions</label>
                   <input
                     type="text"
                     className="input"
@@ -798,19 +969,19 @@ export default function InstancesPage() {
                   className="mr-2"
                 />
                 <label htmlFor="disable_root" className="text-sm text-gray-700">
-                  禁用 root 登录 (Disable root login)
+                  Disable root login
                 </label>
               </div>
             </div>
           )}
 
-          {/* Step 3: 高级配置 */}
+          {/* Step 3: Advanced Configuration */}
           {currentStep === 2 && (
             <div className="space-y-4">
-              <h3 className="font-semibold text-gray-900">高级配置</h3>
+              <h3 className="font-semibold text-gray-900">Advanced Configuration</h3>
 
               <div>
-                <label className="label">安装软件包 (Packages)</label>
+                <label className="label">Packages to Install</label>
                 <textarea
                   className="input"
                   rows={3}
@@ -822,15 +993,12 @@ export default function InstancesPage() {
                       .filter(Boolean);
                     setFormData({ ...formData, packages: pkgs });
                   }}
-                  placeholder="每行一个软件包名称,例如:&#10;nginx&#10;git&#10;curl"
+                  placeholder="One package per line, e.g.:&#10;nginx&#10;git&#10;curl"
                 />
-                <p className="text-xs text-gray-500 mt-1">
-                  实例创建后将自动安装这些软件包,每行一个
-                </p>
               </div>
 
               <div>
-                <label className="label">启动命令 (Run Commands)</label>
+                <label className="label">Run Commands</label>
                 <textarea
                   className="input"
                   rows={4}
@@ -842,22 +1010,19 @@ export default function InstancesPage() {
                       .filter(Boolean);
                     setFormData({ ...formData, run_cmd: cmds });
                   }}
-                  placeholder="每行一个命令,例如:&#10;systemctl enable nginx&#10;systemctl start nginx&#10;echo 'Setup complete'"
+                  placeholder="One command per line, e.g.:&#10;systemctl enable nginx&#10;systemctl start nginx"
                 />
-                <p className="text-xs text-gray-500 mt-1">
-                  实例启动后将执行这些命令,每行一个
-                </p>
               </div>
 
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                 <p className="text-sm text-blue-800">
-                  <strong>提示:</strong> 高级配置是可选的。如果不需要,可以直接点击&ldquo;创建实例&rdquo;按钮。
+                  <strong>Note:</strong> Advanced configuration is optional. You can skip and create the instance directly.
                 </p>
               </div>
             </div>
           )}
 
-          {/* 按钮 */}
+          {/* Buttons */}
           <div className="flex justify-between pt-4 border-t">
             <div>
               {currentStep > 0 && (
@@ -866,7 +1031,7 @@ export default function InstancesPage() {
                   onClick={() => setCurrentStep(currentStep - 1)}
                   className="btn-secondary"
                 >
-                  上一步
+                  Previous
                 </button>
               )}
             </div>
@@ -880,7 +1045,7 @@ export default function InstancesPage() {
                 }}
                 className="btn-secondary"
               >
-                取消
+                Cancel
               </button>
 
               {currentStep < 2 ? (
@@ -888,12 +1053,13 @@ export default function InstancesPage() {
                   type="button"
                   onClick={() => setCurrentStep(currentStep + 1)}
                   className="btn-primary"
+                  disabled={currentStep === 0 && (!formData.node_name || !formData.pool_name)}
                 >
-                  下一步
+                  Next
                 </button>
               ) : (
                 <button type="submit" className="btn-primary">
-                  创建实例
+                  Create Instance
                 </button>
               )}
             </div>

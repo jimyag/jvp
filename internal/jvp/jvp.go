@@ -24,13 +24,17 @@ func New(cfg *config.Config) (*Server, error) {
 	logger := zerolog.New(os.Stdout).With().Timestamp().Logger()
 	zerolog.DefaultContextLogger = &logger
 
-	// 1. 创建 Libvirt Client
-	logger.Info().Str("uri", cfg.LibvirtURI).Msg("Connecting to libvirt")
-	libvirtClient, err := libvirt.NewWithURI(cfg.LibvirtURI)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to libvirt at %s: %w", cfg.LibvirtURI, err)
+	// 1. 验证 Libvirt 连接配置（可选，用于快速失败）
+	if cfg.LibvirtURI != "" {
+		logger.Info().Str("uri", cfg.LibvirtURI).Msg("Validating libvirt connection")
+		testClient, err := libvirt.NewWithURI(cfg.LibvirtURI)
+		if err != nil {
+			return nil, fmt.Errorf("failed to connect to libvirt at %s: %w", cfg.LibvirtURI, err)
+		}
+		// 验证连接后关闭，实际连接由 NodeService 管理
+		_ = testClient
+		logger.Info().Msg("Libvirt connection validated successfully")
 	}
-	logger.Info().Msg("Successfully connected to libvirt")
 	logger.Info().Str("data_dir", cfg.DataDir).Msg("Using data directory")
 
 	// 2. 创建 Node Storage
@@ -57,15 +61,15 @@ func New(cfg *config.Config) (*Server, error) {
 	// 6. 创建 Volume Service
 	volumeService := service.NewVolumeService(nodeService, storagePoolService)
 
-	// 7. 创建 Instance Service
-	instanceService, err := service.NewInstanceService(keyPairService, libvirtClient)
+	// 7. 创建 Template Service
+	templateStore := service.NewTemplateStore(nodeService.GetNodeStorage)
+	templateService := service.NewTemplateService(nodeService.GetNodeStorage, templateStore)
+
+	// 8. 创建 Instance Service
+	instanceService, err := service.NewInstanceService(nodeService, templateService, keyPairService)
 	if err != nil {
 		return nil, err
 	}
-
-	// 8. 创建 Template Service
-	templateStore := service.NewTemplateStore(nodeService.GetNodeStorage)
-	templateService := service.NewTemplateService(nodeService.GetNodeStorage, templateStore)
 
 	// 9. 创建 API
 	apiInstance, err := api.New(

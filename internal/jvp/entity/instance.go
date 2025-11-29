@@ -3,26 +3,31 @@ package entity
 
 // Instance 实例信息
 type Instance struct {
-	ID         string `json:"id"`          // Instance ID: i-{uuid}
-	Name       string `json:"name"`        // 实例名称
-	State      string `json:"state"`       // 状态：running, stopped, pending, failed
-	ImageID    string `json:"image_id"`    // 使用的镜像 ID
-	VolumeID   string `json:"volume_id"`   // 使用的 Volume ID
-	MemoryMB   uint64 `json:"memory_mb"`   // 内存大小（MB）
-	VCPUs      uint16 `json:"vcpus"`       // 虚拟 CPU 数量
-	CreatedAt  string `json:"created_at"`  // 创建时间
-	DomainUUID string `json:"domain_uuid"` // Libvirt Domain UUID
-	DomainName string `json:"domain_name"` // Libvirt Domain 名称
+	ID         string `json:"id"`                    // Instance ID (domain name)
+	Name       string `json:"name"`                  // 实例名称
+	State      string `json:"state"`                 // 状态：running, stopped, pending, failed
+	NodeName   string `json:"node_name"`             // 所在节点名称
+	TemplateID string `json:"template_id,omitempty"` // 使用的模板 ID（可选，非 JVP 创建的 VM 为空）
+	MemoryMB   uint64 `json:"memory_mb"`             // 内存大小（MB）
+	VCPUs      uint16 `json:"vcpus"`                 // 虚拟 CPU 数量
+	CreatedAt  string `json:"created_at"`            // 创建时间
+	DomainUUID string `json:"domain_uuid"`           // Libvirt Domain UUID
+	DomainName string `json:"domain_name"`           // Libvirt Domain 名称
 }
 
 // RunInstanceRequest 创建实例请求
 type RunInstanceRequest struct {
-	ImageID    string          `json:"image_id"`              // 镜像 ID（可选，默认使用 ubuntu-jammy）
-	SizeGB     uint64          `json:"size_gb"`               // 磁盘大小（GB）（可选，默认 20GB）
-	MemoryMB   uint64          `json:"memory_mb"`             // 内存大小（MB）（可选，默认 2048MB）
-	VCPUs      uint16          `json:"vcpus"`                 // 虚拟 CPU 数量（可选，默认 2）
-	UserData   *UserDataConfig `json:"user_data,omitempty"`   // UserData 配置（可选）
-	KeyPairIDs []string        `json:"keypair_ids,omitempty"` // 密钥对 ID 列表（可选）
+	NodeName      string          `json:"node_name" binding:"required"` // 目标节点名称
+	PoolName      string          `json:"pool_name" binding:"required"` // 目标存储池名称
+	TemplateID    string          `json:"template_id"`                  // 模板 ID（可选，如果不提供则创建空白 VM）
+	Name          string          `json:"name"`                         // 实例名称（可选，自动生成）
+	SizeGB        uint64          `json:"size_gb"`                      // 磁盘大小（GB）（可选，默认使用模板大小）
+	MemoryMB      uint64          `json:"memory_mb"`                    // 内存大小（MB）（可选，默认 2048MB）
+	VCPUs         uint16          `json:"vcpus"`                        // 虚拟 CPU 数量（可选，默认 2）
+	NetworkType   string          `json:"network_type,omitempty"`       // 网络类型：bridge, network（默认：bridge）
+	NetworkSource string          `json:"network_source,omitempty"`     // 网络源：网桥名称或网络名称（默认：br0）
+	UserData      *UserDataConfig `json:"user_data,omitempty"`          // UserData 配置（可选）
+	KeyPairIDs    []string        `json:"keypair_ids,omitempty"`        // 密钥对 ID 列表（可选）
 }
 
 // UserDataConfig UserData 配置
@@ -82,10 +87,11 @@ type RunInstanceResponse struct {
 
 // DescribeInstancesRequest 描述实例请求
 type DescribeInstancesRequest struct {
-	InstanceIDs []string `json:"instanceIDs,omitempty"`
+	NodeName    string   `json:"node_name" binding:"required"` // 节点名称（必填）
+	InstanceIDs []string `json:"instance_ids,omitempty"`       // 按 ID 过滤
 	Filters     []Filter `json:"filters,omitempty"`
-	MaxResults  int      `json:"maxResults,omitempty"`
-	NextToken   string   `json:"nextToken,omitempty"`
+	MaxResults  int      `json:"max_results,omitempty"`
+	NextToken   string   `json:"next_token,omitempty"`
 }
 
 // DescribeInstancesResponse 描述实例响应
@@ -96,7 +102,8 @@ type DescribeInstancesResponse struct {
 
 // TerminateInstancesRequest 终止实例请求
 type TerminateInstancesRequest struct {
-	InstanceIDs []string `json:"instanceIDs" binding:"required"`
+	NodeName    string   `json:"node_name" binding:"required"`    // 节点名称
+	InstanceIDs []string `json:"instance_ids" binding:"required"` // 实例 ID 列表
 }
 
 // TerminateInstancesResponse 终止实例响应
@@ -106,8 +113,9 @@ type TerminateInstancesResponse struct {
 
 // StopInstancesRequest 停止实例请求
 type StopInstancesRequest struct {
-	InstanceIDs []string `json:"instanceIDs"     binding:"required"`
-	Force       bool     `json:"force,omitempty"`
+	NodeName    string   `json:"node_name" binding:"required"`    // 节点名称
+	InstanceIDs []string `json:"instance_ids" binding:"required"` // 实例 ID 列表
+	Force       bool     `json:"force,omitempty"`                 // 强制停止
 }
 
 // StopInstancesResponse 停止实例响应
@@ -117,7 +125,8 @@ type StopInstancesResponse struct {
 
 // StartInstancesRequest 启动实例请求
 type StartInstancesRequest struct {
-	InstanceIDs []string `json:"instanceIDs" binding:"required"`
+	NodeName    string   `json:"node_name" binding:"required"`    // 节点名称
+	InstanceIDs []string `json:"instance_ids" binding:"required"` // 实例 ID 列表
 }
 
 // StartInstancesResponse 启动实例响应
@@ -127,7 +136,8 @@ type StartInstancesResponse struct {
 
 // RebootInstancesRequest 重启实例请求
 type RebootInstancesRequest struct {
-	InstanceIDs []string `json:"instanceIDs" binding:"required"`
+	NodeName    string   `json:"node_name" binding:"required"`    // 节点名称
+	InstanceIDs []string `json:"instance_ids" binding:"required"` // 实例 ID 列表
 }
 
 // RebootInstancesResponse 重启实例响应
@@ -144,11 +154,12 @@ type InstanceStateChange struct {
 
 // ModifyInstanceAttributeRequest 修改实例属性请求
 type ModifyInstanceAttributeRequest struct {
-	InstanceID string  `json:"instanceID"         binding:"required"`
-	MemoryMB   *uint64 `json:"memoryMB,omitempty"` // 内存大小（MB），nil 表示不修改
-	VCPUs      *uint16 `json:"vcpus,omitempty"`    // VCPU 数量，nil 表示不修改
-	Name       *string `json:"name,omitempty"`     // 实例名称，nil 表示不修改
-	Live       bool    `json:"live,omitempty"`     // 是否热修改（如果实例正在运行）
+	NodeName   string  `json:"node_name" binding:"required"`    // 节点名称
+	InstanceID string  `json:"instance_id" binding:"required"`  // 实例 ID
+	MemoryMB   *uint64 `json:"memory_mb,omitempty"`             // 内存大小（MB），nil 表示不修改
+	VCPUs      *uint16 `json:"vcpus,omitempty"`                 // VCPU 数量，nil 表示不修改
+	Name       *string `json:"name,omitempty"`                  // 实例名称，nil 表示不修改
+	Live       bool    `json:"live,omitempty"`                  // 是否热修改（如果实例正在运行）
 }
 
 // ModifyInstanceAttributeResponse 修改实例属性响应
@@ -158,9 +169,10 @@ type ModifyInstanceAttributeResponse struct {
 
 // ResetPasswordRequest 重置密码请求
 type ResetPasswordRequest struct {
-	InstanceID string          `json:"instance_id"          binding:"required"` // 实例 ID
-	Users      []PasswordReset `json:"users"                binding:"required"` // 用户密码重置列表
-	AutoStart  bool            `json:"auto_start,omitempty"`                    // 重置后是否自动启动（如果之前是运行状态）
+	NodeName   string          `json:"node_name" binding:"required"`   // 节点名称
+	InstanceID string          `json:"instance_id" binding:"required"` // 实例 ID
+	Users      []PasswordReset `json:"users" binding:"required"`       // 用户密码重置列表
+	AutoStart  bool            `json:"auto_start,omitempty"`           // 重置后是否自动启动（如果之前是运行状态）
 }
 
 // PasswordReset 密码重置信息

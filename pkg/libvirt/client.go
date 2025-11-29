@@ -446,13 +446,23 @@ func (c *Client) DefineDomain(config *CreateVMConfig) (libvirt.Domain, error) {
 	// 确保 VNC socket 目录存在，并设置正确的权限
 	if config.VNCSocket != "" {
 		vncDir := filepath.Dir(config.VNCSocket)
-		if err := os.MkdirAll(vncDir, 0o755); err != nil {
-			return libvirt.Domain{}, fmt.Errorf("create VNC socket directory: %w", err)
-		}
-		// 设置目录所有者为 libvirt-qemu:kvm，以便 QEMU 进程可以创建 socket
-		if err := c.fixVNCDirOwnership(vncDir); err != nil {
-			// 非致命错误，只记录警告
-			log.Printf("Warning: failed to fix VNC directory ownership: %v", err)
+		if c.IsRemoteConnection() {
+			// 远程连接：通过 SSH 创建目录
+			if err := c.ExecuteRemoteCommand(fmt.Sprintf("mkdir -p '%s' && chmod 755 '%s'", vncDir, vncDir)); err != nil {
+				return libvirt.Domain{}, fmt.Errorf("create VNC socket directory on remote: %w", err)
+			}
+			// 尝试设置目录所有者（可能失败，取决于远程系统配置）
+			_ = c.ExecuteRemoteCommand(fmt.Sprintf("chown libvirt-qemu:kvm '%s' 2>/dev/null || chown qemu:qemu '%s' 2>/dev/null || true", vncDir, vncDir))
+		} else {
+			// 本地连接：直接创建目录
+			if err := os.MkdirAll(vncDir, 0o755); err != nil {
+				return libvirt.Domain{}, fmt.Errorf("create VNC socket directory: %w", err)
+			}
+			// 设置目录所有者为 libvirt-qemu:kvm，以便 QEMU 进程可以创建 socket
+			if err := c.fixVNCDirOwnership(vncDir); err != nil {
+				// 非致命错误，只记录警告
+				log.Printf("Warning: failed to fix VNC directory ownership: %v", err)
+			}
 		}
 	}
 

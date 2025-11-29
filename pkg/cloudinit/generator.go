@@ -118,6 +118,7 @@ func (g *Generator) GenerateUserData(config *Config) (string, error) {
 		users = append(users, "default")
 
 		// 添加自定义用户
+		hasPassword := false
 		for _, user := range config.Users {
 			// 处理密码哈希（如果提供了明文密码）
 			if user.PlainTextPasswd != "" && user.Passwd == "" && user.HashedPasswd == "" {
@@ -126,9 +127,23 @@ func (g *Generator) GenerateUserData(config *Config) (string, error) {
 					return "", fmt.Errorf("failed to hash password for user %s: %v", user.Name, err)
 				}
 				user.Passwd = hashedPassword
+				hasPassword = true
+			}
+
+			// 如果设置了密码，确保不锁定密码登录
+			if user.Passwd != "" || user.HashedPasswd != "" || user.PlainTextPasswd != "" {
+				lockPasswd := false
+				user.LockPasswd = &lockPasswd
+				hasPassword = true
 			}
 
 			users = append(users, user)
+		}
+
+		// 如果任何用户设置了密码，启用 SSH 密码认证
+		if hasPassword {
+			sshPwauth := true
+			userData.SSHPwauth = &sshPwauth
 		}
 	} else if config.Username != "" || config.Password != "" || len(config.SSHKeys) > 0 {
 		// 向后兼容：使用旧的 Username/Password/SSHKeys 配置
@@ -153,6 +168,10 @@ func (g *Generator) GenerateUserData(config *Config) (string, error) {
 				return "", fmt.Errorf("failed to hash password: %v", err)
 			}
 			userConfig.Passwd = hashedPassword
+
+			// 启用 SSH 密码认证
+			sshPwauth := true
+			userData.SSHPwauth = &sshPwauth
 		}
 
 		// 设置 SSH 密钥

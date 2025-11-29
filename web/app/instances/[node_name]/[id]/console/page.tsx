@@ -7,7 +7,6 @@ import Header from "@/components/Header";
 import { useToast } from "@/components/ToastContainer";
 import { Monitor, Terminal as TerminalIcon, ArrowLeft, AlertCircle } from "lucide-react";
 import dynamic from "next/dynamic";
-import { apiPost } from "@/lib/api";
 
 // 动态导入避免 SSR 问题
 const VNCConsole = dynamic(() => import("@/components/VNCConsoleIframe"), { ssr: false });
@@ -29,6 +28,7 @@ interface ConsoleInfo {
 export default function ConsolePage() {
   const params = useParams();
   const router = useRouter();
+  const nodeName = params.node_name as string;
   const instanceId = params.id as string;
   const toast = useToast();
 
@@ -41,26 +41,39 @@ export default function ConsolePage() {
   useEffect(() => {
     fetchConsoleInfo();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [instanceId, consoleType]);
+  }, [nodeName, instanceId, consoleType]);
 
   const fetchConsoleInfo = async () => {
     setLoading(true);
     setError("");
     try {
-      const data = await apiPost<ConsoleInfo>("/api/instances/console", {
-        instance_id: instanceId,
-        type: consoleType,
+      const response = await fetch("/api/instances/console", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          node_name: nodeName,
+          instance_id: instanceId,
+          type: consoleType,
+        }),
       });
 
-      setConsoleInfo(data);
+      if (response.ok) {
+        const data = await response.json();
+        setConsoleInfo(data);
 
-      // 检查是否支持请求的控制台类型
-      if (consoleType === "vnc" && !data.vnc_socket) {
-        setError("VNC console is not available for this instance");
-        toast.error("VNC console is not configured");
-      } else if (consoleType === "serial" && !data.serial_device) {
-        setError("Serial console is not available for this instance");
-        toast.error("Serial console is not available");
+        // 检查是否支持请求的控制台类型
+        if (consoleType === "vnc" && !data.vnc_socket) {
+          setError("VNC console is not available for this instance");
+          toast.error("VNC console is not configured");
+        } else if (consoleType === "serial" && !data.serial_device) {
+          setError("Serial console is not available for this instance");
+          toast.error("Serial console is not available");
+        }
+      } else {
+        const errorData = await response.json();
+        const errorMsg = errorData?.message || "Failed to connect to console";
+        setError(errorMsg);
+        toast.error(errorMsg);
       }
     } catch (error: any) {
       console.error("Failed to fetch console info:", error);
@@ -75,12 +88,12 @@ export default function ConsolePage() {
   const getWebSocketURL = () => {
     if (!consoleInfo) return "";
 
-    // 使用后端的 WebSocket 代理端点
+    // 使用后端的 WebSocket 代理端点，包含 node_name
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const host = window.location.host; // 包含端口号
     const endpoint = consoleType === "vnc" ? "vnc" : "serial";
 
-    return `${protocol}//${host}/api/console/${endpoint}/${instanceId}`;
+    return `${protocol}//${host}/api/console/${endpoint}/${nodeName}/${instanceId}`;
   };
 
   const handleConsoleTypeChange = (type: ConsoleType) => {
@@ -93,10 +106,10 @@ export default function ConsolePage() {
     <DashboardLayout>
       <Header
         title={`Instance Console`}
-        description={`Console access for instance ${instanceId.substring(0, 12)}...`}
+        description={`Console access for ${instanceId.substring(0, 12)}... on node ${nodeName}`}
         action={
           <button
-            onClick={() => router.push(`/instances/${instanceId}`)}
+            onClick={() => router.push(`/instances/${nodeName}/${instanceId}`)}
             className="btn-secondary flex items-center gap-2"
           >
             <ArrowLeft size={16} />
@@ -231,10 +244,10 @@ export default function ConsolePage() {
       <div className="card mt-4 bg-blue-50 border-blue-200">
         <h3 className="text-sm font-semibold text-blue-900 mb-2">Console Tips</h3>
         <ul className="text-sm text-blue-800 space-y-1">
-          <li>• <strong>VNC Console:</strong> Provides full graphical access to the instance</li>
-          <li>• <strong>Serial Console:</strong> Provides text-based terminal access</li>
-          <li>• Use Ctrl+Alt+Del through the VNC menu if needed</li>
-          <li>• Serial console requires the instance to be configured with a serial port</li>
+          <li>* <strong>VNC Console:</strong> Provides full graphical access to the instance</li>
+          <li>* <strong>Serial Console:</strong> Provides text-based terminal access</li>
+          <li>* Use Ctrl+Alt+Del through the VNC menu if needed</li>
+          <li>* Serial console requires the instance to be configured with a serial port</li>
         </ul>
       </div>
     </DashboardLayout>

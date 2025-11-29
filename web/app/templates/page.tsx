@@ -123,13 +123,25 @@ export default function TemplatesPage() {
       const response = await apiPost<{ nodes: NodeItem[] }>("/api/list-nodes", {});
       const nodeList = response.nodes || [];
       setNodes(nodeList);
+      const defaultNodeName = nodeList[0]?.name || "";
+      // 设置 register form 的默认 node
       setRegisterForm((prev) => {
         if (prev.nodeName && nodeList.some((node) => node.name === prev.nodeName)) {
           return prev;
         }
         return {
           ...prev,
-          nodeName: nodeList[0]?.name || "",
+          nodeName: defaultNodeName,
+        };
+      });
+      // 设置 filter 的默认 node
+      setFilters((prev) => {
+        if (prev.nodeName && nodeList.some((node) => node.name === prev.nodeName)) {
+          return prev;
+        }
+        return {
+          ...prev,
+          nodeName: defaultNodeName,
         };
       });
     } catch (error: any) {
@@ -157,11 +169,12 @@ export default function TemplatesPage() {
         );
         const pools = response.pools || [];
         setFilterPools(pools);
+        // 默认选择第一个 pool
         setFilters((prev) => ({
           ...prev,
           poolName: pools.some((pool) => pool.name === prev.poolName)
             ? prev.poolName
-            : "",
+            : pools[0]?.name || "",
         }));
       } catch (error: any) {
         console.error("Failed to load storage pools:", error);

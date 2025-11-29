@@ -8,16 +8,16 @@ import StatusBadge from "@/components/StatusBadge";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { useToast } from "@/components/ToastContainer";
 import { Play, Square, RefreshCw, Trash2, ArrowLeft, Key, Edit, Monitor } from "lucide-react";
-import { apiPost } from "@/lib/api";
 import Modal from "@/components/Modal";
 
 interface Instance {
   id: string;
   name: string;
   state: string;
+  node_name: string;
   vcpus: number;
   memory_mb: number;
-  image_id?: string;
+  template_id?: string;
   volume_id?: string;
   ip_address?: string;
   keypair_name?: string;
@@ -31,6 +31,7 @@ export default function InstanceDetailPage() {
   const toast = useToast();
   const params = useParams();
   const router = useRouter();
+  const nodeName = params.node_name as string;
   const instanceId = params.id as string;
 
   const [instance, setInstance] = useState<Instance | null>(null);
@@ -39,6 +40,7 @@ export default function InstanceDetailPage() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [newPassword, setNewPassword] = useState("");
+  const [username, setUsername] = useState("root");
   const [editFormData, setEditFormData] = useState({
     name: "",
     vcpus: 2,
@@ -48,11 +50,21 @@ export default function InstanceDetailPage() {
   const fetchInstance = async () => {
     setLoading(true);
     try {
-      const data = await apiPost<{ instances: Instance[] }>("/api/instances/describe", {
-        instanceIDs: [instanceId],
+      const response = await fetch("/api/instances/describe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          node_name: nodeName,
+          instance_ids: [instanceId],
+        }),
       });
-      if (data.instances && data.instances.length > 0) {
-        setInstance(data.instances[0]);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.instances && data.instances.length > 0) {
+          setInstance(data.instances[0]);
+        }
+      } else {
+        toast.error("Failed to load instance details");
       }
     } catch (error) {
       console.error("Failed to fetch instance:", error);
@@ -65,20 +77,29 @@ export default function InstanceDetailPage() {
   useEffect(() => {
     fetchInstance();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [instanceId]);
+  }, [nodeName, instanceId]);
 
   const handleAction = async (action: string) => {
     try {
-      await apiPost(`/api/instances/${action}`, {
-        instanceIDs: [instanceId],
+      const response = await fetch(`/api/instances/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          node_name: nodeName,
+          instance_ids: [instanceId],
+        }),
       });
-      const actionName = action === "start" ? "started" : action === "stop" ? "stopped" : "rebooted";
-      toast.success(`Instance ${actionName} successfully!`);
 
-      // 延迟刷新以等待后端状态更新
-      setTimeout(() => {
-        fetchInstance();
-      }, 2000);
+      if (response.ok) {
+        const actionName = action === "start" ? "started" : action === "stop" ? "stopped" : "rebooted";
+        toast.success(`Instance ${actionName} successfully!`);
+        setTimeout(() => {
+          fetchInstance();
+        }, 2000);
+      } else {
+        const error = await response.json();
+        toast.error(`Failed to ${action} instance: ${error.message || "Unknown error"}`);
+      }
     } catch (error) {
       console.error(`Failed to ${action} instance:`, error);
       toast.error(`Failed to ${action} instance`);
@@ -91,11 +112,22 @@ export default function InstanceDetailPage() {
 
   const handleDeleteConfirm = async () => {
     try {
-      await apiPost("/api/instances/terminate", {
-        instanceIDs: [instanceId],
+      const response = await fetch("/api/instances/terminate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          node_name: nodeName,
+          instance_ids: [instanceId],
+        }),
       });
-      toast.success("Instance terminated successfully!");
-      router.push("/instances");
+
+      if (response.ok) {
+        toast.success("Instance terminated successfully!");
+        router.push("/instances");
+      } else {
+        const error = await response.json();
+        toast.error(`Failed to terminate instance: ${error.message || "Unknown error"}`);
+      }
     } catch (error) {
       console.error("Failed to delete instance:", error);
       toast.error("Failed to delete instance");
@@ -105,13 +137,26 @@ export default function InstanceDetailPage() {
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await apiPost("/api/instances/reset-password", {
-        instance_id: instanceId,
-        password: newPassword,
+      const response = await fetch("/api/instances/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          node_name: nodeName,
+          instance_id: instanceId,
+          users: [{ username, new_password: newPassword }],
+          auto_start: true,
+        }),
       });
-      setIsResetPasswordModalOpen(false);
-      setNewPassword("");
-      toast.success("Password reset successfully!");
+
+      if (response.ok) {
+        setIsResetPasswordModalOpen(false);
+        setNewPassword("");
+        setUsername("root");
+        toast.success("Password reset successfully!");
+      } else {
+        const error = await response.json();
+        toast.error(`Failed to reset password: ${error.message || "Unknown error"}`);
+      }
     } catch (error) {
       console.error("Failed to reset password:", error);
       toast.error("Failed to reset password");
@@ -132,18 +177,26 @@ export default function InstanceDetailPage() {
   const handleEditInstance = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const response = await apiPost("/api/instances/modify-attribute", {
-        instanceID: instanceId,
-        name: editFormData.name,
-        vcpus: editFormData.vcpus,
-        memoryMB: editFormData.memory_mb,
-        live: instance?.state === "running",
+      const response = await fetch("/api/instances/modify-attribute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          node_name: nodeName,
+          instance_id: instanceId,
+          name: editFormData.name,
+          vcpus: editFormData.vcpus,
+          memory_mb: editFormData.memory_mb,
+          live: instance?.state === "running",
+        }),
       });
 
-      if (response) {
+      if (response.ok) {
         setIsEditModalOpen(false);
         fetchInstance();
         toast.success("Instance attributes updated successfully!");
+      } else {
+        const error = await response.json();
+        toast.error(`Failed to update instance: ${error.message || "Unknown error"}`);
       }
     } catch (error) {
       console.error("Failed to update instance:", error);
@@ -178,7 +231,7 @@ export default function InstanceDetailPage() {
     <DashboardLayout>
       <Header
         title={instance.name}
-        description={`Instance ID: ${instance.id}`}
+        description={`Instance ID: ${instance.id} | Node: ${nodeName}`}
         action={
           <button
             onClick={() => router.push("/instances")}
@@ -235,7 +288,7 @@ export default function InstanceDetailPage() {
               Edit
             </button>
             <button
-              onClick={() => router.push(`/instances/${instanceId}/console`)}
+              onClick={() => router.push(`/instances/${nodeName}/${instanceId}/console`)}
               className="btn-secondary flex items-center gap-2"
               title="Console"
             >
@@ -275,6 +328,10 @@ export default function InstanceDetailPage() {
             <div>
               <dt className="text-sm font-medium text-gray-500">Name</dt>
               <dd className="mt-1 text-sm text-gray-900">{instance.name}</dd>
+            </div>
+            <div>
+              <dt className="text-sm font-medium text-gray-500">Node</dt>
+              <dd className="mt-1 text-sm text-gray-900">{instance.node_name || nodeName}</dd>
             </div>
             <div>
               <dt className="text-sm font-medium text-gray-500">Status</dt>
@@ -319,9 +376,15 @@ export default function InstanceDetailPage() {
           <h2 className="text-xl font-bold text-primary mb-4">Configuration</h2>
           <dl className="space-y-3">
             <div>
-              <dt className="text-sm font-medium text-gray-500">Image ID</dt>
+              <dt className="text-sm font-medium text-gray-500">Template ID</dt>
               <dd className="mt-1 text-sm text-gray-900 font-mono">
-                {instance.image_id || "N/A"}
+                {instance.template_id || "N/A"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm font-medium text-gray-500">Domain UUID</dt>
+              <dd className="mt-1 text-sm text-gray-900 font-mono">
+                {instance.domain_uuid || "N/A"}
               </dd>
             </div>
             <div>
@@ -340,7 +403,7 @@ export default function InstanceDetailPage() {
             <div>
               <dt className="text-sm font-medium text-gray-500">Created At</dt>
               <dd className="mt-1 text-sm text-gray-900">
-                {new Date(instance.created_at).toLocaleString()}
+                {instance.created_at ? new Date(instance.created_at).toLocaleString() : "N/A"}
               </dd>
             </div>
             {instance.updated_at && (
@@ -377,9 +440,21 @@ export default function InstanceDetailPage() {
         <form onSubmit={handleResetPassword} className="space-y-6">
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
             <p className="text-sm text-yellow-800">
-              This will reset the root/administrator password for this instance.
+              This will reset the password for the specified user.
               The instance may need to restart depending on the reset method available.
             </p>
+          </div>
+
+          <div>
+            <label className="label">Username</label>
+            <input
+              type="text"
+              className="input"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              required
+              placeholder="root"
+            />
           </div>
 
           <div>

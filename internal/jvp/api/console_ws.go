@@ -32,16 +32,19 @@ func NewConsoleWS(instanceService *service.InstanceService) *ConsoleWS {
 
 func (c *ConsoleWS) RegisterRoutes(router *gin.RouterGroup) {
 	consoleRouter := router.Group("/console")
-	consoleRouter.GET("/vnc/:instance_id", c.HandleVNCWebSocket)
-	consoleRouter.GET("/serial/:instance_id", c.HandleSerialWebSocket)
+	// 路由包含 node_name 和 instance_id
+	consoleRouter.GET("/vnc/:node_name/:instance_id", c.HandleVNCWebSocket)
+	consoleRouter.GET("/serial/:node_name/:instance_id", c.HandleSerialWebSocket)
 }
 
 // HandleVNCWebSocket 处理 VNC WebSocket 连接
 func (c *ConsoleWS) HandleVNCWebSocket(ctx *gin.Context) {
 	logger := zerolog.Ctx(ctx.Request.Context())
+	nodeName := ctx.Param("node_name")
 	instanceID := ctx.Param("instance_id")
 
 	logger.Info().
+		Str("node_name", nodeName).
 		Str("instance_id", instanceID).
 		Msg("VNC WebSocket connection request")
 
@@ -53,8 +56,19 @@ func (c *ConsoleWS) HandleVNCWebSocket(ctx *gin.Context) {
 	}
 	defer wsConn.Close()
 
+	// 获取节点的 libvirt 客户端
+	client, err := c.instanceService.GetLibvirtClient(ctx.Request.Context(), nodeName)
+	if err != nil {
+		logger.Error().
+			Err(err).
+			Str("node_name", nodeName).
+			Msg("Failed to get node connection")
+		wsConn.WriteMessage(websocket.CloseMessage, []byte("Failed to connect to node"))
+		return
+	}
+
 	// 获取实例信息
-	instance, err := c.instanceService.GetInstance(ctx.Request.Context(), instanceID)
+	instance, err := c.instanceService.GetInstance(ctx.Request.Context(), nodeName, instanceID)
 	if err != nil {
 		logger.Error().
 			Err(err).
@@ -75,7 +89,7 @@ func (c *ConsoleWS) HandleVNCWebSocket(ctx *gin.Context) {
 	}
 
 	// 获取 domain
-	domain, err := c.instanceService.GetLibvirtClient().GetDomainByName(instanceID)
+	domain, err := client.GetDomainByName(instanceID)
 	if err != nil {
 		logger.Error().
 			Err(err).
@@ -86,7 +100,7 @@ func (c *ConsoleWS) HandleVNCWebSocket(ctx *gin.Context) {
 	}
 
 	// 获取控制台信息
-	consoleInfo, err := c.instanceService.GetLibvirtClient().GetDomainConsoleInfo(domain)
+	consoleInfo, err := client.GetDomainConsoleInfo(domain)
 	if err != nil {
 		logger.Error().
 			Err(err).
@@ -138,9 +152,11 @@ func (c *ConsoleWS) HandleVNCWebSocket(ctx *gin.Context) {
 // HandleSerialWebSocket 处理 Serial WebSocket 连接
 func (c *ConsoleWS) HandleSerialWebSocket(ctx *gin.Context) {
 	logger := zerolog.Ctx(ctx.Request.Context())
+	nodeName := ctx.Param("node_name")
 	instanceID := ctx.Param("instance_id")
 
 	logger.Info().
+		Str("node_name", nodeName).
 		Str("instance_id", instanceID).
 		Msg("Serial WebSocket connection request")
 
@@ -152,8 +168,19 @@ func (c *ConsoleWS) HandleSerialWebSocket(ctx *gin.Context) {
 	}
 	defer wsConn.Close()
 
+	// 获取节点的 libvirt 客户端
+	client, err := c.instanceService.GetLibvirtClient(ctx.Request.Context(), nodeName)
+	if err != nil {
+		logger.Error().
+			Err(err).
+			Str("node_name", nodeName).
+			Msg("Failed to get node connection")
+		wsConn.WriteMessage(websocket.CloseMessage, []byte("Failed to connect to node"))
+		return
+	}
+
 	// 获取实例信息
-	instance, err := c.instanceService.GetInstance(ctx.Request.Context(), instanceID)
+	instance, err := c.instanceService.GetInstance(ctx.Request.Context(), nodeName, instanceID)
 	if err != nil {
 		logger.Error().
 			Err(err).
@@ -174,7 +201,7 @@ func (c *ConsoleWS) HandleSerialWebSocket(ctx *gin.Context) {
 	}
 
 	// 获取 domain
-	domain, err := c.instanceService.GetLibvirtClient().GetDomainByName(instanceID)
+	domain, err := client.GetDomainByName(instanceID)
 	if err != nil {
 		logger.Error().
 			Err(err).
@@ -185,7 +212,7 @@ func (c *ConsoleWS) HandleSerialWebSocket(ctx *gin.Context) {
 	}
 
 	// 获取控制台信息
-	consoleInfo, err := c.instanceService.GetLibvirtClient().GetDomainConsoleInfo(domain)
+	consoleInfo, err := client.GetDomainConsoleInfo(domain)
 	if err != nil {
 		logger.Error().
 			Err(err).

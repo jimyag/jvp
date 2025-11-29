@@ -47,6 +47,8 @@ type LibvirtClient interface {
 	GetVolume(poolName, volumeName string) (*VolumeInfo, error)
 	ListVolumes(poolName string) ([]*VolumeInfo, error)
 	CreateVolume(poolName, volumeName string, sizeGB uint64, format string) (*VolumeInfo, error)
+	CreateVolumeWithBackingStore(poolName, volumeName string, capacityGB uint64, format string, backingPath string, backingFormat string) (*VolumeInfo, error)
+	UploadFileToPool(poolName string, volumeName string, localFilePath string) (*VolumeInfo, error)
 	ResizeVolume(poolName, volumeName string, newSizeGB uint64) error
 	DeleteVolume(poolName, volumeName string) error
 
@@ -74,4 +76,7 @@ type LibvirtClient interface {
 	ExecuteRemoteCommand(cmd string) error
 	ReadRemoteFile(path string) ([]byte, error)
 	ListRemoteFiles(dir, pattern string) ([]string, error)
+
+	// Cloud-Init 操作
+	CreateCloudInitISO(outputDir, vmName, metaData, userData string) (string, error)
 }

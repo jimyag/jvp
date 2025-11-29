@@ -13,21 +13,28 @@ import (
 func (s *InstanceService) GetConsoleInfo(ctx context.Context, req *entity.GetConsoleRequest) (*entity.GetConsoleResponse, error) {
 	logger := zerolog.Ctx(ctx)
 	logger.Info().
+		Str("node_name", req.NodeName).
 		Str("instance_id", req.InstanceID).
 		Str("type", req.Type).
 		Msg("Getting console info for instance")
 
-	// 1. 验证实例存在
-	instance, err := s.GetInstance(ctx, req.InstanceID)
+	// 1. 获取节点的 libvirt 客户端
+	client, err := s.nodeService.GetNodeStorage(ctx, req.NodeName)
+	if err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get node connection", err)
+	}
+
+	// 2. 验证实例存在
+	instance, err := s.GetInstance(ctx, req.NodeName, req.InstanceID)
 	if err != nil {
 		return nil, apierror.NewErrorWithStatus(
 			"ResourceNotFound",
-			fmt.Sprintf("Instance %s not found", req.InstanceID),
+			fmt.Sprintf("Instance %s not found on node %s", req.InstanceID, req.NodeName),
 			404,
 		)
 	}
 
-	// 2. 验证实例状态（建议运行状态才能连接控制台）
+	// 3. 验证实例状态（建议运行状态才能连接控制台）
 	if instance.State != "running" {
 		logger.Warn().
 			Str("instance_id", req.InstanceID).
@@ -35,14 +42,14 @@ func (s *InstanceService) GetConsoleInfo(ctx context.Context, req *entity.GetCon
 			Msg("Instance is not running, console may not be available")
 	}
 
-	// 3. 获取 domain
-	domain, err := s.libvirtClient.GetDomainByName(req.InstanceID)
+	// 4. 获取 domain
+	domain, err := client.GetDomainByName(req.InstanceID)
 	if err != nil {
 		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get domain from libvirt", err)
 	}
 
-	// 4. 获取控制台信息
-	consoleInfo, err := s.libvirtClient.GetDomainConsoleInfo(domain)
+	// 5. 获取控制台信息
+	consoleInfo, err := client.GetDomainConsoleInfo(domain)
 	if err != nil {
 		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get console info", err)
 	}
@@ -51,7 +58,7 @@ func (s *InstanceService) GetConsoleInfo(ctx context.Context, req *entity.GetCon
 		InstanceID: req.InstanceID,
 	}
 
-	// 5. 根据请求类型返回相应的控制台信息
+	// 6. 根据请求类型返回相应的控制台信息
 	switch req.Type {
 	case "vnc":
 		if consoleInfo.VNCSocket == "" {

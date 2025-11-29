@@ -104,18 +104,21 @@ func TestInstance_RunInstances(t *testing.T) {
 		{
 			name: "successful run",
 			req: &entity.RunInstanceRequest{
-				ImageID:  "ami-123",
-				MemoryMB: 2048,
-				VCPUs:    2,
+				NodeName:   "node-1",
+				PoolName:   "default",
+				TemplateID: "tpl-123",
+				MemoryMB:   2048,
+				VCPUs:      2,
 			},
 			mockSetup: func(m *MockInstanceService) {
 				m.On("RunInstance", mock.Anything, mock.AnythingOfType("*entity.RunInstanceRequest")).
 					Return(&entity.Instance{
-						ID:       "i-123",
-						ImageID:  "ami-123",
-						MemoryMB: 2048,
-						VCPUs:    2,
-						State:    "running",
+						ID:         "i-123",
+						NodeName:   "node-1",
+						TemplateID: "tpl-123",
+						MemoryMB:   2048,
+						VCPUs:      2,
+						State:      "running",
 					}, nil)
 			},
 			expectStatus: http.StatusOK,
@@ -124,8 +127,10 @@ func TestInstance_RunInstances(t *testing.T) {
 		{
 			name: "run with error",
 			req: &entity.RunInstanceRequest{
-				ImageID:  "ami-123",
-				MemoryMB: 2048,
+				NodeName:   "node-1",
+				PoolName:   "default",
+				TemplateID: "tpl-123",
+				MemoryMB:   2048,
 			},
 			mockSetup: func(m *MockInstanceService) {
 				m.On("RunInstance", mock.Anything, mock.AnythingOfType("*entity.RunInstanceRequest")).
@@ -178,12 +183,12 @@ func TestInstance_DescribeInstances(t *testing.T) {
 	}{
 		{
 			name: "describe all instances",
-			req:  &entity.DescribeInstancesRequest{},
+			req:  &entity.DescribeInstancesRequest{NodeName: "node-1"},
 			mockSetup: func(m *MockInstanceService) {
 				m.On("DescribeInstances", mock.Anything, mock.AnythingOfType("*entity.DescribeInstancesRequest")).
 					Return([]entity.Instance{
-						{ID: "i-1", State: "running"},
-						{ID: "i-2", State: "stopped"},
+						{ID: "i-1", State: "running", NodeName: "node-1"},
+						{ID: "i-2", State: "stopped", NodeName: "node-1"},
 					}, nil)
 			},
 			expectStatus: http.StatusOK,
@@ -191,20 +196,21 @@ func TestInstance_DescribeInstances(t *testing.T) {
 		{
 			name: "describe with instance IDs",
 			req: &entity.DescribeInstancesRequest{
+				NodeName:    "node-1",
 				InstanceIDs: []string{"i-1", "i-2"},
 			},
 			mockSetup: func(m *MockInstanceService) {
 				m.On("DescribeInstances", mock.Anything, mock.AnythingOfType("*entity.DescribeInstancesRequest")).
 					Return([]entity.Instance{
-						{ID: "i-1", State: "running"},
-						{ID: "i-2", State: "stopped"},
+						{ID: "i-1", State: "running", NodeName: "node-1"},
+						{ID: "i-2", State: "stopped", NodeName: "node-1"},
 					}, nil)
 			},
 			expectStatus: http.StatusOK,
 		},
 		{
 			name: "describe with error",
-			req:  &entity.DescribeInstancesRequest{},
+			req:  &entity.DescribeInstancesRequest{NodeName: "node-1"},
 			mockSetup: func(m *MockInstanceService) {
 				m.On("DescribeInstances", mock.Anything, mock.AnythingOfType("*entity.DescribeInstancesRequest")).
 					Return(nil, assert.AnError)
@@ -256,6 +262,7 @@ func TestInstance_TerminateInstances(t *testing.T) {
 		{
 			name: "successful terminate",
 			req: &entity.TerminateInstancesRequest{
+				NodeName:    "node-1",
 				InstanceIDs: []string{"i-123"},
 			},
 			mockSetup: func(m *MockInstanceService) {
@@ -269,6 +276,7 @@ func TestInstance_TerminateInstances(t *testing.T) {
 		{
 			name: "terminate with error",
 			req: &entity.TerminateInstancesRequest{
+				NodeName:    "node-1",
 				InstanceIDs: []string{"i-123"},
 			},
 			mockSetup: func(m *MockInstanceService) {
@@ -322,6 +330,7 @@ func TestInstance_StopInstances(t *testing.T) {
 		{
 			name: "successful stop",
 			req: &entity.StopInstancesRequest{
+				NodeName:    "node-1",
 				InstanceIDs: []string{"i-123"},
 				Force:       false,
 			},
@@ -336,6 +345,7 @@ func TestInstance_StopInstances(t *testing.T) {
 		{
 			name: "stop with error",
 			req: &entity.StopInstancesRequest{
+				NodeName:    "node-1",
 				InstanceIDs: []string{"i-123"},
 			},
 			mockSetup: func(m *MockInstanceService) {
@@ -389,6 +399,7 @@ func TestInstance_StartInstances(t *testing.T) {
 		{
 			name: "successful start",
 			req: &entity.StartInstancesRequest{
+				NodeName:    "node-1",
 				InstanceIDs: []string{"i-123"},
 			},
 			mockSetup: func(m *MockInstanceService) {
@@ -402,6 +413,7 @@ func TestInstance_StartInstances(t *testing.T) {
 		{
 			name: "start with error",
 			req: &entity.StartInstancesRequest{
+				NodeName:    "node-1",
 				InstanceIDs: []string{"i-123"},
 			},
 			mockSetup: func(m *MockInstanceService) {
@@ -455,6 +467,7 @@ func TestInstance_RebootInstances(t *testing.T) {
 		{
 			name: "successful reboot",
 			req: &entity.RebootInstancesRequest{
+				NodeName:    "node-1",
 				InstanceIDs: []string{"i-123"},
 			},
 			mockSetup: func(m *MockInstanceService) {
@@ -468,6 +481,7 @@ func TestInstance_RebootInstances(t *testing.T) {
 		{
 			name: "reboot with error",
 			req: &entity.RebootInstancesRequest{
+				NodeName:    "node-1",
 				InstanceIDs: []string{"i-123"},
 			},
 			mockSetup: func(m *MockInstanceService) {
@@ -521,6 +535,7 @@ func TestInstance_ModifyInstanceAttribute(t *testing.T) {
 		{
 			name: "successful modify",
 			req: &entity.ModifyInstanceAttributeRequest{
+				NodeName:   "node-1",
 				InstanceID: "i-123",
 				MemoryMB:   func() *uint64 { v := uint64(2048); return &v }(),
 			},
@@ -528,6 +543,7 @@ func TestInstance_ModifyInstanceAttribute(t *testing.T) {
 				m.On("ModifyInstanceAttribute", mock.Anything, mock.AnythingOfType("*entity.ModifyInstanceAttributeRequest")).
 					Return(&entity.Instance{
 						ID:       "i-123",
+						NodeName: "node-1",
 						MemoryMB: 2048,
 						State:    "running",
 					}, nil)
@@ -537,6 +553,7 @@ func TestInstance_ModifyInstanceAttribute(t *testing.T) {
 		{
 			name: "modify with error",
 			req: &entity.ModifyInstanceAttributeRequest{
+				NodeName:   "node-1",
 				InstanceID: "i-123",
 				MemoryMB:   func() *uint64 { v := uint64(2048); return &v }(),
 			},

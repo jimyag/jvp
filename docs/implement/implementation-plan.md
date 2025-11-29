@@ -2,30 +2,32 @@
 
 ## 当前代码分析
 
-### 现有架构
+### 现有架构（已更新 2025-11-29）
 
 ```
 internal/jvp/
 ├── api/          # HTTP API 层
+│   ├── node.go           # 节点 API
 │   ├── instance.go       # 虚拟机 API
 │   ├── volume.go         # 存储卷 API
-│   ├── image.go          # 镜像 API
 │   ├── keypair.go        # 密钥对 API
 │   ├── storage_pool.go   # 存储池 API
 │   ├── template.go       # 模板 API
 │   └── console_ws.go     # 控制台 WebSocket
 ├── service/      # 业务逻辑层
+│   ├── node.go           # 节点服务
 │   ├── instance.go       # 虚拟机服务
 │   ├── volume.go         # 存储卷服务
-│   ├── image.go          # 镜像服务
 │   ├── keypair.go        # 密钥对服务
 │   ├── storage.go        # 存储服务
-│   └── console.go        # 控制台服务
+│   ├── storage_pool.go   # 存储池服务
+│   └── template.go       # 模板服务
 ├── entity/       # 数据实体
+│   ├── node.go
 │   ├── instance.go
 │   ├── volume.go
-│   ├── image.go
-│   └── storage.go
+│   ├── storage_pool.go
+│   └── template.go
 └── config/       # 配置
 
 pkg/
@@ -37,14 +39,20 @@ pkg/
 
 web/              # 前端（Next.js）
 ├── app/
+│   ├── nodes/
 │   ├── instances/
-│   ├── volumes/
-│   ├── images/
 │   ├── storage-pools/
 │   ├── templates/
 │   └── keypairs/
 └── components/
 ```
+
+**已删除的模块（2025-11-29）：**
+- `api/image.go` - 镜像 API（已用 Template 替代）
+- `service/image.go` - 镜像服务（已用 Template 替代）
+- `entity/image.go` - 镜像实体（已用 Template 替代）
+- `web/app/volumes/` - 前端 Volumes 页面（Volume 管理已集成到 Storage Pool 详情页）
+- `web/app/images/` - 前端 Images 页面（已用 Templates 替代）
 
 ### 存在的问题
 
@@ -85,47 +93,55 @@ Network (网络)
 VM (虚拟机)
 ```
 
-### 新的目录结构
+### 目标目录结构
 
 ```
 internal/jvp/
 ├── api/
-│   ├── node.go           # 节点 API
-│   ├── storage_pool.go   # 存储池 API
-│   ├── template.go       # 模板 API
-│   ├── volume.go         # 存储卷 API
-│   ├── snapshot.go       # 快照 API（新增）
-│   ├── network.go        # 网络 API（新增）
-│   └── vm.go            # 虚拟机 API（重命名）
+│   ├── node.go           # 节点 API ✅
+│   ├── storage_pool.go   # 存储池 API ✅
+│   ├── template.go       # 模板 API ✅
+│   ├── volume.go         # 存储卷 API ✅
+│   ├── keypair.go        # 密钥对 API ✅
+│   ├── instance.go       # 虚拟机 API ✅
+│   ├── console_ws.go     # 控制台 WebSocket ✅
+│   ├── snapshot.go       # 快照 API（待实现）
+│   └── network.go        # 网络 API（待实现）
 ├── service/
-│   ├── node.go           # 节点服务
-│   ├── storage_pool.go   # 存储池服务
-│   ├── template.go       # 模板服务
-│   ├── volume.go         # 存储卷服务
-│   ├── snapshot.go       # 快照服务（新增）
-│   ├── network.go        # 网络服务（新增）
-│   └── vm.go            # 虚拟机服务（重命名）
+│   ├── node.go           # 节点服务 ✅
+│   ├── storage_pool.go   # 存储池服务 ✅
+│   ├── storage.go        # 存储服务 ✅
+│   ├── template.go       # 模板服务 ✅
+│   ├── volume.go         # 存储卷服务 ✅
+│   ├── keypair.go        # 密钥对服务 ✅
+│   ├── instance.go       # 虚拟机服务 ✅
+│   ├── snapshot.go       # 快照服务（待实现）
+│   └── network.go        # 网络服务（待实现）
 ├── entity/
-│   ├── node.go
-│   ├── storage_pool.go
-│   ├── template.go
-│   ├── volume.go
-│   ├── snapshot.go       # 快照实体（新增）
-│   ├── network.go        # 网络实体（新增）
-│   └── vm.go
+│   ├── node.go           # ✅
+│   ├── storage_pool.go   # ✅
+│   ├── template.go       # ✅
+│   ├── volume.go         # ✅
+│   ├── instance.go       # ✅
+│   ├── snapshot.go       # （待实现）
+│   └── network.go        # （待实现）
 └── config/
 
 web/
 ├── app/
-│   ├── nodes/            # 节点管理
-│   ├── storage-pools/    # 存储池管理
-│   ├── templates/        # 模板管理
-│   ├── volumes/          # 存储卷管理
-│   ├── snapshots/        # 快照管理（新增）
-│   ├── networks/         # 网络管理（新增）
-│   └── vms/             # 虚拟机管理（重命名）
+│   ├── nodes/            # 节点管理 ✅
+│   ├── storage-pools/    # 存储池管理 ✅（含卷管理）
+│   ├── templates/        # 模板管理 ✅
+│   ├── instances/        # 虚拟机管理 ✅
+│   ├── keypairs/         # 密钥对管理 ✅
+│   ├── snapshots/        # 快照管理（待实现）
+│   └── networks/         # 网络管理（待实现）
 └── components/
 ```
+
+**说明：**
+- Volumes 页面已移除，卷管理功能集成到 Storage Pool 详情页
+- Images 模块已完全删除，功能由 Templates 模块替代
 
 ## 实现顺序
 
@@ -195,11 +211,13 @@ web/
 
 ### 阶段 2：存储层（第 3-4 周）
 
-#### 2.1 Volume 模块 ✅ **已完成 (2025-11-25)**
+#### 2.1 Volume 模块 ✅ **已完成 (2025-11-29)**
 - [x] 重构 service/volume.go
 - [x] 重构 entity/volume.go
 - [x] 重构 API 路由为 Action 风格
-- [x] 前端页面优化 (集成到 Storage Pool 详情页)
+- [x] 前端页面集成到 Storage Pool 详情页
+- [x] 删除独立的 Volumes 前端页面（`web/app/volumes/`）
+- [x] 从侧边栏移除 Volumes 入口
 
 基础功能（已完成）：
 - [x] 创建 Volume(空白卷)
@@ -266,20 +284,27 @@ NodeService → VolumeService
 StoragePoolService → VolumeService
 ```
 
-#### 2.2 Template 模块（需拆分重构）
-- [ ] 从 image.go 拆分出 template.go
-- [ ] 后端 service: template.go
-- [ ] 后端 entity: template.go
-- [ ] 后端 API: template.go
-- [ ] 前端页面：app/templates/
+#### 2.2 Template 模块 ✅ **已完成 (2025-11-29)**
+- [x] 后端 service: template.go
+- [x] 后端 entity: template.go
+- [x] 后端 API: template.go
+- [x] 前端页面：app/templates/
+- [x] 删除旧的 Image 模块（image.go 已全部删除）
 
 功能：
-- 注册模板（URL/本地文件/快照）
-- 列举/查询模板
-- 删除模板
-- 更新模板
+- [x] 注册模板（现有 Volume / URL 下载）
+- [x] 列举/查询模板
+- [x] 删除模板（可选删除 backing volume）
+- [x] 更新模板元数据
+- [x] 从 URL 下载模板（后台任务，支持轮询状态）
 
-注意：Template 本质上是存储在 `images` 池中的特殊 Volume，需要额外的元数据管理
+技术实现：
+- Template 存储在 Storage Pool 的 `_templates_/` 子目录中
+- 元数据存储在 `/var/lib/jvp/metadata/<node>/<pool>/<template-id>/metadata.yaml`
+- Volume 列表自动过滤 `_templates_` 目录及其内容
+- SizeGB 使用 float64 类型，支持小于 1GB 的文件大小显示
+- 前端默认选择第一个 Node 和对应的第一个 Pool
+- 删除了旧的 ImageService，完全使用 TemplateService 替代
 
 #### 2.3 Snapshot 模块（新增）
 - [ ] 后端 service: snapshot.go（快照服务）

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/digitalocean/go-libvirt"
 )
@@ -49,12 +50,19 @@ type PoolTarget struct {
 // VolumeXML 存储卷 XML 结构
 // Reference: https://libvirt.org/formatstorage.html#StorageVol
 type VolumeXML struct {
-	XMLName    xml.Name     `xml:"volume"`
-	Type       string       `xml:"type,attr"`
-	Name       string       `xml:"name"`
-	Capacity   VolumeSize   `xml:"capacity"`
-	Allocation VolumeSize   `xml:"allocation"`
-	Target     VolumeTarget `xml:"target"`
+	XMLName      xml.Name          `xml:"volume"`
+	Type         string            `xml:"type,attr,omitempty"`
+	Name         string            `xml:"name"`
+	Capacity     VolumeSize        `xml:"capacity"`
+	Allocation   VolumeSize        `xml:"allocation"`
+	Target       VolumeTarget      `xml:"target"`
+	BackingStore *VolumeBackingStore `xml:"backingStore,omitempty"`
+}
+
+// VolumeBackingStore 存储卷 backing store 配置（用于创建增量卷）
+type VolumeBackingStore struct {
+	Path   string       `xml:"path"`
+	Format VolumeFormat `xml:"format"`
 }
 
 // VolumeSize 存储卷大小配置
@@ -375,6 +383,187 @@ func (c *Client) CreateVolume(poolName, volumeName string, sizeGB uint64, format
 		CapacityB:   capacity,
 		AllocationB: allocation,
 		Format:      format,
+	}, nil
+}
+
+// CreateVolumeWithBackingStore 创建带 backing store 的存储卷（增量卷）
+// 用于从模板创建 VM 磁盘，实现 copy-on-write
+func (c *Client) CreateVolumeWithBackingStore(poolName, volumeName string, capacityGB uint64, format string, backingPath string, backingFormat string) (*VolumeInfo, error) {
+	if format == "" {
+		format = "qcow2"
+	}
+	if backingFormat == "" {
+		backingFormat = "qcow2"
+	}
+
+	pool, err := c.conn.StoragePoolLookupByName(poolName)
+	if err != nil {
+		return nil, fmt.Errorf("lookup storage pool %s: %w", poolName, err)
+	}
+
+	// 构建带 backing store 的 volume XML
+	volumeXML := &VolumeXML{
+		Name: volumeName,
+		Capacity: VolumeSize{
+			Unit:  "G",
+			Value: capacityGB,
+		},
+		Allocation: VolumeSize{
+			Unit:  "G",
+			Value: 0, // 增量卷初始分配为 0
+		},
+		Target: VolumeTarget{
+			Format: VolumeFormat{
+				Type: format,
+			},
+		},
+		BackingStore: &VolumeBackingStore{
+			Path: backingPath,
+			Format: VolumeFormat{
+				Type: backingFormat,
+			},
+		},
+	}
+
+	// 序列化为 XML
+	xmlBytes, err := xml.MarshalIndent(volumeXML, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshal volume XML: %w", err)
+	}
+	volXML := string(xmlBytes)
+
+	vol, err := c.conn.StorageVolCreateXML(pool, volXML, 0)
+	if err != nil {
+		return nil, fmt.Errorf("create volume with backing store: %w", err)
+	}
+
+	// 获取 volume 信息
+	path, err := c.conn.StorageVolGetPath(vol)
+	if err != nil {
+		return nil, fmt.Errorf("get volume path: %w", err)
+	}
+
+	volType, capacity, allocation, err := c.conn.StorageVolGetInfo(vol)
+	if err != nil {
+		return nil, fmt.Errorf("get volume info: %w", err)
+	}
+
+	// 修复权限
+	if err := fixVolumeOwnership(c, vol, pool); err != nil {
+		fmt.Printf("Warning: failed to fix volume ownership: %v\n", err)
+	}
+
+	_ = volType
+
+	return &VolumeInfo{
+		Name:        volumeName,
+		Path:        path,
+		CapacityB:   capacity,
+		AllocationB: allocation,
+		Format:      format,
+	}, nil
+}
+
+// UploadFileToPool 上传本地文件到存储池
+// 用于上传 cloud-init ISO 等文件到远程节点
+func (c *Client) UploadFileToPool(poolName string, volumeName string, localFilePath string) (*VolumeInfo, error) {
+	// 获取本地文件信息
+	fileInfo, err := os.Stat(localFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("stat local file: %w", err)
+	}
+	fileSize := uint64(fileInfo.Size())
+
+	pool, err := c.conn.StoragePoolLookupByName(poolName)
+	if err != nil {
+		return nil, fmt.Errorf("lookup storage pool %s: %w", poolName, err)
+	}
+
+	// 先尝试删除已存在的卷（如果存在）
+	existingVol, err := c.conn.StorageVolLookupByName(pool, volumeName)
+	if err == nil {
+		_ = c.conn.StorageVolDelete(existingVol, libvirt.StorageVolDeleteNormal)
+	}
+
+	// 创建 raw 格式的卷
+	volumeXML := fmt.Sprintf(`<volume type='file'>
+  <name>%s</name>
+  <capacity unit='B'>%d</capacity>
+  <target>
+    <format type='raw'/>
+  </target>
+</volume>`, volumeName, fileSize)
+
+	vol, err := c.conn.StorageVolCreateXML(pool, volumeXML, 0)
+	if err != nil {
+		return nil, fmt.Errorf("create volume for upload: %w", err)
+	}
+
+	// 打开本地文件
+	localFile, err := os.Open(localFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("open local file: %w", err)
+	}
+	defer localFile.Close()
+
+	// 读取文件内容
+	content, err := os.ReadFile(localFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("read local file: %w", err)
+	}
+
+	// 使用 StorageVolUpload 上传
+	// 注意：go-libvirt 的 StorageVolUpload 需要通过 stream 传输
+	// 由于 go-libvirt 对 stream 的支持有限，我们使用 SSH 方式作为后备
+	if c.IsRemoteConnection() {
+		// 远程连接使用 SSH 上传
+		sshTarget, err := c.getSSHTarget()
+		if err != nil {
+			return nil, fmt.Errorf("get SSH target: %w", err)
+		}
+
+		// 获取卷路径
+		volPath, err := c.conn.StorageVolGetPath(vol)
+		if err != nil {
+			return nil, fmt.Errorf("get volume path: %w", err)
+		}
+
+		// 使用 ssh + cat 上传文件内容
+		cmd := exec.Command("ssh", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes", sshTarget,
+			fmt.Sprintf("cat > '%s'", volPath))
+		cmd.Stdin = localFile
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return nil, fmt.Errorf("ssh upload failed: %w, output: %s", err, string(output))
+		}
+	} else {
+		// 本地连接直接写入
+		volPath, err := c.conn.StorageVolGetPath(vol)
+		if err != nil {
+			return nil, fmt.Errorf("get volume path: %w", err)
+		}
+		if err := os.WriteFile(volPath, content, 0644); err != nil {
+			return nil, fmt.Errorf("write to volume: %w", err)
+		}
+	}
+
+	// 刷新存储池以更新卷信息
+	if err := c.conn.StoragePoolRefresh(pool, 0); err != nil {
+		// 非致命错误
+		fmt.Printf("Warning: failed to refresh pool: %v\n", err)
+	}
+
+	// 获取卷信息
+	path, err := c.conn.StorageVolGetPath(vol)
+	if err != nil {
+		return nil, fmt.Errorf("get volume path: %w", err)
+	}
+
+	return &VolumeInfo{
+		Name:        volumeName,
+		Path:        path,
+		CapacityB:   fileSize,
+		AllocationB: fileSize,
+		Format:      "raw",
 	}, nil
 }
 
@@ -765,4 +954,103 @@ func (c *Client) ListRemoteFiles(dir, pattern string) ([]string, error) {
 	}
 
 	return files, nil
+}
+
+// CreateCloudInitISO 在远程（或本地）节点创建 cloud-init ISO
+// 返回生成的 ISO 文件路径
+func (c *Client) CreateCloudInitISO(outputDir, vmName, metaData, userData string) (string, error) {
+	isoPath := fmt.Sprintf("%s/%s-cidata.iso", outputDir, vmName)
+
+	if c.IsRemoteConnection() {
+		return c.createCloudInitISORemote(outputDir, vmName, metaData, userData, isoPath)
+	}
+	return c.createCloudInitISOLocal(outputDir, vmName, metaData, userData, isoPath)
+}
+
+// createCloudInitISOLocal 在本地创建 cloud-init ISO
+func (c *Client) createCloudInitISOLocal(outputDir, vmName, metaData, userData, isoPath string) (string, error) {
+	// 创建临时目录
+	tmpDir, err := os.MkdirTemp("", "cloudinit-")
+	if err != nil {
+		return "", fmt.Errorf("create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// 写入 meta-data
+	metaDataPath := tmpDir + "/meta-data"
+	if err := os.WriteFile(metaDataPath, []byte(metaData), 0644); err != nil {
+		return "", fmt.Errorf("write meta-data: %w", err)
+	}
+
+	// 写入 user-data
+	userDataPath := tmpDir + "/user-data"
+	if err := os.WriteFile(userDataPath, []byte(userData), 0644); err != nil {
+		return "", fmt.Errorf("write user-data: %w", err)
+	}
+
+	// 生成 ISO
+	var cmd *exec.Cmd
+	if _, err := exec.LookPath("genisoimage"); err == nil {
+		cmd = exec.Command("genisoimage", "-output", isoPath, "-volid", "cidata", "-joliet", "-rock", tmpDir)
+	} else if _, err := exec.LookPath("mkisofs"); err == nil {
+		cmd = exec.Command("mkisofs", "-output", isoPath, "-volid", "cidata", "-joliet", "-rock", tmpDir)
+	} else {
+		return "", fmt.Errorf("neither genisoimage nor mkisofs found")
+	}
+
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("create ISO: %w, output: %s", err, string(output))
+	}
+
+	return isoPath, nil
+}
+
+// createCloudInitISORemote 在远程节点创建 cloud-init ISO
+func (c *Client) createCloudInitISORemote(outputDir, vmName, metaData, userData, isoPath string) (string, error) {
+	sshTarget, err := c.getSSHTarget()
+	if err != nil {
+		return "", err
+	}
+
+	// 在远程创建临时目录
+	tmpDir := fmt.Sprintf("/tmp/cloudinit-%s-%d", vmName, time.Now().UnixNano())
+	mkdirCmd := fmt.Sprintf("mkdir -p '%s'", tmpDir)
+	cmd := exec.Command("ssh", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes", sshTarget, mkdirCmd)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("create remote temp dir: %w, output: %s", err, string(output))
+	}
+
+	// 清理临时目录
+	defer func() {
+		cleanCmd := fmt.Sprintf("rm -rf '%s'", tmpDir)
+		cmd := exec.Command("ssh", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes", sshTarget, cleanCmd)
+		_ = cmd.Run()
+	}()
+
+	// 写入 meta-data 到远程
+	metaDataPath := tmpDir + "/meta-data"
+	writeMetaCmd := fmt.Sprintf("cat > '%s'", metaDataPath)
+	cmd = exec.Command("ssh", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes", sshTarget, writeMetaCmd)
+	cmd.Stdin = strings.NewReader(metaData)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("write remote meta-data: %w, output: %s", err, string(output))
+	}
+
+	// 写入 user-data 到远程
+	userDataPath := tmpDir + "/user-data"
+	writeUserCmd := fmt.Sprintf("cat > '%s'", userDataPath)
+	cmd = exec.Command("ssh", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes", sshTarget, writeUserCmd)
+	cmd.Stdin = strings.NewReader(userData)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("write remote user-data: %w, output: %s", err, string(output))
+	}
+
+	// 在远程生成 ISO（尝试 genisoimage 或 mkisofs）
+	genISOCmd := fmt.Sprintf("(which genisoimage && genisoimage -output '%s' -volid cidata -joliet -rock '%s') || (which mkisofs && mkisofs -output '%s' -volid cidata -joliet -rock '%s')", isoPath, tmpDir, isoPath, tmpDir)
+	cmd = exec.Command("ssh", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes", sshTarget, genISOCmd)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("create remote ISO: %w, output: %s", err, string(output))
+	}
+
+	return isoPath, nil
 }

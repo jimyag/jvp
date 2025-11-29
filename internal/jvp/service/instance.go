@@ -1,5 +1,5 @@
 // Package service 提供业务逻辑层的服务实现
-// 包括 Storage Service、Image Service 和 Instance Service
+// 包括 Storage Service、Template Service 和 Instance Service
 package service
 
 import (
@@ -23,41 +23,278 @@ import (
 
 // InstanceService 实例服务，管理虚拟机实例
 type InstanceService struct {
+	nodeService         *NodeService
+	templateService     *TemplateService
 	keyPairService      *KeyPairService
-	libvirtClient       libvirt.LibvirtClient
 	virtCustomizeClient virtcustomize.VirtCustomizeClient
 	idGen               *idgen.Generator
 }
 
 // NewInstanceService 创建新的 Instance Service
 func NewInstanceService(
+	nodeService *NodeService,
+	templateService *TemplateService,
 	keyPairService *KeyPairService,
-	libvirtClient libvirt.LibvirtClient,
 ) (*InstanceService, error) {
 	// 创建 virt-customize 客户端（如果失败，返回 nil，后续使用时再处理）
 	virtCustomizeClient, _ := virtcustomize.NewClient()
 
 	return &InstanceService{
+		nodeService:         nodeService,
+		templateService:     templateService,
 		keyPairService:      keyPairService,
-		libvirtClient:       libvirtClient,
 		virtCustomizeClient: virtCustomizeClient,
 		idGen:               idgen.New(),
 	}, nil
 }
 
-// GetLibvirtClient 获取 libvirt 客户端（用于控制台访问）
-func (s *InstanceService) GetLibvirtClient() libvirt.LibvirtClient {
-	return s.libvirtClient
+// GetLibvirtClient 获取指定节点的 libvirt 客户端（用于控制台访问）
+func (s *InstanceService) GetLibvirtClient(ctx context.Context, nodeName string) (libvirt.LibvirtClient, error) {
+	return s.nodeService.GetNodeStorage(ctx, nodeName)
 }
 
 // RunInstance 创建并启动实例
-// TODO: 需要重新实现，使用 Template 替代 Image
 func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstanceRequest) (*entity.Instance, error) {
-	return nil, apierror.NewErrorWithStatus(
-		"NotImplemented",
-		"RunInstance is not implemented yet, please use Template to create instances",
-		501,
-	)
+	logger := zerolog.Ctx(ctx)
+	logger.Info().
+		Str("node_name", req.NodeName).
+		Str("pool_name", req.PoolName).
+		Str("template_id", req.TemplateID).
+		Msg("Creating instance")
+
+	// 获取节点的 libvirt 客户端
+	client, err := s.nodeService.GetNodeStorage(ctx, req.NodeName)
+	if err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get node connection", err)
+	}
+
+	// 生成实例名称
+	instanceName := req.Name
+	if instanceName == "" {
+		id, err := s.idGen.GenerateID()
+		if err != nil {
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to generate instance ID", err)
+		}
+		instanceName = fmt.Sprintf("i-%d", id)
+	}
+
+	// 设置默认值
+	memoryMB := req.MemoryMB
+	if memoryMB == 0 {
+		memoryMB = 2048 // 默认 2GB
+	}
+	vcpus := req.VCPUs
+	if vcpus == 0 {
+		vcpus = 2 // 默认 2 核
+	}
+	sizeGB := req.SizeGB
+	if sizeGB == 0 {
+		sizeGB = 20 // 默认 20GB
+	}
+
+	var diskPath string
+	var templateID string
+
+	// 如果指定了模板，获取模板信息并创建增量磁盘
+	if req.TemplateID != "" {
+		// 获取模板信息
+		template, err := s.templateService.DescribeTemplate(ctx, &entity.DescribeTemplateRequest{
+			NodeName:   req.NodeName,
+			PoolName:   req.PoolName,
+			TemplateID: req.TemplateID,
+		})
+		if err != nil {
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get template", err)
+		}
+
+		templateID = template.ID
+
+		// 使用模板的大小（如果请求没有指定更大的大小）
+		if req.SizeGB == 0 || uint64(template.SizeGB) > req.SizeGB {
+			sizeGB = uint64(template.SizeGB)
+		}
+		if sizeGB < uint64(template.SizeGB) {
+			sizeGB = uint64(template.SizeGB) // 不能比模板小
+		}
+
+		// 创建磁盘卷名称
+		diskVolumeName := instanceName + ".qcow2"
+
+		// 使用 backingStore 创建增量磁盘
+		logger.Info().
+			Str("pool_name", req.PoolName).
+			Str("volume_name", diskVolumeName).
+			Str("backing_path", template.Path).
+			Uint64("size_gb", sizeGB).
+			Msg("Creating disk with backing store")
+
+		volumeInfo, err := client.CreateVolumeWithBackingStore(
+			req.PoolName,
+			diskVolumeName,
+			sizeGB,
+			"qcow2",
+			template.Path,
+			template.Format,
+		)
+		if err != nil {
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to create disk volume", err)
+		}
+		diskPath = volumeInfo.Path
+
+		logger.Info().
+			Str("disk_path", diskPath).
+			Msg("Disk volume created")
+	} else {
+		// 没有模板，创建空白磁盘
+		diskVolumeName := instanceName + ".qcow2"
+
+		volumeInfo, err := client.CreateVolume(req.PoolName, diskVolumeName, sizeGB, "qcow2")
+		if err != nil {
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to create blank disk volume", err)
+		}
+		diskPath = volumeInfo.Path
+	}
+
+	// 处理 cloud-init 配置
+	var cloudInitISOPath string
+	if req.UserData != nil || len(req.KeyPairIDs) > 0 {
+		cloudInitConfig, userData, err := s.convertUserDataToCloudInit(ctx, instanceName, req.UserData)
+		if err != nil {
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to convert user data", err)
+		}
+
+		// 添加 SSH 密钥
+		if len(req.KeyPairIDs) > 0 && cloudInitConfig != nil {
+			for _, keyPairID := range req.KeyPairIDs {
+				keyPair, err := s.keyPairService.GetKeyPairByID(ctx, keyPairID)
+				if err != nil {
+					logger.Warn().
+						Str("keypair_id", keyPairID).
+						Err(err).
+						Msg("Failed to get key pair, skipping")
+					continue
+				}
+				// 添加到默认用户的 SSH 密钥
+				if len(cloudInitConfig.Users) == 0 {
+					cloudInitConfig.Users = []cloudinit.User{{
+						Name:              "ubuntu",
+						Sudo:              "ALL=(ALL) NOPASSWD:ALL",
+						Shell:             "/bin/bash",
+						SSHAuthorizedKeys: []string{keyPair.PublicKey},
+					}}
+				} else {
+					cloudInitConfig.Users[0].SSHAuthorizedKeys = append(
+						cloudInitConfig.Users[0].SSHAuthorizedKeys,
+						keyPair.PublicKey,
+					)
+				}
+			}
+		}
+
+		// 生成 cloud-init ISO
+		if cloudInitConfig != nil || userData != nil {
+			// 获取存储池路径
+			poolInfo, err := client.GetStoragePool(req.PoolName)
+			if err != nil {
+				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get storage pool", err)
+			}
+
+			// 生成 cloud-init 配置文件内容
+			generator := cloudinit.NewGenerator()
+			metaData, err := generator.GenerateMetaData(cloudInitConfig.Hostname)
+			if err != nil {
+				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to generate meta-data", err)
+			}
+
+			var userDataContent string
+			if userData != nil {
+				userDataContent, err = generator.GenerateUserDataFromStruct(userData)
+			} else {
+				userDataContent, err = generator.GenerateUserData(cloudInitConfig)
+			}
+			if err != nil {
+				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to generate user-data", err)
+			}
+
+			// 在远程节点上生成 cloud-init ISO
+			cloudInitISOPath, err = client.CreateCloudInitISO(
+				poolInfo.Path,
+				instanceName,
+				metaData,
+				userDataContent,
+			)
+			if err != nil {
+				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to generate cloud-init ISO on remote node", err)
+			}
+
+			logger.Info().
+				Str("cloud_init_iso", cloudInitISOPath).
+				Msg("Cloud-init ISO generated on remote node")
+		}
+	}
+
+	// 设置网络配置
+	networkType := req.NetworkType
+	if networkType == "" {
+		networkType = "bridge"
+	}
+	networkSource := req.NetworkSource
+	if networkSource == "" {
+		networkSource = "br0"
+	}
+
+	// 创建 Domain
+	vmConfig := &libvirt.CreateVMConfig{
+		Name:          instanceName,
+		Memory:        memoryMB * 1024, // 转换为 KB
+		VCPUs:         vcpus,
+		DiskPath:      diskPath,
+		NetworkType:   networkType,
+		NetworkSource: networkSource,
+	}
+
+	// 如果有 cloud-init ISO，添加到配置
+	if cloudInitISOPath != "" {
+		vmConfig.ISOPath = cloudInitISOPath
+	}
+
+	logger.Info().
+		Str("name", instanceName).
+		Uint64("memory_mb", memoryMB).
+		Uint16("vcpus", vcpus).
+		Str("disk_path", diskPath).
+		Msg("Creating domain")
+
+	domain, err := client.CreateDomain(vmConfig, true)
+	if err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to create domain", err)
+	}
+
+	// 启动 domain
+	if err := client.StartDomain(domain); err != nil {
+		logger.Warn().
+			Err(err).
+			Str("name", instanceName).
+			Msg("Failed to start domain, it might already be running")
+	}
+
+	logger.Info().
+		Str("name", instanceName).
+		Str("domain_uuid", formatDomainUUID(domain.UUID)).
+		Msg("Instance created successfully")
+
+	return &entity.Instance{
+		ID:         instanceName,
+		Name:       instanceName,
+		State:      "running",
+		NodeName:   req.NodeName,
+		TemplateID: templateID,
+		MemoryMB:   memoryMB,
+		VCPUs:      vcpus,
+		CreatedAt:  time.Now().Format(time.RFC3339),
+		DomainUUID: formatDomainUUID(domain.UUID),
+		DomainName: instanceName,
+	}, nil
 }
 
 // formatDomainUUID 格式化 Domain UUID
@@ -186,10 +423,18 @@ func (s *InstanceService) convertUserDataToCloudInit(
 // DescribeInstances 描述实例
 func (s *InstanceService) DescribeInstances(ctx context.Context, req *entity.DescribeInstancesRequest) ([]entity.Instance, error) {
 	logger := zerolog.Ctx(ctx)
-	logger.Info().Msg("Describing instances from libvirt")
+	logger.Info().
+		Str("node_name", req.NodeName).
+		Msg("Describing instances from libvirt")
+
+	// 获取节点的 libvirt 客户端
+	client, err := s.nodeService.GetNodeStorage(ctx, req.NodeName)
+	if err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get node connection", err)
+	}
 
 	// 直接从 libvirt 获取所有 domain
-	domains, err := s.libvirtClient.GetVMSummaries()
+	domains, err := client.GetVMSummaries()
 	if err != nil {
 		logger.Error().
 			Err(err).
@@ -205,7 +450,7 @@ func (s *InstanceService) DescribeInstances(ctx context.Context, req *entity.Des
 	instances := make([]entity.Instance, 0, len(domains))
 	for _, domain := range domains {
 		// 获取详细信息
-		domainInfo, err := s.libvirtClient.GetDomainInfo(domain.UUID)
+		domainInfo, err := client.GetDomainInfo(domain.UUID)
 		if err != nil {
 			logger.Warn().
 				Str("domain_name", domain.Name).
@@ -215,7 +460,7 @@ func (s *InstanceService) DescribeInstances(ctx context.Context, req *entity.Des
 		}
 
 		// 获取状态
-		state, _, err := s.libvirtClient.GetDomainState(domain)
+		state, _, err := client.GetDomainState(domain)
 		if err != nil {
 			logger.Warn().
 				Str("domain_name", domain.Name).
@@ -228,6 +473,7 @@ func (s *InstanceService) DescribeInstances(ctx context.Context, req *entity.Des
 			ID:         domain.Name, // 使用 domain name 作为 ID
 			Name:       domain.Name,
 			State:      convertDomainState(state),
+			NodeName:   req.NodeName,
 			DomainUUID: formatDomainUUID(domain.UUID),
 			DomainName: domain.Name,
 			VCPUs:      domainInfo.VCPUs,
@@ -235,7 +481,7 @@ func (s *InstanceService) DescribeInstances(ctx context.Context, req *entity.Des
 			CreatedAt:  "",                       // libvirt 不提供创建时间
 		}
 
-		// TODO: 如果需要 ImageID 和 VolumeID，可以从 domain metadata 读取
+		// TODO: 如果需要 TemplateID，可以从 domain metadata 读取
 		instances = append(instances, instance)
 	}
 
@@ -295,21 +541,27 @@ func convertDomainState(state uint8) string {
 }
 
 // GetInstance 获取单个实例信息
-func (s *InstanceService) GetInstance(ctx context.Context, instanceID string) (*entity.Instance, error) {
+func (s *InstanceService) GetInstance(ctx context.Context, nodeName, instanceID string) (*entity.Instance, error) {
+	// 获取节点的 libvirt 客户端
+	client, err := s.nodeService.GetNodeStorage(ctx, nodeName)
+	if err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get node connection", err)
+	}
+
 	// instanceID 就是 domain name
-	domain, err := s.libvirtClient.GetDomainByName(instanceID)
+	domain, err := client.GetDomainByName(instanceID)
 	if err != nil {
 		return nil, fmt.Errorf("domain not found: %w", err)
 	}
 
 	// 获取详细信息
-	domainInfo, err := s.libvirtClient.GetDomainInfo(domain.UUID)
+	domainInfo, err := client.GetDomainInfo(domain.UUID)
 	if err != nil {
 		return nil, fmt.Errorf("get domain info: %w", err)
 	}
 
 	// 获取状态
-	state, _, err := s.libvirtClient.GetDomainState(domain)
+	state, _, err := client.GetDomainState(domain)
 	if err != nil {
 		state = 5 // Unknown
 	}
@@ -318,6 +570,7 @@ func (s *InstanceService) GetInstance(ctx context.Context, instanceID string) (*
 		ID:         domain.Name,
 		Name:       domain.Name,
 		State:      convertDomainState(state),
+		NodeName:   nodeName,
 		DomainUUID: formatDomainUUID(domain.UUID),
 		DomainName: domain.Name,
 		VCPUs:      domainInfo.VCPUs,
@@ -332,15 +585,22 @@ func (s *InstanceService) GetInstance(ctx context.Context, instanceID string) (*
 func (s *InstanceService) TerminateInstances(ctx context.Context, req *entity.TerminateInstancesRequest) ([]entity.InstanceStateChange, error) {
 	logger := zerolog.Ctx(ctx)
 	logger.Info().
+		Str("node_name", req.NodeName).
 		Strs("instanceIDs", req.InstanceIDs).
 		Msg("Terminating instances")
+
+	// 获取节点的 libvirt 客户端
+	client, err := s.nodeService.GetNodeStorage(ctx, req.NodeName)
+	if err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get node connection", err)
+	}
 
 	var changes []entity.InstanceStateChange
 	var lastError error
 
 	for _, instanceID := range req.InstanceIDs {
 		// 获取当前状态
-		instance, err := s.GetInstance(ctx, instanceID)
+		instance, err := s.GetInstance(ctx, req.NodeName, instanceID)
 		if err != nil {
 			logger.Error().
 				Str("instanceID", instanceID).
@@ -352,7 +612,7 @@ func (s *InstanceService) TerminateInstances(ctx context.Context, req *entity.Te
 		previousState := instance.State
 
 		// 获取 domain
-		domain, err := s.libvirtClient.GetDomainByName(instanceID)
+		domain, err := client.GetDomainByName(instanceID)
 		if err != nil {
 			logger.Error().
 				Str("instanceID", instanceID).
@@ -366,7 +626,7 @@ func (s *InstanceService) TerminateInstances(ctx context.Context, req *entity.Te
 		logger.Info().
 			Str("instanceID", instanceID).
 			Msg("Deleting domain from libvirt")
-		err = s.libvirtClient.DeleteDomain(domain, libvirtlib.DomainUndefineFlagsValues(0))
+		err = client.DeleteDomain(domain, libvirtlib.DomainUndefineFlagsValues(0))
 		if err != nil {
 			logger.Error().
 				Str("instanceID", instanceID).
@@ -414,16 +674,23 @@ func (s *InstanceService) TerminateInstances(ctx context.Context, req *entity.Te
 func (s *InstanceService) StopInstances(ctx context.Context, req *entity.StopInstancesRequest) ([]entity.InstanceStateChange, error) {
 	logger := zerolog.Ctx(ctx)
 	logger.Info().
+		Str("node_name", req.NodeName).
 		Strs("instanceIDs", req.InstanceIDs).
 		Bool("force", req.Force).
 		Msg("Stopping instances")
+
+	// 获取节点的 libvirt 客户端
+	client, err := s.nodeService.GetNodeStorage(ctx, req.NodeName)
+	if err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get node connection", err)
+	}
 
 	var changes []entity.InstanceStateChange
 	var lastError error
 
 	for _, instanceID := range req.InstanceIDs {
 		// 获取当前状态
-		instance, err := s.GetInstance(ctx, instanceID)
+		instance, err := s.GetInstance(ctx, req.NodeName, instanceID)
 		if err != nil {
 			logger.Error().
 				Str("instanceID", instanceID).
@@ -448,7 +715,7 @@ func (s *InstanceService) StopInstances(ctx context.Context, req *entity.StopIns
 		}
 
 		// 获取 domain
-		domain, err := s.libvirtClient.GetDomainByName(instanceID)
+		domain, err := client.GetDomainByName(instanceID)
 		if err != nil {
 			logger.Error().
 				Str("instanceID", instanceID).
@@ -464,13 +731,13 @@ func (s *InstanceService) StopInstances(ctx context.Context, req *entity.StopIns
 			logger.Info().
 				Str("instanceID", instanceID).
 				Msg("Force stopping domain")
-			err = s.libvirtClient.DestroyDomain(domain)
+			err = client.DestroyDomain(domain)
 		} else {
 			// 优雅停止
 			logger.Info().
 				Str("instanceID", instanceID).
 				Msg("Gracefully stopping domain")
-			err = s.libvirtClient.StopDomain(domain)
+			err = client.StopDomain(domain)
 		}
 
 		if err != nil {
@@ -520,15 +787,22 @@ func (s *InstanceService) StopInstances(ctx context.Context, req *entity.StopIns
 func (s *InstanceService) StartInstances(ctx context.Context, req *entity.StartInstancesRequest) ([]entity.InstanceStateChange, error) {
 	logger := zerolog.Ctx(ctx)
 	logger.Info().
+		Str("node_name", req.NodeName).
 		Strs("instanceIDs", req.InstanceIDs).
 		Msg("Starting instances")
+
+	// 获取节点的 libvirt 客户端
+	client, err := s.nodeService.GetNodeStorage(ctx, req.NodeName)
+	if err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get node connection", err)
+	}
 
 	var changes []entity.InstanceStateChange
 	var lastError error
 
 	for _, instanceID := range req.InstanceIDs {
 		// 获取当前状态
-		instance, err := s.GetInstance(ctx, instanceID)
+		instance, err := s.GetInstance(ctx, req.NodeName, instanceID)
 		if err != nil {
 			logger.Error().
 				Str("instanceID", instanceID).
@@ -553,7 +827,7 @@ func (s *InstanceService) StartInstances(ctx context.Context, req *entity.StartI
 		}
 
 		// 获取 domain
-		domain, err := s.libvirtClient.GetDomainByName(instanceID)
+		domain, err := client.GetDomainByName(instanceID)
 		if err != nil {
 			logger.Error().
 				Str("instanceID", instanceID).
@@ -567,7 +841,7 @@ func (s *InstanceService) StartInstances(ctx context.Context, req *entity.StartI
 		logger.Info().
 			Str("instanceID", instanceID).
 			Msg("Starting domain")
-		err = s.libvirtClient.StartDomain(domain)
+		err = client.StartDomain(domain)
 		if err != nil {
 			logger.Error().
 				Str("instanceID", instanceID).
@@ -613,15 +887,22 @@ func (s *InstanceService) StartInstances(ctx context.Context, req *entity.StartI
 func (s *InstanceService) RebootInstances(ctx context.Context, req *entity.RebootInstancesRequest) ([]entity.InstanceStateChange, error) {
 	logger := zerolog.Ctx(ctx)
 	logger.Info().
+		Str("node_name", req.NodeName).
 		Strs("instanceIDs", req.InstanceIDs).
 		Msg("Rebooting instances")
+
+	// 获取节点的 libvirt 客户端
+	client, err := s.nodeService.GetNodeStorage(ctx, req.NodeName)
+	if err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get node connection", err)
+	}
 
 	var changes []entity.InstanceStateChange
 	var lastError error
 
 	for _, instanceID := range req.InstanceIDs {
 		// 获取当前状态
-		instance, err := s.GetInstance(ctx, instanceID)
+		instance, err := s.GetInstance(ctx, req.NodeName, instanceID)
 		if err != nil {
 			logger.Error().
 				Str("instanceID", instanceID).
@@ -638,6 +919,7 @@ func (s *InstanceService) RebootInstances(ctx context.Context, req *entity.Reboo
 				Str("instanceID", instanceID).
 				Msg("Instance is stopped, starting before reboot")
 			_, err = s.StartInstances(ctx, &entity.StartInstancesRequest{
+				NodeName:    req.NodeName,
 				InstanceIDs: []string{instanceID},
 			})
 			if err != nil {
@@ -652,7 +934,7 @@ func (s *InstanceService) RebootInstances(ctx context.Context, req *entity.Reboo
 		}
 
 		// 获取 domain
-		domain, err := s.libvirtClient.GetDomainByName(instanceID)
+		domain, err := client.GetDomainByName(instanceID)
 		if err != nil {
 			logger.Error().
 				Str("instanceID", instanceID).
@@ -666,7 +948,7 @@ func (s *InstanceService) RebootInstances(ctx context.Context, req *entity.Reboo
 		logger.Info().
 			Str("instanceID", instanceID).
 			Msg("Rebooting domain")
-		err = s.libvirtClient.RebootDomain(domain)
+		err = client.RebootDomain(domain)
 		if err != nil {
 			logger.Error().
 				Str("instanceID", instanceID).
@@ -712,18 +994,25 @@ func (s *InstanceService) RebootInstances(ctx context.Context, req *entity.Reboo
 func (s *InstanceService) ModifyInstanceAttribute(ctx context.Context, req *entity.ModifyInstanceAttributeRequest) (*entity.Instance, error) {
 	logger := zerolog.Ctx(ctx)
 	logger.Info().
+		Str("node_name", req.NodeName).
 		Str("instanceID", req.InstanceID).
 		Interface("request", req).
 		Msg("Modifying instance attribute")
 
+	// 获取节点的 libvirt 客户端
+	client, err := s.nodeService.GetNodeStorage(ctx, req.NodeName)
+	if err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get node connection", err)
+	}
+
 	// 获取当前实例信息
-	instance, err := s.GetInstance(ctx, req.InstanceID)
+	instance, err := s.GetInstance(ctx, req.NodeName, req.InstanceID)
 	if err != nil {
 		return nil, fmt.Errorf("get instance: %w", err)
 	}
 
 	// 获取 domain
-	domain, err := s.libvirtClient.GetDomainByName(req.InstanceID)
+	domain, err := client.GetDomainByName(req.InstanceID)
 	if err != nil {
 		return nil, fmt.Errorf("get domain: %w", err)
 	}
@@ -731,7 +1020,7 @@ func (s *InstanceService) ModifyInstanceAttribute(ctx context.Context, req *enti
 	// 修改内存
 	if req.MemoryMB != nil {
 		memoryKB := *req.MemoryMB * 1024
-		err = s.libvirtClient.ModifyDomainMemory(domain, memoryKB, req.Live)
+		err = client.ModifyDomainMemory(domain, memoryKB, req.Live)
 		if err != nil {
 			return nil, fmt.Errorf("modify memory: %w", err)
 		}
@@ -744,7 +1033,7 @@ func (s *InstanceService) ModifyInstanceAttribute(ctx context.Context, req *enti
 
 	// 修改 VCPU
 	if req.VCPUs != nil {
-		err = s.libvirtClient.ModifyDomainVCPU(domain, *req.VCPUs, req.Live)
+		err = client.ModifyDomainVCPU(domain, *req.VCPUs, req.Live)
 		if err != nil {
 			return nil, fmt.Errorf("modify VCPU: %w", err)
 		}
@@ -766,7 +1055,7 @@ func (s *InstanceService) ModifyInstanceAttribute(ctx context.Context, req *enti
 	}
 
 	// 属性已在 libvirt 中更新，重新获取实例信息以获取最新状态
-	updatedInstance, err := s.GetInstance(ctx, req.InstanceID)
+	updatedInstance, err := s.GetInstance(ctx, req.NodeName, req.InstanceID)
 	if err != nil {
 		// 如果获取失败，返回修改后的实例信息
 		return instance, nil
@@ -787,12 +1076,19 @@ func (s *InstanceService) ModifyInstanceAttribute(ctx context.Context, req *enti
 func (s *InstanceService) ResetPassword(ctx context.Context, req *entity.ResetPasswordRequest) (*entity.ResetPasswordResponse, error) {
 	logger := zerolog.Ctx(ctx)
 	logger.Info().
+		Str("node_name", req.NodeName).
 		Str("instance_id", req.InstanceID).
 		Int("user_count", len(req.Users)).
 		Msg("Resetting instance password")
 
+	// 获取节点的 libvirt 客户端
+	client, err := s.nodeService.GetNodeStorage(ctx, req.NodeName)
+	if err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get node connection", err)
+	}
+
 	// 1. 验证实例存在
-	instance, err := s.GetInstance(ctx, req.InstanceID)
+	instance, err := s.GetInstance(ctx, req.NodeName, req.InstanceID)
 	if err != nil {
 		return nil, apierror.NewErrorWithStatus(
 			"ResourceNotFound",
@@ -822,7 +1118,7 @@ func (s *InstanceService) ResetPassword(ctx context.Context, req *entity.ResetPa
 			Str("instance_id", req.InstanceID).
 			Msg("Trying qemu-guest-agent strategy")
 
-		guestAgentStrategy := NewQemuGuestAgentStrategy(s.libvirtClient)
+		guestAgentStrategy := NewQemuGuestAgentStrategy(client)
 		resetErr = guestAgentStrategy.ResetPassword(ctx, req.InstanceID, usersMap)
 		if resetErr == nil {
 			strategyUsed = guestAgentStrategy.Name()
@@ -844,7 +1140,7 @@ func (s *InstanceService) ResetPassword(ctx context.Context, req *entity.ResetPa
 			Str("instance_id", req.InstanceID).
 			Msg("Trying cloud-init strategy")
 
-		cloudInitStrategy := NewCloudInitStrategy(s.libvirtClient, "")
+		cloudInitStrategy := NewCloudInitStrategy(client, "")
 		resetErr = cloudInitStrategy.ResetPassword(ctx, req.InstanceID, usersMap)
 		if resetErr == nil {
 			strategyUsed = cloudInitStrategy.Name()
@@ -885,6 +1181,7 @@ func (s *InstanceService) ResetPassword(ctx context.Context, req *entity.ResetPa
 				Msg("Stopping instance before virt-customize password reset")
 
 			stopReq := &entity.StopInstancesRequest{
+				NodeName:    req.NodeName,
 				InstanceIDs: []string{req.InstanceID},
 				Force:       false,
 			}
@@ -898,7 +1195,7 @@ func (s *InstanceService) ResetPassword(ctx context.Context, req *entity.ResetPa
 			waitInterval := 1 * time.Second
 			waited := time.Duration(0)
 			for waited < maxWait {
-				instance, err := s.GetInstance(ctx, req.InstanceID)
+				instance, err := s.GetInstance(ctx, req.NodeName, req.InstanceID)
 				if err == nil && instance.State == "stopped" {
 					break
 				}
@@ -907,7 +1204,7 @@ func (s *InstanceService) ResetPassword(ctx context.Context, req *entity.ResetPa
 			}
 
 			// 再次检查状态
-			instance, err = s.GetInstance(ctx, req.InstanceID)
+			instance, err = s.GetInstance(ctx, req.NodeName, req.InstanceID)
 			if err != nil || instance.State != "stopped" {
 				return nil, apierror.NewErrorWithStatus(
 					"InternalError",
@@ -918,7 +1215,7 @@ func (s *InstanceService) ResetPassword(ctx context.Context, req *entity.ResetPa
 		}
 
 		// 获取实例的磁盘路径
-		disks, err := s.libvirtClient.GetDomainDisks(req.InstanceID)
+		disks, err := client.GetDomainDisks(req.InstanceID)
 		if err != nil {
 			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get instance disks", err)
 		}
@@ -934,7 +1231,7 @@ func (s *InstanceService) ResetPassword(ctx context.Context, req *entity.ResetPa
 		diskPath := disks[0].Source.File
 
 		// 调用 virt-customize 重置密码（直接传入 diskPath，避免重复调用 GetDomainDisks 和 ValidateDiskPath）
-		virtCustomizeStrategy := NewVirtCustomizeStrategy(s.virtCustomizeClient, s.libvirtClient)
+		virtCustomizeStrategy := NewVirtCustomizeStrategy(s.virtCustomizeClient, client)
 		resetErr = virtCustomizeStrategy.ResetPassword(ctx, diskPath, usersMap)
 		if resetErr == nil {
 			strategyUsed = virtCustomizeStrategy.Name()
@@ -955,6 +1252,7 @@ func (s *InstanceService) ResetPassword(ctx context.Context, req *entity.ResetPa
 		// 如果之前是运行状态，尝试恢复
 		if wasRunning && req.AutoStart {
 			_, _ = s.StartInstances(ctx, &entity.StartInstancesRequest{
+				NodeName:    req.NodeName,
 				InstanceIDs: []string{req.InstanceID},
 			})
 		}
@@ -969,6 +1267,7 @@ func (s *InstanceService) ResetPassword(ctx context.Context, req *entity.ResetPa
 			Msg("Starting instance after password reset")
 
 		_, err := s.StartInstances(ctx, &entity.StartInstancesRequest{
+			NodeName:    req.NodeName,
 			InstanceIDs: []string{req.InstanceID},
 		})
 		if err != nil {
@@ -1001,11 +1300,17 @@ func (s *InstanceService) ResetPassword(ctx context.Context, req *entity.ResetPa
 
 // ListVMTemplates 列出所有可用的 VM 模板
 // VM Template 是指带有快照的虚拟机，可以基于快照克隆新的 VM
-func (s *InstanceService) ListVMTemplates(ctx context.Context) ([]entity.VMTemplate, error) {
+func (s *InstanceService) ListVMTemplates(ctx context.Context, nodeName string) ([]entity.VMTemplate, error) {
 	logger := zerolog.Ctx(ctx)
 
+	// 获取节点的 libvirt 客户端
+	client, err := s.nodeService.GetNodeStorage(ctx, nodeName)
+	if err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get node connection", err)
+	}
+
 	// 直接从 libvirt 获取所有 domain（包括不在 metadata store 中的）
-	domains, err := s.libvirtClient.GetVMSummaries()
+	domains, err := client.GetVMSummaries()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get VMs from libvirt: %w", err)
 	}
@@ -1015,7 +1320,7 @@ func (s *InstanceService) ListVMTemplates(ctx context.Context) ([]entity.VMTempl
 	// 遍历每个 domain，检查是否有快照
 	for _, domain := range domains {
 		// 获取 domain 的快照列表
-		snapshots, err := s.libvirtClient.ListSnapshots(domain.Name)
+		snapshots, err := client.ListSnapshots(domain.Name)
 		if err != nil {
 			logger.Warn().
 				Str("domain_name", domain.Name).
@@ -1032,7 +1337,7 @@ func (s *InstanceService) ListVMTemplates(ctx context.Context) ([]entity.VMTempl
 		// 如果 domain 有快照，将其作为模板
 		if len(snapshots) > 0 {
 			// 获取 domain 详细信息
-			domainInfo, err := s.libvirtClient.GetDomainInfo(domain.UUID)
+			domainInfo, err := client.GetDomainInfo(domain.UUID)
 			if err != nil {
 				logger.Warn().
 					Str("domain_name", domain.Name).
