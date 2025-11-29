@@ -134,6 +134,8 @@ type DomainDiskTarget struct {
 type DomainInterface struct {
 	Type   string                `xml:"type,attr"`
 	Source DomainInterfaceSource `xml:"source"`
+	Target DomainInterfaceTarget `xml:"target"`
+	MAC    DomainInterfaceMAC    `xml:"mac"`
 	Model  DomainInterfaceModel  `xml:"model"`
 }
 
@@ -146,9 +148,29 @@ type DomainInterfaceSource struct {
 	MAC     string `xml:"mac,attr,omitempty"`
 }
 
+// DomainInterfaceTarget represents interface target (host device name)
+type DomainInterfaceTarget struct {
+	Dev string `xml:"dev,attr,omitempty"`
+}
+
+// DomainInterfaceMAC represents interface MAC address
+type DomainInterfaceMAC struct {
+	Address string `xml:"address,attr,omitempty"`
+}
+
 // DomainInterfaceModel represents network interface model
 type DomainInterfaceModel struct {
 	Type string `xml:"type,attr"`
+}
+
+// DHCPLease DHCP 租约信息（用于解析 IP）
+type DHCPLease struct {
+	IP        string   `json:"ipaddr"`
+	MACs      []string `json:"mac"`
+	Hostnames []string `json:"hostname,omitempty"`
+	Expiry    int64    `json:"expirytime,omitempty"`
+	ClientIDs []string `json:"clientid,omitempty"`
+	IAIDs     []string `json:"iaid,omitempty"`
 }
 
 // DomainGraphics represents graphics configuration

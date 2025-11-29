@@ -66,6 +66,8 @@ type LibvirtClient interface {
 	// Network Interface 操作
 	ListInterfaces() ([]libvirt.Interface, error)
 	GetInterfaceXMLDesc(iface libvirt.Interface) (string, error)
+	ListNetworkDHCPLeases(networkName string) ([]DHCPLease, error)
+	ListNetworks() ([]string, error)
 
 	// Node Device 操作
 	ListNodeDevices(cap string) ([]libvirt.NodeDevice, error)

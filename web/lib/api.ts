@@ -1,11 +1,19 @@
 // API 辅助函数
 
-export async function apiPost<T = any>(
-  path: string,
-  body: any = {}
-): Promise<T> {
+function buildUrl(path: string): string {
+  if (path.startsWith("http://") || path.startsWith("https://")) {
+    return path;
+  }
+  if (typeof window === "undefined") {
+    return path;
+  }
+  const base = `${window.location.protocol}//${window.location.host}`;
+  return path.startsWith("/") ? `${base}${path}` : `${base}/${path}`;
+}
+
+export async function apiPost<T = any>(path: string, body: any = {}): Promise<T> {
   try {
-    const response = await fetch(path, {
+    const response = await fetch(buildUrl(path), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

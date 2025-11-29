@@ -26,7 +26,16 @@ interface Instance {
   updated_at?: string;
   domain_uuid?: string;
   domain_name?: string;
+  interfaces?: InstanceInterface[];
 }
+
+type InstanceInterface = {
+  name: string;
+  type: string;
+  source: string;
+  mac: string;
+  ips?: string[];
+};
 
 export default function InstanceDetailPage() {
   const toast = useToast();
@@ -368,7 +377,22 @@ export default function InstanceDetailPage() {
             <div>
               <dt className="text-sm font-medium text-gray-500">IP Address</dt>
               <dd className="mt-1 text-sm text-gray-900 font-mono">
-                {instance.ip_address || "N/A"}
+                {(() => {
+                  const ips = [
+                    instance.ip_address,
+                    ...(instance.interfaces?.flatMap((i) => i.ips || []) || []),
+                  ].filter(Boolean);
+                  if (ips.length === 0) {
+                    return "N/A";
+                  }
+                  return (
+                    <div className="flex flex-col gap-1">
+                      {ips.map((ip) => (
+                        <span key={ip}>{ip}</span>
+                      ))}
+                    </div>
+                  );
+                })()}
               </dd>
             </div>
           </dl>
@@ -419,6 +443,31 @@ export default function InstanceDetailPage() {
                 {instance.keypair_name || "None"}
               </dd>
             </div>
+            {instance.interfaces && instance.interfaces.length > 0 && (
+              <div>
+                <dt className="text-sm font-medium text-gray-500">Network Interfaces</dt>
+                <dd className="mt-2 text-sm text-gray-900">
+                  <div className="space-y-2">
+                    {instance.interfaces.map((iface) => (
+                      <div key={`${iface.name}-${iface.mac}`} className="border rounded p-3 bg-gray-50">
+                        <div className="flex justify-between text-sm">
+                          <span className="font-mono">{iface.name}</span>
+                          <span className="font-mono text-gray-600">{iface.mac}</span>
+                        </div>
+                        <div className="text-xs text-gray-600 mt-1">
+                          {iface.type} → {iface.source}
+                        </div>
+                        {iface.ips && iface.ips.length > 0 && (
+                          <div className="text-xs text-gray-700 mt-1">
+                            IPs: {iface.ips.join(", ")}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </dd>
+              </div>
+            )}
           </dl>
         </div>
 

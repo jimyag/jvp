@@ -313,9 +313,9 @@ func (c *Client) getDomainNetworkInfo(domain libvirt.Domain) ([]NetworkInterface
 	var interfaces []NetworkInterface
 	for _, iface := range domainXML.Devices.Interfaces {
 		netIface := NetworkInterface{
-			Name:  iface.Source.Dev,
+			Name:  iface.Target.Dev,
 			Type:  iface.Type,
-			MAC:   iface.Source.MAC,
+			MAC:   iface.MAC.Address,
 			Model: iface.Model.Type,
 		}
 
@@ -1094,8 +1094,46 @@ func (c *Client) GetInterfaceXMLDesc(iface libvirt.Interface) (string, error) {
 	return xmlDesc, nil
 }
 
+// ListNetworkDHCPLeases 获取指定网络的 DHCP 租约
+func (c *Client) ListNetworkDHCPLeases(networkName string) ([]DHCPLease, error) {
+	network, err := c.conn.NetworkLookupByName(networkName)
+	if err != nil {
+		return nil, fmt.Errorf("lookup network %s: %w", networkName, err)
+	}
+	leases, _, err := c.conn.NetworkGetDhcpLeases(network, libvirt.OptString{}, 0, 0)
+	if err != nil {
+		return nil, fmt.Errorf("get DHCP leases: %w", err)
+	}
+
+	result := make([]DHCPLease, 0, len(leases))
+	for _, l := range leases {
+		result = append(result, DHCPLease{
+			IP:        l.Ipaddr,
+			MACs:      l.Mac,
+			Hostnames: l.Hostname,
+			Expiry:    l.Expirytime,
+			ClientIDs: l.Clientid,
+			IAIDs:     l.Iaid,
+		})
+	}
+	return result, nil
+}
+
+// ListNetworks 列出所有网络名称
+func (c *Client) ListNetworks() ([]string, error) {
+	nets, _, err := c.conn.ConnectListAllNetworks(0, 0)
+	if err != nil {
+		return nil, fmt.Errorf("list networks: %w", err)
+	}
+	names := make([]string, 0, len(nets))
+	for _, n := range nets {
+		names = append(names, n.Name)
+	}
+	return names, nil
+}
+
 // ListNodeDevices 列出指定类型的节点设备
-// cap 参数可以是: "pci", "usb", "storage", "net" 等
+// cap 参数可以是："pci", "usb", "storage", "net" 等
 func (c *Client) ListNodeDevices(cap string) ([]libvirt.NodeDevice, error) {
 	devices, _, err := c.conn.ConnectListAllNodeDevices(1, 0)
 	if err != nil {

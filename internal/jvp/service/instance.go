@@ -490,6 +490,7 @@ func (s *InstanceService) DescribeInstances(ctx context.Context, req *entity.Des
 			MemoryMB:   domainInfo.Memory / 1024, // 转换为 MB
 			CreatedAt:  "",                       // libvirt 不提供创建时间
 			Autostart:  domainInfo.Autostart,
+			Interfaces: convertInterfaces(client, domainInfo.NetworkInfo),
 		}
 
 		// TODO: 如果需要 TemplateID，可以从 domain metadata 读取
@@ -551,6 +552,21 @@ func convertDomainState(state uint8) string {
 	}
 }
 
+func convertInterfaces(client libvirt.LibvirtClient, ifaces []libvirt.NetworkInterface) []entity.InstanceInterface {
+	result := make([]entity.InstanceInterface, 0, len(ifaces))
+	for _, iface := range ifaces {
+		ips, _ := libvirt.ResolveIPsByMAC(client, iface.MAC)
+		result = append(result, entity.InstanceInterface{
+			Name:   iface.Name,
+			Type:   iface.Type,
+			Source: iface.Source,
+			MAC:    iface.MAC,
+			IPs:    ips,
+		})
+	}
+	return result
+}
+
 // GetInstance 获取单个实例信息
 func (s *InstanceService) GetInstance(ctx context.Context, nodeName, instanceID string) (*entity.Instance, error) {
 	// 获取节点的 libvirt 客户端
@@ -588,6 +604,7 @@ func (s *InstanceService) GetInstance(ctx context.Context, nodeName, instanceID 
 		MemoryMB:   domainInfo.Memory / 1024,
 		CreatedAt:  time.Now().Format(time.RFC3339),
 		Autostart:  domainInfo.Autostart,
+		Interfaces: convertInterfaces(client, domainInfo.NetworkInfo),
 	}
 
 	return instance, nil

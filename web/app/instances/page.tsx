@@ -23,6 +23,8 @@ interface Instance {
   created_at: string;
   domain_uuid?: string;
   domain_name?: string;
+  ip_address?: string;
+  interfaces?: { ips?: string[] }[];
 }
 
 interface Node {
@@ -436,6 +438,21 @@ export default function InstancesPage() {
       key: "state",
       label: "Status",
       render: (value: unknown) => <StatusBadge status={String(value)} />,
+    },
+    {
+      key: "ip_address",
+      label: "IP",
+      render: (_: unknown, row: Instance) => {
+        const ifaceIPs = row.interfaces?.flatMap((i) => i.ips || []) || [];
+        const ips = [row.ip_address, ...ifaceIPs].filter(Boolean) as string[];
+        return (
+          <div className="flex flex-col text-xs font-mono">
+            {(ips.length > 0 ? ips : ["N/A"]).map((ip) => (
+              <span key={ip}>{ip}</span>
+            ))}
+          </div>
+        );
+      },
     },
     {
       key: "vcpus",
