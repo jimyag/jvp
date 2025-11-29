@@ -103,8 +103,9 @@ type DescribeInstancesResponse struct {
 
 // TerminateInstancesRequest 终止实例请求
 type TerminateInstancesRequest struct {
-	NodeName    string   `json:"node_name" binding:"required"`    // 节点名称
-	InstanceIDs []string `json:"instance_ids" binding:"required"` // 实例 ID 列表
+	NodeName      string   `json:"node_name" binding:"required"`    // 节点名称
+	InstanceIDs   []string `json:"instance_ids" binding:"required"` // 实例 ID 列表
+	DeleteVolumes bool     `json:"delete_volumes,omitempty"`        // 是否同时删除磁盘
 }
 
 // TerminateInstancesResponse 终止实例响应

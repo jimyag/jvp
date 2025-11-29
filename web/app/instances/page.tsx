@@ -60,6 +60,7 @@ export default function InstancesPage() {
   const [loading, setLoading] = useState(true);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [deleteVolumes, setDeleteVolumes] = useState(false);
   const [instanceToDelete, setInstanceToDelete] = useState<{id: string, nodeName: string} | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedNode, setSelectedNode] = useState<string>("");
@@ -377,6 +378,7 @@ export default function InstancesPage() {
 
   const handleDeleteClick = (instance: Instance) => {
     setInstanceToDelete({id: instance.id, nodeName: instance.node_name});
+    setDeleteVolumes(false);
     setIsDeleteDialogOpen(true);
   };
 
@@ -388,7 +390,8 @@ export default function InstancesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           node_name: instanceToDelete.nodeName,
-          instance_ids: [instanceToDelete.id]
+          instance_ids: [instanceToDelete.id],
+          delete_volumes: deleteVolumes,
         }),
       });
 
@@ -1081,6 +1084,17 @@ export default function InstancesPage() {
         confirmText="Terminate"
         cancelText="Cancel"
         variant="danger"
+        extraContent={
+          <label className="flex items-center gap-2 text-sm text-gray-700">
+            <input
+              type="checkbox"
+              className="h-4 w-4"
+              checked={deleteVolumes}
+              onChange={(e) => setDeleteVolumes(e.target.checked)}
+            />
+            Also delete associated disks
+          </label>
+        }
       />
     </DashboardLayout>
   );

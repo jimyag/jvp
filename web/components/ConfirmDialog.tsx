@@ -1,6 +1,7 @@
 "use client";
 
 import { AlertTriangle } from "lucide-react";
+import { ReactNode } from "react";
 
 interface ConfirmDialogProps {
   isOpen: boolean;
@@ -11,6 +12,7 @@ interface ConfirmDialogProps {
   confirmText?: string;
   cancelText?: string;
   variant?: "danger" | "warning" | "info";
+  extraContent?: ReactNode;
 }
 
 export default function ConfirmDialog({
@@ -22,6 +24,7 @@ export default function ConfirmDialog({
   confirmText = "Confirm",
   cancelText = "Cancel",
   variant = "danger",
+  extraContent,
 }: ConfirmDialogProps) {
   if (!isOpen) return null;
 
@@ -72,6 +75,7 @@ export default function ConfirmDialog({
               {title}
             </h3>
             <p className="text-sm text-gray-600">{message}</p>
+            {extraContent && <div className="mt-3">{extraContent}</div>}
           </div>
         </div>
 

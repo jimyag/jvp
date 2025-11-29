@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -633,6 +634,15 @@ func (s *InstanceService) TerminateInstances(ctx context.Context, req *entity.Te
 			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get domain from libvirt", err)
 		}
 
+		// 记录磁盘路径，用于后续删除卷
+		disks, err := client.GetDomainDisks(instanceID)
+		if err != nil {
+			logger.Warn().
+				Str("instanceID", instanceID).
+				Err(err).
+				Msg("Failed to get domain disks before deletion")
+		}
+
 		// 删除 domain（会先停止运行中的实例）
 		logger.Info().
 			Str("instanceID", instanceID).
@@ -651,7 +661,19 @@ func (s *InstanceService) TerminateInstances(ctx context.Context, req *entity.Te
 			Str("instanceID", instanceID).
 			Msg("Domain deleted successfully")
 
-		// TODO: 删除关联的 volume（需要重新实现）
+		// 删除关联的卷（可选）
+		if req.DeleteVolumes && len(disks) > 0 {
+			if err := s.deleteVolumesByDisks(ctx, client, disks); err != nil {
+				logger.Error().
+					Str("instanceID", instanceID).
+					Err(err).
+					Msg("Failed to delete volumes for instance")
+				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to delete instance volumes", err)
+			}
+			logger.Info().
+				Str("instanceID", instanceID).
+				Msg("Associated volumes deleted")
+		}
 
 		// Domain 已从 libvirt 删除，不需要额外操作
 		changes = append(changes, entity.InstanceStateChange{
@@ -679,6 +701,55 @@ func (s *InstanceService) TerminateInstances(ctx context.Context, req *entity.Te
 		Msg("All instances terminated successfully")
 
 	return changes, nil
+}
+
+// deleteVolumesByDisks 根据磁盘列表删除对应的卷（按路径或名称匹配）
+func (s *InstanceService) deleteVolumesByDisks(ctx context.Context, client libvirt.LibvirtClient, disks []libvirt.DomainDisk) error {
+	logger := zerolog.Ctx(ctx)
+
+	pools, err := client.ListStoragePools()
+	if err != nil {
+		return fmt.Errorf("list storage pools: %w", err)
+	}
+
+	for _, disk := range disks {
+		if disk.Source.File == "" {
+			continue
+		}
+		targetName := filepath.Base(disk.Source.File)
+		found := false
+
+		for _, pool := range pools {
+			volumes, err := client.ListVolumes(pool.Name)
+			if err != nil {
+				logger.Warn().
+					Err(err).
+					Str("pool", pool.Name).
+					Msg("Failed to list volumes when deleting instance disks")
+				continue
+			}
+
+			for _, vol := range volumes {
+				if vol.Name == targetName || vol.Path == disk.Source.File {
+					if err := client.DeleteVolume(pool.Name, vol.Name); err != nil {
+						return fmt.Errorf("delete volume %s in pool %s: %w", vol.Name, pool.Name, err)
+					}
+					logger.Info().
+						Str("volume", vol.Name).
+						Str("pool", pool.Name).
+						Msg("Deleted instance volume")
+					found = true
+					break
+				}
+			}
+
+			if found {
+				break
+			}
+		}
+	}
+
+	return nil
 }
 
 // StopInstances 停止实例

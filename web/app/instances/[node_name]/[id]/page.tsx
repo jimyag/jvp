@@ -40,6 +40,7 @@ export default function InstanceDetailPage() {
   const [isResetPasswordModalOpen, setIsResetPasswordModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [deleteVolumes, setDeleteVolumes] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [username, setUsername] = useState("root");
   const [editFormData, setEditFormData] = useState({
@@ -109,6 +110,7 @@ export default function InstanceDetailPage() {
   };
 
   const handleDeleteClick = () => {
+    setDeleteVolumes(false);
     setIsDeleteDialogOpen(true);
   };
 
@@ -120,6 +122,7 @@ export default function InstanceDetailPage() {
         body: JSON.stringify({
           node_name: nodeName,
           instance_ids: [instanceId],
+          delete_volumes: deleteVolumes,
         }),
       });
 
@@ -603,6 +606,17 @@ export default function InstanceDetailPage() {
         confirmText="Terminate"
         cancelText="Cancel"
         variant="danger"
+        extraContent={
+          <label className="flex items-center gap-2 text-sm text-gray-700">
+            <input
+              type="checkbox"
+              className="h-4 w-4"
+              checked={deleteVolumes}
+              onChange={(e) => setDeleteVolumes(e.target.checked)}
+            />
+            Also delete associated disks
+          </label>
+        }
       />
     </DashboardLayout>
   );
