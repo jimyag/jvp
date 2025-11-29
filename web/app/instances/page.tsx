@@ -118,9 +118,13 @@ export default function InstancesPage() {
       });
       if (response.ok) {
         const data = await response.json();
-        setNodes(data.nodes || []);
-        if (data.nodes?.length > 0 && !selectedNode) {
-          setSelectedNode(data.nodes[0].name);
+        const nodeList = data.nodes || [];
+        setNodes(nodeList);
+        if (nodeList.length > 0) {
+          const exists = nodeList.some((n: Node) => n.name === selectedNode);
+          if (!exists) {
+            setSelectedNode(nodeList[0].name);
+          }
         }
       }
     } catch (error) {
@@ -202,6 +206,13 @@ export default function InstancesPage() {
   };
 
   useEffect(() => {
+    // 尝试从 URL 中解析节点名称（/instances/{node}/...）
+    if (typeof window !== "undefined" && !selectedNode) {
+      const parts = window.location.pathname.split("/").filter(Boolean);
+      if (parts[0] === "instances" && parts[1]) {
+        setSelectedNode(parts[1]);
+      }
+    }
     fetchNodes();
     fetchKeypairs();
   }, []);

@@ -19,12 +19,15 @@ type Config struct {
 	// 可以通过环境变量 JVP_DATA_DIR 配置
 	// 默认：~/.local/share/jvp
 	DataDir string
+
+	Address string
 }
 
 func New() (*Config, error) {
 	cfg := &Config{
 		LibvirtURI: getLibvirtURI(),
 		DataDir:    getDataDir(),
+		Address:    getAddress(),
 	}
 	return cfg, nil
 }
@@ -59,4 +62,13 @@ func getDataDir() string {
 
 	// 3. 如果无法获取主目录，使用当前目录下的 data
 	return filepath.Join(".", "data")
+}
+
+// getAddress 获取绑定地址，优先使用环境变量 JVP_ADDRESS
+func getAddress() string {
+	if addr := os.Getenv("JVP_ADDRESS"); addr != "" {
+		return addr
+	}
+
+	return "0.0.0.0:7777"
 }

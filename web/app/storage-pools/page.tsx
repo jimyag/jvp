@@ -66,7 +66,7 @@ export default function StoragePoolsPage() {
   }, []);
 
   useEffect(() => {
-    if (selectedNode !== null && !loadingNodes) {
+    if (selectedNode && !loadingNodes) {
       fetchPools();
     }
   }, [selectedNode]);
@@ -78,7 +78,7 @@ export default function StoragePoolsPage() {
       const nodeList = response.nodes || [];
       setNodes(nodeList);
       // Auto-select first node if available
-      if (nodeList.length > 0 && !selectedNode) {
+      if (nodeList.length > 0 && (!selectedNode || !nodeList.some((n) => n.name === selectedNode))) {
         setSelectedNode(nodeList[0].name);
       }
     } catch (error: any) {

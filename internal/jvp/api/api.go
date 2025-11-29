@@ -3,12 +3,12 @@ package api
 
 import (
 	"context"
-	"fmt"
 	"net/http"
-	"os"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jimyag/jvp/internal/jvp/config"
 	"github.com/jimyag/jvp/internal/jvp/service"
+	"github.com/rs/zerolog/log"
 )
 
 type API struct {
@@ -32,6 +32,7 @@ func New(
 	keyPairService *service.KeyPairService,
 	storagePoolService *service.StoragePoolService,
 	templateService *service.TemplateService,
+	cfg *config.Config,
 ) (*API, error) {
 	// 先禁用 Gin 的 debug 路由输出（避免打印带函数名的路由信息）
 	// 注意：这需要在创建 engine 之前设置
@@ -59,33 +60,12 @@ func New(
 	api.template.RegisterRoutes(apiGroup)
 	api.mountFrontend()
 
-	// 打印路由信息（只显示方法和路径，不显示处理函数）
-	printRoutes(engine)
-
 	api.server = &http.Server{
-		Addr:    ":8080",
+		Addr:    cfg.Address,
 		Handler: engine,
 	}
+	log.Info().Str("address", cfg.Address).Msg("API server configured")
 	return api, nil
-}
-
-// printRoutes 打印所有注册的路由（只显示方法和路径）
-func printRoutes(engine *gin.Engine) {
-	routes := engine.Routes()
-	if len(routes) == 0 {
-		return
-	}
-
-	// 使用 fmt 直接打印到标准输出，避免使用 gin 的 debug 输出
-	fmt.Fprintf(os.Stdout, "\n[API Routes]\n")
-	fmt.Fprintf(os.Stdout, "Method   Path\n")
-	fmt.Fprintf(os.Stdout, "----------------------------\n")
-
-	// 打印每个路由（只显示方法和路径）
-	for _, route := range routes {
-		fmt.Fprintf(os.Stdout, "%-8s %s\n", route.Method, route.Path)
-	}
-	fmt.Fprintf(os.Stdout, "\n")
 }
 
 func (a *API) Run(ctx context.Context) error {

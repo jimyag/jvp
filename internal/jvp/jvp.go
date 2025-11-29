@@ -79,6 +79,7 @@ func New(cfg *config.Config) (*Server, error) {
 		keyPairService,
 		storagePoolService,
 		templateService,
+		cfg,
 	)
 	if err != nil {
 		return nil, err
