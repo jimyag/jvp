@@ -3,7 +3,6 @@ package libvirt
 import (
 	"encoding/xml"
 	"fmt"
-	"log"
 	"net/url"
 	"os"
 	"os/exec"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/digitalocean/go-libvirt"
 	"github.com/jimyag/jvp/pkg/cloudinit"
+	"github.com/rs/zerolog/log"
 )
 
 type Client struct {
@@ -180,12 +180,6 @@ type NodeInfo struct {
 }
 
 func (c *Client) GetVMSummaries() ([]libvirt.Domain, error) {
-	v, err := c.conn.ConnectGetLibVersion()
-	if err != nil {
-		log.Fatalf("failed to retrieve libvirt version: %v", err)
-	}
-	fmt.Printf("Version: %s (raw: %d)\n", formatLibvirtVersion(v), v)
-
 	// 获取所有类型的域信息，不限制数量
 	flags := libvirt.ConnectListDomainsActive |
 		libvirt.ConnectListDomainsInactive |
@@ -208,12 +202,6 @@ func (c *Client) GetVMSummaries() ([]libvirt.Domain, error) {
 	domains, _, err := c.conn.ConnectListAllDomains(1000, flags)
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve domains: %v", err)
-	}
-
-	fmt.Println("UUID\tName")
-	fmt.Printf("--------------------------------------------------------\n")
-	for _, d := range domains {
-		fmt.Printf("%x\t%s\n", d.UUID, d.Name)
 	}
 
 	return domains, nil
@@ -461,7 +449,7 @@ func (c *Client) DefineDomain(config *CreateVMConfig) (libvirt.Domain, error) {
 			// 设置目录所有者为 libvirt-qemu:kvm，以便 QEMU 进程可以创建 socket
 			if err := c.fixVNCDirOwnership(vncDir); err != nil {
 				// 非致命错误，只记录警告
-				log.Printf("Warning: failed to fix VNC directory ownership: %v", err)
+				log.Warn().Err(err).Str("dir", vncDir).Msg("Failed to fix VNC directory ownership")
 			}
 		}
 	}
@@ -473,7 +461,6 @@ func (c *Client) DefineDomain(config *CreateVMConfig) (libvirt.Domain, error) {
 			return libvirt.Domain{}, fmt.Errorf("failed to generate cloud-init ISO: %v", err)
 		}
 		config.cloudInitISOPath = isoPath
-		log.Printf("Generated cloud-init ISO: %s", config.cloudInitISOPath)
 	}
 	if config.CloudInitUserData != nil {
 		isoPath, err := c.generateCloudInitISO(config)
@@ -481,7 +468,6 @@ func (c *Client) DefineDomain(config *CreateVMConfig) (libvirt.Domain, error) {
 			return libvirt.Domain{}, fmt.Errorf("failed to generate cloud-init ISO: %v", err)
 		}
 		config.cloudInitISOPath = isoPath
-		log.Printf("Generated cloud-init ISO: %s", config.cloudInitISOPath)
 	}
 
 	// 构建 DomainXML
@@ -502,7 +488,7 @@ func (c *Client) DefineDomain(config *CreateVMConfig) (libvirt.Domain, error) {
 	if config.Autostart {
 		if err := c.conn.DomainSetAutostart(domain, 1); err != nil {
 			// 自动启动设置失败不是致命错误，记录日志即可
-			log.Printf("Warning: failed to set autostart for domain %s: %v", config.Name, err)
+			log.Warn().Err(err).Str("domain", config.Name).Msg("Failed to set autostart for domain")
 		}
 	}
 
@@ -567,8 +553,8 @@ func (c *Client) DestroyDomain(domain libvirt.Domain) error {
 // memoryKB: 新的内存大小（KB）
 // live: true=热修改（如果域正在运行），false=仅修改配置（需要重启生效）
 func (c *Client) ModifyDomainMemory(domain libvirt.Domain, memoryKB uint64, live bool) error {
-	// 获取当前 domain XML
-	xmlDesc, err := c.conn.DomainGetXMLDesc(domain, 0)
+	// 获取持久化配置 XML（使用 DomainXMLInactive 标志）
+	xmlDesc, err := c.conn.DomainGetXMLDesc(domain, libvirt.DomainXMLInactive)
 	if err != nil {
 		return fmt.Errorf("get domain XML: %w", err)
 	}
@@ -581,9 +567,6 @@ func (c *Client) ModifyDomainMemory(domain libvirt.Domain, memoryKB uint64, live
 
 	// 修改内存
 	domainXML.Memory.Value = memoryKB
-	if domainXML.CurrentMemory.Value == 0 {
-		domainXML.CurrentMemory.Value = memoryKB
-	}
 	domainXML.CurrentMemory.Value = memoryKB
 
 	// 重新序列化 XML
@@ -592,30 +575,20 @@ func (c *Client) ModifyDomainMemory(domain libvirt.Domain, memoryKB uint64, live
 		return fmt.Errorf("marshal domain XML: %w", err)
 	}
 
-	// 如果 live 修改且域正在运行
-	if live {
-		state, _, err := c.conn.DomainGetState(domain, 0)
-		if err == nil && libvirt.DomainState(state) == libvirt.DomainRunning {
-			// 尝试热修改内存
-			err = c.conn.DomainSetMemory(domain, memoryKB)
-			if err != nil {
-				// 热修改失败，只更新配置
-				live = false
-			}
-		} else {
-			live = false
-		}
-	}
-
-	// 更新 domain 定义
+	// 更新持久化配置
 	_, err = c.conn.DomainDefineXML(string(xmlBytes))
 	if err != nil {
 		return fmt.Errorf("define domain with new memory: %w", err)
 	}
 
-	// 如果不是热修改，需要重启域才能生效
-	// 这里只更新配置，不自动重启
-	_ = live
+	// 如果请求热修改且域正在运行，尝试立即生效
+	if live {
+		state, _, err := c.conn.DomainGetState(domain, 0)
+		if err == nil && libvirt.DomainState(state) == libvirt.DomainRunning {
+			// 尝试热修改内存（可能会失败，某些虚拟机不支持）
+			_ = c.conn.DomainSetMemory(domain, memoryKB)
+		}
+	}
 
 	return nil
 }
@@ -624,8 +597,8 @@ func (c *Client) ModifyDomainMemory(domain libvirt.Domain, memoryKB uint64, live
 // vcpus: 新的 VCPU 数量
 // live: true=热修改（如果域正在运行），false=仅修改配置（需要重启生效）
 func (c *Client) ModifyDomainVCPU(domain libvirt.Domain, vcpus uint16, live bool) error {
-	// 获取当前 domain XML
-	xmlDesc, err := c.conn.DomainGetXMLDesc(domain, 0)
+	// 获取持久化配置 XML（使用 DomainXMLInactive 标志）
+	xmlDesc, err := c.conn.DomainGetXMLDesc(domain, libvirt.DomainXMLInactive)
 	if err != nil {
 		return fmt.Errorf("get domain XML: %w", err)
 	}
@@ -645,30 +618,20 @@ func (c *Client) ModifyDomainVCPU(domain libvirt.Domain, vcpus uint16, live bool
 		return fmt.Errorf("marshal domain XML: %w", err)
 	}
 
-	// 如果 live 修改且域正在运行
-	if live {
-		state, _, err := c.conn.DomainGetState(domain, 0)
-		if err == nil && libvirt.DomainState(state) == libvirt.DomainRunning {
-			// 尝试热修改 VCPU
-			err = c.conn.DomainSetVcpusFlags(domain, uint32(vcpus), uint32(libvirt.DomainVCPULive))
-			if err != nil {
-				// 热修改失败，只更新配置
-				live = false
-			}
-		} else {
-			live = false
-		}
-	}
-
-	// 更新 domain 定义
+	// 更新持久化配置
 	_, err = c.conn.DomainDefineXML(string(xmlBytes))
 	if err != nil {
 		return fmt.Errorf("define domain with new VCPU: %w", err)
 	}
 
-	// 如果不是热修改，需要重启域才能生效
-	// 这里只更新配置，不自动重启
-	_ = live
+	// 如果请求热修改且域正在运行，尝试立即生效
+	if live {
+		state, _, err := c.conn.DomainGetState(domain, 0)
+		if err == nil && libvirt.DomainState(state) == libvirt.DomainRunning {
+			// 尝试热修改 VCPU（可能会失败，某些虚拟机不支持）
+			_ = c.conn.DomainSetVcpusFlags(domain, uint32(vcpus), uint32(libvirt.DomainVCPULive))
+		}
+	}
 
 	return nil
 }
@@ -690,7 +653,6 @@ func (c *Client) DeleteDomain(domain libvirt.Domain, flags libvirt.DomainUndefin
 		if err := c.conn.DomainDestroy(domain); err != nil {
 			return fmt.Errorf("failed to destroy running domain: %v", err)
 		}
-		log.Printf("Domain %s was running and has been forcefully stopped", domain.Name)
 	}
 
 	// 删除域定义
@@ -1127,8 +1089,6 @@ func (c *Client) ListNodeDevices(cap string) ([]libvirt.NodeDevice, error) {
 		return nil, fmt.Errorf("failed to list node devices: %w", err)
 	}
 
-	log.Printf("Total devices found: %d", len(devices))
-
 	// 如果没有指定 capability，返回所有设备
 	if cap == "" {
 		return devices, nil
@@ -1140,14 +1100,12 @@ func (c *Client) ListNodeDevices(cap string) ([]libvirt.NodeDevice, error) {
 		// 获取设备 XML 描述
 		xmlDesc, err := c.GetNodeDeviceXMLDesc(dev)
 		if err != nil {
-			log.Printf("Failed to get XML for device %s: %v", dev.Name, err)
 			continue
 		}
 
 		// 解析 XML 来判断设备类型
 		deviceXML, err := ParseNodeDeviceXML(xmlDesc)
 		if err != nil {
-			log.Printf("Failed to parse XML for device %s: %v", dev.Name, err)
 			continue
 		}
 
@@ -1165,12 +1123,10 @@ func (c *Client) ListNodeDevices(cap string) ([]libvirt.NodeDevice, error) {
 		}
 
 		if matched {
-			log.Printf("Device %s matched type %s", dev.Name, cap)
 			filtered = append(filtered, dev)
 		}
 	}
 
-	log.Printf("Filtered %d devices for type %s", len(filtered), cap)
 	return filtered, nil
 }
 

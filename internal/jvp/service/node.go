@@ -25,16 +25,12 @@ func NewNodeService(storage *NodeStorage) (*NodeService, error) {
 // GetNodeStorage 获取节点的 libvirt 连接(用于存储操作)
 // nodeName 为空时返回本地节点连接
 func (s *NodeService) GetNodeStorage(ctx context.Context, nodeName string) (libvirt.LibvirtClient, error) {
-	fmt.Printf("[GetNodeStorage] nodeName=%q\n", nodeName)
-
 	// 如果 nodeName 为空或为 "local",返回本地连接
 	if nodeName == "" || nodeName == "local" {
-		fmt.Printf("[GetNodeStorage] Using local connection\n")
 		// 本地连接使用默认的 qemu:///system
 		return libvirt.NewWithURI("qemu:///system")
 	}
 
-	fmt.Printf("[GetNodeStorage] Getting remote connection for %s\n", nodeName)
 	// 获取远程节点连接
 	return s.storage.GetConnection(nodeName)
 }
@@ -304,7 +300,7 @@ func (s *NodeService) DescribeNodePCI(ctx context.Context, nodeName string) ([]e
 	if err != nil {
 		return nil, fmt.Errorf("failed to list all devices: %w", err)
 	}
-	fmt.Printf("Total devices in libvirt: %d\n", len(allDevices))
+	_ = allDevices // 用于调试时可以查看总设备数
 
 	// 获取所有 PCI 设备
 	devices, err := conn.ListNodeDevices("pci")
@@ -312,21 +308,17 @@ func (s *NodeService) DescribeNodePCI(ctx context.Context, nodeName string) ([]e
 		return nil, fmt.Errorf("failed to list PCI devices: %w", err)
 	}
 
-	fmt.Printf("Filtered PCI devices: %d\n", len(devices))
-
 	pciDevices := make([]entity.PCIDevice, 0)
 	for _, dev := range devices {
 		// 获取设备 XML 描述
 		xmlDesc, err := conn.GetNodeDeviceXMLDesc(dev)
 		if err != nil {
-			fmt.Printf("Failed to get XML for PCI device %s: %v\n", dev.Name, err)
 			continue
 		}
 
 		// 解析 XML 获取详细信息
 		deviceXML, err := libvirt.ParseNodeDeviceXML(xmlDesc)
 		if err != nil {
-			fmt.Printf("Failed to parse XML for PCI device %s: %v\n", dev.Name, err)
 			continue
 		}
 

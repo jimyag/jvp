@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/digitalocean/go-libvirt"
+	"github.com/rs/zerolog/log"
 )
 
 // StoragePoolInfo 存储池信息
@@ -226,7 +227,7 @@ func (c *Client) CreateStoragePool(poolName, poolType, poolPath string) error {
 	// 设置自动启动
 	if err := c.conn.StoragePoolSetAutostart(pool, 1); err != nil {
 		// 非致命错误，只记录
-		fmt.Printf("Warning: failed to set pool autostart: %v\n", err)
+		log.Warn().Err(err).Str("pool", poolName).Msg("Failed to set pool autostart")
 	}
 
 	return nil
@@ -372,7 +373,7 @@ func (c *Client) CreateVolume(poolName, volumeName string, sizeGB uint64, format
 	// 修复权限（如果以 root 创建）
 	if err := fixVolumeOwnership(c, vol, pool); err != nil {
 		// 非致命错误，只记录
-		fmt.Printf("Warning: failed to fix volume ownership: %v\n", err)
+		log.Warn().Err(err).Str("volume", volumeName).Msg("Failed to fix volume ownership")
 	}
 
 	_ = volType // 暂时不使用
@@ -450,7 +451,7 @@ func (c *Client) CreateVolumeWithBackingStore(poolName, volumeName string, capac
 
 	// 修复权限
 	if err := fixVolumeOwnership(c, vol, pool); err != nil {
-		fmt.Printf("Warning: failed to fix volume ownership: %v\n", err)
+		log.Warn().Err(err).Str("volume", volumeName).Msg("Failed to fix volume ownership")
 	}
 
 	_ = volType
@@ -549,7 +550,7 @@ func (c *Client) UploadFileToPool(poolName string, volumeName string, localFileP
 	// 刷新存储池以更新卷信息
 	if err := c.conn.StoragePoolRefresh(pool, 0); err != nil {
 		// 非致命错误
-		fmt.Printf("Warning: failed to refresh pool: %v\n", err)
+		log.Warn().Err(err).Str("pool", poolName).Msg("Failed to refresh pool")
 	}
 
 	// 获取卷信息
@@ -811,7 +812,7 @@ func (c *Client) DeleteStoragePool(poolName string, deleteVolumes bool) error {
 		// 删除 pool（包括目录）
 		if err := c.conn.StoragePoolDelete(pool, libvirt.StoragePoolDeleteNormal); err != nil {
 			// 如果删除失败，可能是因为目录不为空或没有权限，只记录错误
-			fmt.Printf("Warning: failed to delete pool directory: %v\n", err)
+			log.Warn().Err(err).Str("pool", poolName).Msg("Failed to delete pool directory")
 		}
 	} else {
 		// 只停止 pool，不删除目录

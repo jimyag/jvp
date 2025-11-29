@@ -149,7 +149,6 @@ func (s *NodeStorage) GetConnection(nodeName string) (*libvirt.Client, error) {
 
 	// 检查缓存
 	if conn, ok := s.connections[nodeName]; ok {
-		fmt.Printf("[GetConnection] Using cached connection for node %s\n", nodeName)
 		return conn, nil
 	}
 
@@ -159,8 +158,6 @@ func (s *NodeStorage) GetConnection(nodeName string) (*libvirt.Client, error) {
 		return nil, err
 	}
 
-	fmt.Printf("[GetConnection] Creating new connection for node %s, URI: %s\n", nodeName, config.URI)
-
 	// 创建新连接
 	conn, err := libvirt.NewWithURI(config.URI)
 	if err != nil {
@@ -169,8 +166,6 @@ func (s *NodeStorage) GetConnection(nodeName string) (*libvirt.Client, error) {
 
 	// 缓存连接
 	s.connections[nodeName] = conn
-
-	fmt.Printf("[GetConnection] Connection established for node %s\n", nodeName)
 
 	return conn, nil
 }

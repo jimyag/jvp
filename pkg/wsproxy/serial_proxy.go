@@ -96,9 +96,6 @@ func (p *SerialProxy) forwardPTYToWS() {
 	for {
 		n, err := p.reader.Read(buffer)
 		if err != nil {
-			if err != io.EOF {
-				log.Debug().Err(err).Msg("Error reading from PTY")
-			}
 			return
 		}
 
@@ -108,7 +105,6 @@ func (p *SerialProxy) forwardPTYToWS() {
 			if !p.closed {
 				err = p.wsConn.WriteMessage(websocket.TextMessage, buffer[:n])
 				if err != nil {
-					log.Debug().Err(err).Msg("Error writing to WebSocket")
 					p.mu.Unlock()
 					return
 				}
@@ -127,9 +123,6 @@ func (p *SerialProxy) forwardWSToPTY() {
 	for {
 		messageType, data, err := p.wsConn.ReadMessage()
 		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
-				log.Debug().Err(err).Msg("WebSocket read error")
-			}
 			return
 		}
 
@@ -137,7 +130,6 @@ func (p *SerialProxy) forwardWSToPTY() {
 		if messageType == websocket.TextMessage || messageType == websocket.BinaryMessage {
 			_, err = p.writer.Write(data)
 			if err != nil {
-				log.Debug().Err(err).Msg("Error writing to PTY")
 				return
 			}
 		}

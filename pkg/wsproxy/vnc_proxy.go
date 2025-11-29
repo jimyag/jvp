@@ -92,26 +92,18 @@ func (p *VNCProxy) forwardUnixToWS() {
 	}()
 
 	buffer := make([]byte, 32768) // 32KB buffer for VNC data
-	totalBytes := 0
 	for {
 		n, err := p.unixConn.Read(buffer)
 		if err != nil {
-			if err != io.EOF {
-				log.Debug().Err(err).Msg("Error reading from VNC socket")
-			}
-			log.Info().Int("total_bytes_forwarded", totalBytes).Msg("VNC->WS forwarding stopped")
 			return
 		}
 
 		if n > 0 {
-			totalBytes += n
-			log.Debug().Int("bytes", n).Int("total", totalBytes).Msg("VNC->WS forwarding data")
 			// 发送二进制数据到 WebSocket
 			p.mu.Lock()
 			if !p.closed {
 				err = p.wsConn.WriteMessage(websocket.BinaryMessage, buffer[:n])
 				if err != nil {
-					log.Debug().Err(err).Msg("Error writing to WebSocket")
 					p.mu.Unlock()
 					return
 				}
@@ -127,24 +119,16 @@ func (p *VNCProxy) forwardWSToUnix() {
 		p.Close()
 	}()
 
-	totalBytes := 0
 	for {
 		messageType, data, err := p.wsConn.ReadMessage()
 		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
-				log.Debug().Err(err).Msg("WebSocket read error")
-			}
-			log.Info().Int("total_bytes_forwarded", totalBytes).Msg("WS->VNC forwarding stopped")
 			return
 		}
 
 		// 只处理二进制消息
 		if messageType == websocket.BinaryMessage {
-			totalBytes += len(data)
-			log.Debug().Int("bytes", len(data)).Int("total", totalBytes).Msg("WS->VNC forwarding data")
 			_, err = p.unixConn.Write(data)
 			if err != nil {
-				log.Debug().Err(err).Msg("Error writing to VNC socket")
 				return
 			}
 		}
