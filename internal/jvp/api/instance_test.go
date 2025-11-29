@@ -531,6 +531,7 @@ func TestInstance_ModifyInstanceAttribute(t *testing.T) {
 		req          *entity.ModifyInstanceAttributeRequest
 		mockSetup    func(*MockInstanceService)
 		expectStatus int
+		expectBody   *entity.Instance
 	}{
 		{
 			name: "successful modify",
@@ -549,6 +550,33 @@ func TestInstance_ModifyInstanceAttribute(t *testing.T) {
 					}, nil)
 			},
 			expectStatus: http.StatusOK,
+		},
+		{
+			name: "modify autostart",
+			req: func() *entity.ModifyInstanceAttributeRequest {
+				autostart := true
+				return &entity.ModifyInstanceAttributeRequest{
+					NodeName:   "node-1",
+					InstanceID: "i-123",
+					Autostart:  &autostart,
+				}
+			}(),
+			mockSetup: func(m *MockInstanceService) {
+				m.On("ModifyInstanceAttribute", mock.Anything, mock.MatchedBy(func(req *entity.ModifyInstanceAttributeRequest) bool {
+					return req != nil && req.Autostart != nil && *req.Autostart && req.NodeName == "node-1" && req.InstanceID == "i-123"
+				})).
+					Return(&entity.Instance{
+						ID:        "i-123",
+						NodeName:  "node-1",
+						Autostart: true,
+					}, nil)
+			},
+			expectStatus: http.StatusOK,
+			expectBody: &entity.Instance{
+				ID:        "i-123",
+				NodeName:  "node-1",
+				Autostart: true,
+			},
 		},
 		{
 			name: "modify with error",
@@ -591,6 +619,15 @@ func TestInstance_ModifyInstanceAttribute(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			assert.Equal(t, tc.expectStatus, w.Code)
+			if tc.expectBody != nil {
+				var resp entity.ModifyInstanceAttributeResponse
+				assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				if assert.NotNil(t, resp.Instance) {
+					assert.Equal(t, tc.expectBody.ID, resp.Instance.ID)
+					assert.Equal(t, tc.expectBody.NodeName, resp.Instance.NodeName)
+					assert.Equal(t, tc.expectBody.Autostart, resp.Instance.Autostart)
+				}
+			}
 			mockService.AssertExpectations(t)
 		})
 	}

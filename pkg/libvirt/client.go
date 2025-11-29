@@ -636,6 +636,19 @@ func (c *Client) ModifyDomainVCPU(domain libvirt.Domain, vcpus uint16, live bool
 	return nil
 }
 
+// SetDomainAutostart 设置域的自动启动状态
+// autostart: true=开机自动启动，false=禁用自动启动
+func (c *Client) SetDomainAutostart(domain libvirt.Domain, autostart bool) error {
+	var value int32 = 0
+	if autostart {
+		value = 1
+	}
+	if err := c.conn.DomainSetAutostart(domain, value); err != nil {
+		return fmt.Errorf("failed to set domain autostart: %w", err)
+	}
+	return nil
+}
+
 // DeleteDomain 删除域
 // flags: 可以组合以下标志
 //   - libvirt.DomainUndefineManagedSave: 同时删除托管保存的镜像

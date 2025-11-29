@@ -19,7 +19,7 @@ func (s *InstanceService) GetConsoleInfo(ctx context.Context, req *entity.GetCon
 		Msg("Getting console info for instance")
 
 	// 1. 获取节点的 libvirt 客户端
-	client, err := s.nodeService.GetNodeStorage(ctx, req.NodeName)
+	client, err := s.nodeProvider.GetNodeStorage(ctx, req.NodeName)
 	if err != nil {
 		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get node connection", err)
 	}

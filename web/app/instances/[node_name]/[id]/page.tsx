@@ -17,6 +17,7 @@ interface Instance {
   node_name: string;
   vcpus: number;
   memory_mb: number;
+  autostart?: boolean;
   template_id?: string;
   volume_id?: string;
   ip_address?: string;
@@ -45,6 +46,7 @@ export default function InstanceDetailPage() {
     name: "",
     vcpus: 2,
     memory_mb: 2048,
+    autostart: false,
   });
 
   const fetchInstance = async () => {
@@ -169,6 +171,7 @@ export default function InstanceDetailPage() {
         name: instance.name || "",
         vcpus: instance.vcpus || 2,
         memory_mb: instance.memory_mb || 2048,
+        autostart: instance.autostart ?? false,
       });
       setIsEditModalOpen(true);
     }
@@ -186,6 +189,7 @@ export default function InstanceDetailPage() {
           name: editFormData.name,
           vcpus: editFormData.vcpus,
           memory_mb: editFormData.memory_mb,
+          autostart: editFormData.autostart,
           live: instance?.state === "running",
         }),
       });
@@ -337,6 +341,12 @@ export default function InstanceDetailPage() {
               <dt className="text-sm font-medium text-gray-500">Status</dt>
               <dd className="mt-1">
                 <StatusBadge status={instance.state} />
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm font-medium text-gray-500">Auto Start</dt>
+              <dd className="mt-1 text-sm text-gray-900">
+                {instance.autostart ? "Enabled" : "Disabled"}
               </dd>
             </div>
             <div>
@@ -547,6 +557,26 @@ export default function InstanceDetailPage() {
             <p className="text-xs text-gray-500 mt-1">
               Memory size in MB (minimum 512 MB)
             </p>
+          </div>
+
+          <div className="flex items-center justify-between rounded border p-4 bg-gray-50">
+            <div>
+              <p className="label mb-1">Auto Start</p>
+              <p className="text-xs text-gray-500">Automatically start this instance when the node boots</p>
+            </div>
+            <label className="inline-flex items-center">
+              <input
+                type="checkbox"
+                className="mr-2 h-4 w-4"
+                checked={editFormData.autostart}
+                onChange={(e) =>
+                  setEditFormData({ ...editFormData, autostart: e.target.checked })
+                }
+              />
+              <span className="text-sm text-gray-700">
+                {editFormData.autostart ? "Enabled" : "Disabled"}
+              </span>
+            </label>
           </div>
 
           <div className="flex justify-end gap-3 pt-4">

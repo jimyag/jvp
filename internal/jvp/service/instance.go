@@ -23,16 +23,22 @@ import (
 
 // InstanceService 实例服务，管理虚拟机实例
 type InstanceService struct {
-	nodeService         *NodeService
+	nodeProvider        NodeStorageProvider
 	templateService     *TemplateService
 	keyPairService      *KeyPairService
 	virtCustomizeClient virtcustomize.VirtCustomizeClient
 	idGen               *idgen.Generator
+	asyncRun            func(func())
+}
+
+// NodeStorageProvider 定义节点存储获取接口，便于测试替换
+type NodeStorageProvider interface {
+	GetNodeStorage(ctx context.Context, nodeName string) (libvirt.LibvirtClient, error)
 }
 
 // NewInstanceService 创建新的 Instance Service
 func NewInstanceService(
-	nodeService *NodeService,
+	nodeProvider NodeStorageProvider,
 	templateService *TemplateService,
 	keyPairService *KeyPairService,
 ) (*InstanceService, error) {
@@ -40,17 +46,20 @@ func NewInstanceService(
 	virtCustomizeClient, _ := virtcustomize.NewClient()
 
 	return &InstanceService{
-		nodeService:         nodeService,
+		nodeProvider:        nodeProvider,
 		templateService:     templateService,
 		keyPairService:      keyPairService,
 		virtCustomizeClient: virtCustomizeClient,
 		idGen:               idgen.New(),
+		asyncRun: func(f func()) {
+			go f()
+		},
 	}, nil
 }
 
 // GetLibvirtClient 获取指定节点的 libvirt 客户端（用于控制台访问）
 func (s *InstanceService) GetLibvirtClient(ctx context.Context, nodeName string) (libvirt.LibvirtClient, error) {
-	return s.nodeService.GetNodeStorage(ctx, nodeName)
+	return s.nodeProvider.GetNodeStorage(ctx, nodeName)
 }
 
 // RunInstance 创建并启动实例
@@ -63,7 +72,7 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 		Msg("Creating instance")
 
 	// 获取节点的 libvirt 客户端
-	client, err := s.nodeService.GetNodeStorage(ctx, req.NodeName)
+	client, err := s.nodeProvider.GetNodeStorage(ctx, req.NodeName)
 	if err != nil {
 		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get node connection", err)
 	}
@@ -428,7 +437,7 @@ func (s *InstanceService) DescribeInstances(ctx context.Context, req *entity.Des
 		Msg("Describing instances from libvirt")
 
 	// 获取节点的 libvirt 客户端
-	client, err := s.nodeService.GetNodeStorage(ctx, req.NodeName)
+	client, err := s.nodeProvider.GetNodeStorage(ctx, req.NodeName)
 	if err != nil {
 		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get node connection", err)
 	}
@@ -479,6 +488,7 @@ func (s *InstanceService) DescribeInstances(ctx context.Context, req *entity.Des
 			VCPUs:      domainInfo.VCPUs,
 			MemoryMB:   domainInfo.Memory / 1024, // 转换为 MB
 			CreatedAt:  "",                       // libvirt 不提供创建时间
+			Autostart:  domainInfo.Autostart,
 		}
 
 		// TODO: 如果需要 TemplateID，可以从 domain metadata 读取
@@ -543,7 +553,7 @@ func convertDomainState(state uint8) string {
 // GetInstance 获取单个实例信息
 func (s *InstanceService) GetInstance(ctx context.Context, nodeName, instanceID string) (*entity.Instance, error) {
 	// 获取节点的 libvirt 客户端
-	client, err := s.nodeService.GetNodeStorage(ctx, nodeName)
+	client, err := s.nodeProvider.GetNodeStorage(ctx, nodeName)
 	if err != nil {
 		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get node connection", err)
 	}
@@ -576,6 +586,7 @@ func (s *InstanceService) GetInstance(ctx context.Context, nodeName, instanceID 
 		VCPUs:      domainInfo.VCPUs,
 		MemoryMB:   domainInfo.Memory / 1024,
 		CreatedAt:  time.Now().Format(time.RFC3339),
+		Autostart:  domainInfo.Autostart,
 	}
 
 	return instance, nil
@@ -590,7 +601,7 @@ func (s *InstanceService) TerminateInstances(ctx context.Context, req *entity.Te
 		Msg("Terminating instances")
 
 	// 获取节点的 libvirt 客户端
-	client, err := s.nodeService.GetNodeStorage(ctx, req.NodeName)
+	client, err := s.nodeProvider.GetNodeStorage(ctx, req.NodeName)
 	if err != nil {
 		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get node connection", err)
 	}
@@ -680,7 +691,7 @@ func (s *InstanceService) StopInstances(ctx context.Context, req *entity.StopIns
 		Msg("Stopping instances")
 
 	// 获取节点的 libvirt 客户端
-	client, err := s.nodeService.GetNodeStorage(ctx, req.NodeName)
+	client, err := s.nodeProvider.GetNodeStorage(ctx, req.NodeName)
 	if err != nil {
 		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get node connection", err)
 	}
@@ -792,7 +803,7 @@ func (s *InstanceService) StartInstances(ctx context.Context, req *entity.StartI
 		Msg("Starting instances")
 
 	// 获取节点的 libvirt 客户端
-	client, err := s.nodeService.GetNodeStorage(ctx, req.NodeName)
+	client, err := s.nodeProvider.GetNodeStorage(ctx, req.NodeName)
 	if err != nil {
 		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get node connection", err)
 	}
@@ -892,7 +903,7 @@ func (s *InstanceService) RebootInstances(ctx context.Context, req *entity.Reboo
 		Msg("Rebooting instances")
 
 	// 获取节点的 libvirt 客户端
-	client, err := s.nodeService.GetNodeStorage(ctx, req.NodeName)
+	client, err := s.nodeProvider.GetNodeStorage(ctx, req.NodeName)
 	if err != nil {
 		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get node connection", err)
 	}
@@ -1000,7 +1011,7 @@ func (s *InstanceService) ModifyInstanceAttribute(ctx context.Context, req *enti
 		Msg("Modifying instance attribute")
 
 	// 获取节点的 libvirt 客户端
-	client, err := s.nodeService.GetNodeStorage(ctx, req.NodeName)
+	client, err := s.nodeProvider.GetNodeStorage(ctx, req.NodeName)
 	if err != nil {
 		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get node connection", err)
 	}
@@ -1054,6 +1065,19 @@ func (s *InstanceService) ModifyInstanceAttribute(ctx context.Context, req *enti
 			Msg("Instance name modified")
 	}
 
+	// 修改自动启动
+	if req.Autostart != nil {
+		err = client.SetDomainAutostart(domain, *req.Autostart)
+		if err != nil {
+			return nil, fmt.Errorf("modify autostart: %w", err)
+		}
+		instance.Autostart = *req.Autostart
+		logger.Info().
+			Str("instanceID", req.InstanceID).
+			Bool("autostart", *req.Autostart).
+			Msg("Instance autostart modified")
+	}
+
 	// 属性已在 libvirt 中更新，重新获取实例信息以获取最新状态
 	updatedInstance, err := s.GetInstance(ctx, req.NodeName, req.InstanceID)
 	if err != nil {
@@ -1068,11 +1092,10 @@ func (s *InstanceService) ModifyInstanceAttribute(ctx context.Context, req *enti
 	return updatedInstance, nil
 }
 
-// ResetPassword 重置实例密码
-// 按优先级尝试三种方案：
+// ResetPassword 重置实例密码，异步执行：
 // 1. qemu-guest-agent（优先，不需要停止实例）
-// 2. cloud-init（如果 guest agent 不可用，需要重启实例）
-// 3. virt-customize（最后选择，需要停止实例）
+// 2. cloud-init（失败则回退）
+// 3. virt-customize（最后选择，远程节点通过 SSH 调用）
 func (s *InstanceService) ResetPassword(ctx context.Context, req *entity.ResetPasswordRequest) (*entity.ResetPasswordResponse, error) {
 	logger := zerolog.Ctx(ctx)
 	logger.Info().
@@ -1082,7 +1105,7 @@ func (s *InstanceService) ResetPassword(ctx context.Context, req *entity.ResetPa
 		Msg("Resetting instance password")
 
 	// 获取节点的 libvirt 客户端
-	client, err := s.nodeService.GetNodeStorage(ctx, req.NodeName)
+	client, err := s.nodeProvider.GetNodeStorage(ctx, req.NodeName)
 	if err != nil {
 		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get node connection", err)
 	}
@@ -1105,195 +1128,213 @@ func (s *InstanceService) ResetPassword(ctx context.Context, req *entity.ResetPa
 		userList = append(userList, user.Username)
 	}
 
-	// 3. 记录原始状态
+	// 3. 异步执行重置
 	wasRunning := instance.State == "running"
+	reqCopy := *req
+	ctxCopy := context.WithoutCancel(ctx)
+	s.asyncRun(func() {
+		logger := zerolog.Ctx(ctxCopy)
 
-	// 4. 按优先级尝试不同的密码重置策略
-	var strategyUsed string
-	var resetErr error
+		stoppedForVirtCustomize := false
+		isRemote := client.IsRemoteConnection()
+		var strategyUsed string
+		var resetErr error
 
-	// 策略 1: qemu-guest-agent（优先，不需要停止实例，仅适用于运行中的实例）
-	if wasRunning {
-		logger.Info().
-			Str("instance_id", req.InstanceID).
-			Msg("Trying qemu-guest-agent strategy")
-
-		guestAgentStrategy := NewQemuGuestAgentStrategy(client)
-		resetErr = guestAgentStrategy.ResetPassword(ctx, req.InstanceID, usersMap)
-		if resetErr == nil {
-			strategyUsed = guestAgentStrategy.Name()
-			logger.Info().
-				Str("instance_id", req.InstanceID).
-				Str("strategy", strategyUsed).
-				Msg("Password reset successful via qemu-guest-agent")
-		} else {
-			logger.Warn().
-				Err(resetErr).
-				Str("instance_id", req.InstanceID).
-				Msg("qemu-guest-agent strategy failed, trying cloud-init")
-		}
-	}
-
-	// 策略 2: cloud-init（如果 guest agent 失败，仅适用于运行中的实例）
-	if resetErr != nil && wasRunning {
-		logger.Info().
-			Str("instance_id", req.InstanceID).
-			Msg("Trying cloud-init strategy")
-
-		cloudInitStrategy := NewCloudInitStrategy(client, "")
-		resetErr = cloudInitStrategy.ResetPassword(ctx, req.InstanceID, usersMap)
-		if resetErr == nil {
-			strategyUsed = cloudInitStrategy.Name()
-			logger.Info().
-				Str("instance_id", req.InstanceID).
-				Str("strategy", strategyUsed).
-				Msg("Password reset successful via cloud-init (requires restart)")
-			// 注意：cloud-init 需要重启实例才能生效
-			// 这里返回成功，但需要用户重启实例
-		} else {
-			logger.Warn().
-				Err(resetErr).
-				Str("instance_id", req.InstanceID).
-				Msg("cloud-init strategy failed, falling back to virt-customize")
-		}
-	}
-
-	// 策略 3: virt-customize（最后选择，需要停止实例）
-	// 如果实例是停止状态，或者前面的策略都失败了，使用 virt-customize
-	if resetErr != nil || !wasRunning {
-		logger.Info().
-			Str("instance_id", req.InstanceID).
-			Msg("Trying virt-customize strategy")
-
-		// 验证 virt-customize 客户端是否可用
-		if s.virtCustomizeClient == nil {
-			return nil, apierror.NewErrorWithStatus(
-				"ServiceUnavailable",
-				"virt-customize command not found, please install libguestfs-tools",
-				503,
-			)
-		}
-
-		// 如果实例正在运行，需要先停止
+		// 策略 1: qemu-guest-agent
 		if wasRunning {
 			logger.Info().
-				Str("instance_id", req.InstanceID).
-				Msg("Stopping instance before virt-customize password reset")
+				Str("instance_id", reqCopy.InstanceID).
+				Msg("Trying qemu-guest-agent strategy")
 
-			stopReq := &entity.StopInstancesRequest{
-				NodeName:    req.NodeName,
-				InstanceIDs: []string{req.InstanceID},
-				Force:       false,
-			}
-			_, err := s.StopInstances(ctx, stopReq)
-			if err != nil {
-				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to stop instance", err)
-			}
-
-			// 等待实例完全停止
-			maxWait := 30 * time.Second
-			waitInterval := 1 * time.Second
-			waited := time.Duration(0)
-			for waited < maxWait {
-				instance, err := s.GetInstance(ctx, req.NodeName, req.InstanceID)
-				if err == nil && instance.State == "stopped" {
-					break
-				}
-				time.Sleep(waitInterval)
-				waited += waitInterval
-			}
-
-			// 再次检查状态
-			instance, err = s.GetInstance(ctx, req.NodeName, req.InstanceID)
-			if err != nil || instance.State != "stopped" {
-				return nil, apierror.NewErrorWithStatus(
-					"InternalError",
-					fmt.Sprintf("Instance %s failed to stop within timeout", req.InstanceID),
-					500,
-				)
+			guestAgentStrategy := NewQemuGuestAgentStrategy(client)
+			resetErr = guestAgentStrategy.ResetPassword(ctxCopy, reqCopy.InstanceID, usersMap)
+			if resetErr == nil {
+				strategyUsed = guestAgentStrategy.Name()
+				logger.Info().
+					Str("instance_id", reqCopy.InstanceID).
+					Str("strategy", strategyUsed).
+					Msg("Password reset successful via qemu-guest-agent")
+			} else {
+				logger.Warn().
+					Err(resetErr).
+					Str("instance_id", reqCopy.InstanceID).
+					Msg("qemu-guest-agent strategy failed, trying cloud-init")
 			}
 		}
 
-		// 获取实例的磁盘路径
-		disks, err := client.GetDomainDisks(req.InstanceID)
-		if err != nil {
-			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get instance disks", err)
-		}
-
-		if len(disks) == 0 || disks[0].Source.File == "" {
-			return nil, apierror.NewErrorWithStatus(
-				"InvalidParameter",
-				fmt.Sprintf("Instance %s has no disk", req.InstanceID),
-				400,
-			)
-		}
-
-		diskPath := disks[0].Source.File
-
-		// 调用 virt-customize 重置密码（直接传入 diskPath，避免重复调用 GetDomainDisks 和 ValidateDiskPath）
-		virtCustomizeStrategy := NewVirtCustomizeStrategy(s.virtCustomizeClient, client)
-		resetErr = virtCustomizeStrategy.ResetPassword(ctx, diskPath, usersMap)
-		if resetErr == nil {
-			strategyUsed = virtCustomizeStrategy.Name()
+		// 策略 2: cloud-init
+		if resetErr != nil && wasRunning {
 			logger.Info().
-				Str("instance_id", req.InstanceID).
-				Str("strategy", strategyUsed).
-				Msg("Password reset successful via virt-customize")
-		}
-	}
+				Str("instance_id", reqCopy.InstanceID).
+				Msg("Trying cloud-init strategy")
 
-	// 5. 检查重置结果
-	if resetErr != nil {
-		logger.Error().
-			Err(resetErr).
-			Str("instance_id", req.InstanceID).
-			Msg("All password reset strategies failed")
-
-		// 如果之前是运行状态，尝试恢复
-		if wasRunning && req.AutoStart {
-			_, _ = s.StartInstances(ctx, &entity.StartInstancesRequest{
-				NodeName:    req.NodeName,
-				InstanceIDs: []string{req.InstanceID},
-			})
+			cloudInitStrategy := NewCloudInitStrategy(client, "")
+			resetErr = cloudInitStrategy.ResetPassword(ctxCopy, reqCopy.InstanceID, usersMap)
+			if resetErr == nil {
+				strategyUsed = cloudInitStrategy.Name()
+				logger.Info().
+					Str("instance_id", reqCopy.InstanceID).
+					Str("strategy", strategyUsed).
+					Msg("Password reset successful via cloud-init (requires restart)")
+			} else {
+				logger.Warn().
+					Err(resetErr).
+					Str("instance_id", reqCopy.InstanceID).
+					Msg("cloud-init strategy failed, falling back to virt-customize")
+			}
 		}
 
-		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to reset passwords", resetErr)
-	}
+		// 策略 3: virt-customize
+		if resetErr != nil || !wasRunning {
+			logger.Info().
+				Str("instance_id", reqCopy.InstanceID).
+				Msg("Trying virt-customize strategy")
 
-	// 6. 如果之前是运行状态且 AutoStart=true，启动实例（仅 virt-customize 策略需要）
-	if wasRunning && req.AutoStart && strategyUsed == "virt-customize" {
+			if s.virtCustomizeClient == nil && !isRemote {
+				logger.Error().
+					Str("instance_id", reqCopy.InstanceID).
+					Msg("virt-customize command not found")
+				return
+			}
+
+			// 如果实例正在运行，需要先停止
+			if wasRunning {
+				logger.Info().
+					Str("instance_id", reqCopy.InstanceID).
+					Msg("Stopping instance before virt-customize password reset")
+
+				stopReq := &entity.StopInstancesRequest{
+					NodeName:    reqCopy.NodeName,
+					InstanceIDs: []string{reqCopy.InstanceID},
+					Force:       false,
+				}
+				if _, err := s.StopInstances(ctxCopy, stopReq); err != nil {
+					logger.Error().
+						Err(err).
+						Str("instance_id", reqCopy.InstanceID).
+						Msg("Failed to stop instance before virt-customize")
+					return
+				}
+				stoppedForVirtCustomize = true
+
+				maxWait := 30 * time.Second
+				waitInterval := 1 * time.Second
+				waited := time.Duration(0)
+				for waited < maxWait {
+					inst, err := s.GetInstance(ctxCopy, reqCopy.NodeName, reqCopy.InstanceID)
+					if err == nil && inst.State == "stopped" {
+						break
+					}
+					time.Sleep(waitInterval)
+					waited += waitInterval
+				}
+
+				inst, err := s.GetInstance(ctxCopy, reqCopy.NodeName, reqCopy.InstanceID)
+				if err != nil || inst.State != "stopped" {
+					logger.Error().
+						Str("instance_id", reqCopy.InstanceID).
+						Msg("Instance failed to stop within timeout for virt-customize")
+					return
+				}
+			}
+
+			disks, err := client.GetDomainDisks(reqCopy.InstanceID)
+			if err != nil {
+				logger.Error().
+					Err(err).
+					Str("instance_id", reqCopy.InstanceID).
+					Msg("Failed to get instance disks")
+				return
+			}
+
+			if len(disks) == 0 || disks[0].Source.File == "" {
+				logger.Error().
+					Str("instance_id", reqCopy.InstanceID).
+					Msg("Instance has no disk for virt-customize")
+				return
+			}
+
+			diskPath := disks[0].Source.File
+
+			if isRemote {
+				passwordArgs := make([]string, 0, len(usersMap)*2)
+				for user, pwd := range usersMap {
+					passwordArgs = append(passwordArgs, "--password", fmt.Sprintf("%s:password:%s", user, pwd))
+				}
+				checkCmd := fmt.Sprintf("test -f '%s'", diskPath)
+				if err := client.ExecuteRemoteCommand(checkCmd); err != nil {
+					resetErr = fmt.Errorf("validate remote disk path: %w", err)
+				} else {
+					cmd := fmt.Sprintf("virt-customize -a '%s' %s", diskPath, strings.Join(passwordArgs, " "))
+					resetErr = client.ExecuteRemoteCommand(cmd)
+				}
+				if resetErr == nil {
+					strategyUsed = "virt-customize-remote"
+					logger.Info().
+						Str("instance_id", reqCopy.InstanceID).
+						Str("strategy", strategyUsed).
+						Msg("Password reset successful via virt-customize on remote node")
+				}
+			} else {
+				virtCustomizeStrategy := NewVirtCustomizeStrategy(s.virtCustomizeClient, client)
+				resetErr = virtCustomizeStrategy.ResetPassword(ctxCopy, diskPath, usersMap)
+				if resetErr == nil {
+					strategyUsed = virtCustomizeStrategy.Name()
+					logger.Info().
+						Str("instance_id", reqCopy.InstanceID).
+						Str("strategy", strategyUsed).
+						Msg("Password reset successful via virt-customize")
+				}
+			}
+		}
+
+		if resetErr != nil {
+			logger.Error().
+				Err(resetErr).
+				Str("instance_id", reqCopy.InstanceID).
+				Msg("Password reset failed")
+
+			if wasRunning && reqCopy.AutoStart && stoppedForVirtCustomize {
+				_, _ = s.StartInstances(ctxCopy, &entity.StartInstancesRequest{
+					NodeName:    reqCopy.NodeName,
+					InstanceIDs: []string{reqCopy.InstanceID},
+				})
+			}
+			return
+		}
+
+		if wasRunning && reqCopy.AutoStart && strings.HasPrefix(strategyUsed, "virt-customize") && stoppedForVirtCustomize {
+			logger.Info().
+				Str("instance_id", reqCopy.InstanceID).
+				Msg("Starting instance after password reset")
+
+			if _, err := s.StartInstances(ctxCopy, &entity.StartInstancesRequest{
+				NodeName:    reqCopy.NodeName,
+				InstanceIDs: []string{reqCopy.InstanceID},
+			}); err != nil {
+				logger.Warn().
+					Err(err).
+					Str("instance_id", reqCopy.InstanceID).
+					Msg("Failed to start instance after password reset")
+			}
+		}
+
+		if strategyUsed == "" {
+			strategyUsed = "qemu-guest-agent"
+		}
+
 		logger.Info().
-			Str("instance_id", req.InstanceID).
-			Msg("Starting instance after password reset")
+			Str("instance_id", reqCopy.InstanceID).
+			Str("strategy", strategyUsed).
+			Strs("users", userList).
+			Msg("Password reset completed")
+	})
 
-		_, err := s.StartInstances(ctx, &entity.StartInstancesRequest{
-			NodeName:    req.NodeName,
-			InstanceIDs: []string{req.InstanceID},
-		})
-		if err != nil {
-			logger.Warn().
-				Err(err).
-				Str("instance_id", req.InstanceID).
-				Msg("Failed to start instance after password reset")
-			// 密码重置成功，但启动失败，返回警告但不失败
-		}
-	}
-
-	logger.Info().
-		Str("instance_id", req.InstanceID).
-		Str("strategy", strategyUsed).
-		Strs("users", userList).
-		Msg("Password reset successfully")
-
-	message := fmt.Sprintf("Password reset successfully via %s", strategyUsed)
-	if strategyUsed == "cloud-init" {
-		message += " (instance restart required)"
-	}
-
+	// 立即返回接受状态
 	return &entity.ResetPasswordResponse{
 		InstanceID: req.InstanceID,
 		Success:    true,
-		Message:    message,
+		Message:    "Password reset task started asynchronously",
 		Users:      userList,
 	}, nil
 }
@@ -1304,7 +1345,7 @@ func (s *InstanceService) ListVMTemplates(ctx context.Context, nodeName string) 
 	logger := zerolog.Ctx(ctx)
 
 	// 获取节点的 libvirt 客户端
-	client, err := s.nodeService.GetNodeStorage(ctx, nodeName)
+	client, err := s.nodeProvider.GetNodeStorage(ctx, nodeName)
 	if err != nil {
 		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get node connection", err)
 	}

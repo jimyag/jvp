@@ -13,6 +13,7 @@ type Instance struct {
 	CreatedAt  string `json:"created_at"`            // 创建时间
 	DomainUUID string `json:"domain_uuid"`           // Libvirt Domain UUID
 	DomainName string `json:"domain_name"`           // Libvirt Domain 名称
+	Autostart  bool   `json:"autostart"`             // 是否开机自启动
 }
 
 // RunInstanceRequest 创建实例请求
@@ -154,12 +155,13 @@ type InstanceStateChange struct {
 
 // ModifyInstanceAttributeRequest 修改实例属性请求
 type ModifyInstanceAttributeRequest struct {
-	NodeName   string  `json:"node_name" binding:"required"`    // 节点名称
-	InstanceID string  `json:"instance_id" binding:"required"`  // 实例 ID
-	MemoryMB   *uint64 `json:"memory_mb,omitempty"`             // 内存大小（MB），nil 表示不修改
-	VCPUs      *uint16 `json:"vcpus,omitempty"`                 // VCPU 数量，nil 表示不修改
-	Name       *string `json:"name,omitempty"`                  // 实例名称，nil 表示不修改
-	Live       bool    `json:"live,omitempty"`                  // 是否热修改（如果实例正在运行）
+	NodeName   string  `json:"node_name" binding:"required"`   // 节点名称
+	InstanceID string  `json:"instance_id" binding:"required"` // 实例 ID
+	MemoryMB   *uint64 `json:"memory_mb,omitempty"`            // 内存大小（MB），nil 表示不修改
+	VCPUs      *uint16 `json:"vcpus,omitempty"`                // VCPU 数量，nil 表示不修改
+	Name       *string `json:"name,omitempty"`                 // 实例名称，nil 表示不修改
+	Autostart  *bool   `json:"autostart,omitempty"`            // 是否自动启动，nil 表示不修改
+	Live       bool    `json:"live,omitempty"`                 // 是否热修改（如果实例正在运行）
 }
 
 // ModifyInstanceAttributeResponse 修改实例属性响应

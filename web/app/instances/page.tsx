@@ -16,6 +16,7 @@ interface Instance {
   name: string;
   state: string;
   node_name: string;
+  autostart?: boolean;
   template_id?: string;
   vcpus: number;
   memory_mb: number;
@@ -220,13 +221,8 @@ export default function InstancesPage() {
     }
   }, [formData.node_name, formData.pool_name]);
 
-  const handleCreateInstance = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    // 只有在最后一步才能提交
-    if (currentStep < 2) {
-      return;
-    }
+  const handleCreateInstance = async () => {
+    if (currentStep < 2) return;
 
     try {
       let finalKeypairIds = [...formData.keypair_ids];
@@ -449,6 +445,15 @@ export default function InstancesPage() {
       render: (value: unknown) => <span>{(Number(value) / 1024).toFixed(1)} GB</span>,
     },
     {
+      key: "autostart",
+      label: "Auto Start",
+      render: (value: unknown) => (
+        <span className={`px-2 py-1 rounded text-xs font-medium ${value ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-600"}`}>
+          {value ? "Enabled" : "Disabled"}
+        </span>
+      ),
+    },
+    {
       key: "template_id",
       label: "Template",
       render: (value: unknown) => <span>{value ? String(value).substring(0, 12) + "..." : "N/A"}</span>
@@ -564,7 +569,7 @@ export default function InstancesPage() {
         maxWidth="xl"
       >
         <form
-          onSubmit={handleCreateInstance}
+          onSubmit={(e) => e.preventDefault()}
           onKeyDown={(e) => {
             // 阻止 Enter 键在非最后一步时提交表单
             if (e.key === "Enter" && currentStep < 2) {
@@ -1058,7 +1063,7 @@ export default function InstancesPage() {
                   Next
                 </button>
               ) : (
-                <button type="submit" className="btn-primary">
+                <button type="button" onClick={handleCreateInstance} className="btn-primary">
                   Create Instance
                 </button>
               )}

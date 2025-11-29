@@ -14,14 +14,14 @@ import (
 
 // VNCProxy VNC WebSocket 代理
 type VNCProxy struct {
-	vncSocket  string
-	wsConn     *websocket.Conn
-	unixConn   net.Conn
-	sshCmd     *exec.Cmd // SSH 进程（用于远程连接）
-	mu         sync.Mutex
-	closed     bool
-	isRemote   bool
-	sshTarget  string // SSH 目标，格式: user@host
+	vncSocket string
+	wsConn    *websocket.Conn
+	unixConn  net.Conn
+	sshCmd    *exec.Cmd // SSH 进程（用于远程连接）
+	mu        sync.Mutex
+	closed    bool
+	isRemote  bool
+	sshTarget string // SSH 目标，格式: user@host
 }
 
 // NewVNCProxy 创建本地 VNC 代理
@@ -233,11 +233,11 @@ func (c *sshConn) Close() error {
 	return nil
 }
 
-func (c *sshConn) LocalAddr() net.Addr                     { return nil }
-func (c *sshConn) RemoteAddr() net.Addr                    { return nil }
-func (c *sshConn) SetDeadline(_ time.Time) error           { return nil }
-func (c *sshConn) SetReadDeadline(_ time.Time) error       { return nil }
-func (c *sshConn) SetWriteDeadline(_ time.Time) error      { return nil }
+func (c *sshConn) LocalAddr() net.Addr                { return nil }
+func (c *sshConn) RemoteAddr() net.Addr               { return nil }
+func (c *sshConn) SetDeadline(_ time.Time) error      { return nil }
+func (c *sshConn) SetReadDeadline(_ time.Time) error  { return nil }
+func (c *sshConn) SetWriteDeadline(_ time.Time) error { return nil }
 
 // Close 关闭代理连接
 func (p *VNCProxy) Close() {

@@ -27,6 +27,7 @@ type LibvirtClient interface {
 	DeleteDomain(domain libvirt.Domain, flags libvirt.DomainUndefineFlagsValues) error
 	ModifyDomainMemory(domain libvirt.Domain, memoryKB uint64, live bool) error
 	ModifyDomainVCPU(domain libvirt.Domain, vcpus uint16, live bool) error
+	SetDomainAutostart(domain libvirt.Domain, autostart bool) error
 
 	// Domain 磁盘操作
 	AttachDiskToDomain(domainName, volumePath, device string) error

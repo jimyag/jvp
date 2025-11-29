@@ -16,10 +16,10 @@ import (
 type DownloadTaskStatus string
 
 const (
-	DownloadTaskStatusPending    DownloadTaskStatus = "pending"
-	DownloadTaskStatusRunning    DownloadTaskStatus = "running"
-	DownloadTaskStatusCompleted  DownloadTaskStatus = "completed"
-	DownloadTaskStatusFailed     DownloadTaskStatus = "failed"
+	DownloadTaskStatusPending   DownloadTaskStatus = "pending"
+	DownloadTaskStatusRunning   DownloadTaskStatus = "running"
+	DownloadTaskStatusCompleted DownloadTaskStatus = "completed"
+	DownloadTaskStatusFailed    DownloadTaskStatus = "failed"
 )
 
 // DownloadTask 下载任务
@@ -293,7 +293,7 @@ func downloadToDir(client libvirt.LibvirtClient, poolName, subDir, fileName, dow
 	} else {
 		// 本地连接：先创建目录，然后下载
 		if subDir != "" {
-			if err := os.MkdirAll(targetDir, 0755); err != nil {
+			if err := os.MkdirAll(targetDir, 0o755); err != nil {
 				return fmt.Errorf("create directory: %w", err)
 			}
 		}

@@ -358,6 +358,9 @@ StoragePoolService → VolumeService
 - 重置密码/密钥
 - 重置系统
 
+进度更新 (2025-11-29)：
+- [x] 前端实例详情/列表支持展示与修改自动启动（autostart），通过 modify-attribute 调用后端实现
+
 ### 阶段 5：集成与优化（第 8 周）
 
 - [ ] API 统一为 Action 风格

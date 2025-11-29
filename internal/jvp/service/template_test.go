@@ -49,13 +49,13 @@ func TestTemplateService_RegisterListDescribe(t *testing.T) {
 
 			// 创建 _templates_ 目录和测试文件
 			templatesDir := filepath.Join(tempDir, TemplatesDirName)
-			err := os.MkdirAll(templatesDir, 0755)
+			err := os.MkdirAll(templatesDir, 0o755)
 			require.NoError(t, err)
 
 			// 创建一个模拟的模板文件（实际文件，因为 lookupVolume 会直接检查文件）
 			templateFile := filepath.Join(templatesDir, "base-template.qcow2")
 			testData := make([]byte, 1024) // 1KB 测试文件
-			err = os.WriteFile(templateFile, testData, 0644)
+			err = os.WriteFile(templateFile, testData, 0o644)
 			require.NoError(t, err)
 
 			// GetStoragePool is called multiple times by TemplateStore and lookupVolume
@@ -157,13 +157,13 @@ func TestTemplateService_UpdateAndDelete(t *testing.T) {
 
 			// 创建 _templates_ 目录和测试文件
 			templatesDir := filepath.Join(tempDir, TemplatesDirName)
-			err := os.MkdirAll(templatesDir, 0755)
+			err := os.MkdirAll(templatesDir, 0o755)
 			require.NoError(t, err)
 
 			// 创建一个模拟的模板文件
 			templateFile := filepath.Join(templatesDir, "tmpl.qcow2")
 			testData := make([]byte, 1024) // 1KB 测试文件
-			err = os.WriteFile(templateFile, testData, 0644)
+			err = os.WriteFile(templateFile, testData, 0o644)
 			require.NoError(t, err)
 
 			if tc.deleteVolume {

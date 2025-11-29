@@ -51,12 +51,12 @@ type PoolTarget struct {
 // VolumeXML 存储卷 XML 结构
 // Reference: https://libvirt.org/formatstorage.html#StorageVol
 type VolumeXML struct {
-	XMLName      xml.Name          `xml:"volume"`
-	Type         string            `xml:"type,attr,omitempty"`
-	Name         string            `xml:"name"`
-	Capacity     VolumeSize        `xml:"capacity"`
-	Allocation   VolumeSize        `xml:"allocation"`
-	Target       VolumeTarget      `xml:"target"`
+	XMLName      xml.Name            `xml:"volume"`
+	Type         string              `xml:"type,attr,omitempty"`
+	Name         string              `xml:"name"`
+	Capacity     VolumeSize          `xml:"capacity"`
+	Allocation   VolumeSize          `xml:"allocation"`
+	Target       VolumeTarget        `xml:"target"`
 	BackingStore *VolumeBackingStore `xml:"backingStore,omitempty"`
 }
 
@@ -542,7 +542,7 @@ func (c *Client) UploadFileToPool(poolName string, volumeName string, localFileP
 		if err != nil {
 			return nil, fmt.Errorf("get volume path: %w", err)
 		}
-		if err := os.WriteFile(volPath, content, 0644); err != nil {
+		if err := os.WriteFile(volPath, content, 0o644); err != nil {
 			return nil, fmt.Errorf("write to volume: %w", err)
 		}
 	}
@@ -980,13 +980,13 @@ func (c *Client) createCloudInitISOLocal(outputDir, vmName, metaData, userData, 
 
 	// 写入 meta-data
 	metaDataPath := tmpDir + "/meta-data"
-	if err := os.WriteFile(metaDataPath, []byte(metaData), 0644); err != nil {
+	if err := os.WriteFile(metaDataPath, []byte(metaData), 0o644); err != nil {
 		return "", fmt.Errorf("write meta-data: %w", err)
 	}
 
 	// 写入 user-data
 	userDataPath := tmpDir + "/user-data"
-	if err := os.WriteFile(userDataPath, []byte(userData), 0644); err != nil {
+	if err := os.WriteFile(userDataPath, []byte(userData), 0o644); err != nil {
 		return "", fmt.Errorf("write user-data: %w", err)
 	}
 
