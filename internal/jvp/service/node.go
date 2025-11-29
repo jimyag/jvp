@@ -17,12 +17,15 @@ type NodeService struct {
 
 // NewNodeService 创建节点服务
 func NewNodeService(storage *NodeStorage) (*NodeService, error) {
+	if err := storage.EnsureDefaultLocal(); err != nil {
+		return nil, err
+	}
 	return &NodeService{
 		storage: storage,
 	}, nil
 }
 
-// GetNodeStorage 获取节点的 libvirt 连接(用于存储操作)
+// GetNodeStorage 获取节点的 libvirt 连接 (用于存储操作)
 // nodeName 为空时返回本地节点连接
 func (s *NodeService) GetNodeStorage(ctx context.Context, nodeName string) (libvirt.LibvirtClient, error) {
 	// 如果 nodeName 为空或为 "local",返回本地连接
@@ -60,34 +63,22 @@ func (s *NodeService) ListNodes(ctx context.Context) ([]*entity.Node, error) {
 			continue
 		}
 
-		// 尝试连接以检查状态
 		state := entity.NodeStateOffline
-		var hostname string
-
-		conn, err := s.storage.GetConnection(config.Name)
-		if err == nil {
-			// 连接成功，获取实际的 hostname
-			hostname, err = conn.GetHostname()
-			if err == nil {
+		if conn, err := s.storage.GetConnection(config.Name); err == nil {
+			if _, err := conn.GetHostname(); err == nil {
 				state = entity.NodeStateOnline
 			}
 		}
 
-		// 如果无法获取 hostname，使用配置的名称
-		if hostname == "" {
-			hostname = config.Name
-		}
-
-		node := &entity.Node{
-			Name:      hostname,
+		nodes = append(nodes, &entity.Node{
+			Name:      config.Name,
 			UUID:      fmt.Sprintf("%s-node", config.Name),
 			URI:       config.URI,
 			Type:      config.Type,
 			State:     state,
 			CreatedAt: config.CreatedAt,
 			UpdatedAt: config.UpdatedAt,
-		}
-		nodes = append(nodes, node)
+		})
 	}
 
 	return nodes, nil
@@ -101,9 +92,14 @@ func (s *NodeService) DescribeNode(ctx context.Context, nodeName string) (*entit
 	}
 
 	for _, node := range nodes {
-		if node.Name == nodeName {
+		if node.Name == nodeName || node.UUID == nodeName {
 			return node, nil
 		}
+	}
+
+	// fallback: if requesting local and only default exists with different name
+	if nodeName == "local" && len(nodes) == 1 {
+		return nodes[0], nil
 	}
 
 	return nil, fmt.Errorf("node %s not found", nodeName)
@@ -114,7 +110,14 @@ func (s *NodeService) DescribeNodeSummary(ctx context.Context, nodeName string) 
 	// 获取节点的 libvirt 连接
 	conn, err := s.storage.GetConnection(nodeName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get node connection: %w", err)
+		// 如果找不到指定节点但有且仅有一个节点（默认 local），尝试使用该节点
+		nodes, listErr := s.ListNodes(ctx)
+		if listErr == nil && len(nodes) == 1 {
+			conn, err = s.storage.GetConnection(nodes[0].Name)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to get node connection: %w", err)
+		}
 	}
 
 	// 获取 capabilities XML（包含详细的 CPU、内存、NUMA 信息）
@@ -150,7 +153,7 @@ func (s *NodeService) DescribeNodeSummary(ctx context.Context, nodeName string) 
 	// 解析 CPU 频率（从 Hz 转换为 MHz）
 	frequency := 0
 	if caps.Host.CPU.Counter.Frequency != "" {
-		// frequency 格式: "3293797000" (Hz)
+		// frequency 格式："3293797000" (Hz)
 		var freqHz int64
 		fmt.Sscanf(caps.Host.CPU.Counter.Frequency, "%d", &freqHz)
 		frequency = int(freqHz / 1000000) // 转换为 MHz
@@ -498,7 +501,7 @@ func (s *NodeService) CreateNode(ctx context.Context, name, uri string, nodeType
 	}
 
 	// 获取实际的 hostname
-	hostname, err := conn.GetHostname()
+	_, err = conn.GetHostname()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get hostname: %w", err)
 	}
@@ -521,7 +524,7 @@ func (s *NodeService) CreateNode(ctx context.Context, name, uri string, nodeType
 
 	// 返回节点信息
 	node := &entity.Node{
-		Name:      hostname,
+		Name:      name,
 		UUID:      fmt.Sprintf("%s-node", name),
 		URI:       uri,
 		Type:      nodeType,

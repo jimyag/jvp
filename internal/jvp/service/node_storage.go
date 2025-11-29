@@ -119,6 +119,76 @@ func (s *NodeStorage) List() ([]*NodeConfig, error) {
 	return configs, nil
 }
 
+// EnsureDefaultLocal 确保存在本地节点配置（用于首次启动自动添加）
+func (s *NodeStorage) EnsureDefaultLocal() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 如果已有节点配置则不创建
+	configs, err := s.listUnlocked()
+	if err != nil {
+		return err
+	}
+	if len(configs) > 0 {
+		return nil
+	}
+
+	cfg := &NodeConfig{
+		Name:      "local",
+		URI:       "qemu:///system",
+		Type:      entity.NodeTypeLocal,
+		State:     entity.NodeStateOnline,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal default node config: %w", err)
+	}
+
+	configPath := s.getConfigPath(cfg.Name)
+	if err := os.WriteFile(configPath, data, 0o644); err != nil {
+		return fmt.Errorf("failed to write default node config: %w", err)
+	}
+	return nil
+}
+
+func (s *NodeStorage) listUnlocked() ([]*NodeConfig, error) {
+	entries, err := os.ReadDir(s.storageDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read nodes directory: %w", err)
+	}
+
+	configs := make([]*NodeConfig, 0)
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+
+		nodeName := entry.Name()[:len(entry.Name())-5] // 去掉 .json
+		config, err := s.get(nodeName)
+		if err != nil {
+			continue // 跳过无法读取的配置
+		}
+		configs = append(configs, config)
+	}
+	return configs, nil
+}
+
+// getConnectionUnlocked assumes caller holds lock
+func (s *NodeStorage) getConnectionUnlocked(cfg *NodeConfig) (*libvirt.Client, error) {
+	if conn, ok := s.connections[cfg.Name]; ok {
+		return conn, nil
+	}
+	conn, err := libvirt.NewWithURI(cfg.URI)
+	if err != nil {
+		return nil, err
+	}
+	s.connections[cfg.Name] = conn
+	return conn, nil
+}
+
 // Delete 删除节点配置
 func (s *NodeStorage) Delete(nodeName string) error {
 	s.mu.Lock()
