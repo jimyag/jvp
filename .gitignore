@@ -32,3 +32,5 @@ bin/
 *coverage*
 
 flint
+
+internal/jvp/api/static

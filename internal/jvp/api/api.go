@@ -22,6 +22,7 @@ type API struct {
 	consoleWS   *ConsoleWS
 	storagePool *StoragePoolAPI
 	template    *Template
+	frontendFS  http.FileSystem
 }
 
 func New(
@@ -56,6 +57,7 @@ func New(
 	api.consoleWS.RegisterRoutes(apiGroup)
 	api.storagePool.RegisterRoutes(apiGroup)
 	api.template.RegisterRoutes(apiGroup)
+	api.mountFrontend()
 
 	// 打印路由信息（只显示方法和路径，不显示处理函数）
 	printRoutes(engine)

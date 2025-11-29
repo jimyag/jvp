@@ -1,17 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  async rewrites() {
-    // 支持通过环境变量配置后端 API 地址
-    // 默认使用 localhost:8080
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
-
-    return [
-      {
-        source: '/api/:path*',
-        destination: `${apiUrl}/api/:path*`,
-      },
-    ];
+  output: 'export',
+  images: {
+    unoptimized: true,
   },
   webpack: (config) => {
     // 配置 noVNC 作为外部模块处理
