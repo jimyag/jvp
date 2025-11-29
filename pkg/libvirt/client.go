@@ -334,20 +334,28 @@ func (c *Client) getDomainNetworkInfo(domain libvirt.Domain) ([]NetworkInterface
 
 // getDomainStartTime 尝试获取域的启动时间
 func (c *Client) getDomainStartTime(domain libvirt.Domain) *time.Time {
-	// 这是一个简化的实现，实际的启动时间获取可能需要更复杂的逻辑
-	// 可以通过查看/proc/stat 或其他系统信息来获取更准确的启动时间
-
-	// 获取当前 CPU 时间（纳秒）
-	_, _, _, _, cpuTime, err := c.conn.DomainGetInfo(domain)
-	if err != nil {
-		return nil
+	// 优先使用 libvirt 提供的控制信息中的状态时间（纳秒时间戳）
+	if _, _, stateTime, err := c.conn.DomainGetControlInfo(domain, 229); err == nil && stateTime > 0 {
+		start := time.Unix(0, int64(stateTime))
+		return &start
+	} else if err != nil {
+		log.Warn().Err(err).Str("domain", domain.Name).Msg("Failed to get domain control info")
 	}
 
-	// 简化计算：假设域从当前时间减去 CPU 时间开始运行
-	// 注意：这只是一个粗略的估计
-	if cpuTime > 0 {
-		startTime := time.Now().Add(-time.Duration(cpuTime))
-		return &startTime
+	// 其次尝试获取 guest 时间（非精确启动时间，但可作为近似值避免为空）
+	if seconds, nseconds, err := c.conn.DomainGetTime(domain, 337); err == nil && seconds > 0 {
+		start := time.Unix(seconds, int64(nseconds))
+		return &start
+	} else if err != nil {
+		log.Warn().Err(err).Str("domain", domain.Name).Msg("Failed to get domain time")
+	}
+
+	// 最后退化为 CPU 时间推算（粗略）
+	if _, _, _, _, cpuTime, err := c.conn.DomainGetInfo(domain); err == nil && cpuTime > 0 {
+		start := time.Now().Add(-time.Duration(cpuTime))
+		return &start
+	} else if err != nil {
+		log.Warn().Err(err).Str("domain", domain.Name).Msg("Failed to get domain info")
 	}
 
 	return nil

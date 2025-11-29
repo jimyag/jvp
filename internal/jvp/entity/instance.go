@@ -11,6 +11,7 @@ type Instance struct {
 	MemoryMB   uint64              `json:"memory_mb"`             // 内存大小（MB）
 	VCPUs      uint16              `json:"vcpus"`                 // 虚拟 CPU 数量
 	CreatedAt  string              `json:"created_at"`            // 创建时间
+	StartedAt  string              `json:"started_at,omitempty"`  // 启动时间
 	DomainUUID string              `json:"domain_uuid"`           // Libvirt Domain UUID
 	DomainName string              `json:"domain_name"`           // Libvirt Domain 名称
 	Autostart  bool                `json:"autostart"`             // 是否开机自启动

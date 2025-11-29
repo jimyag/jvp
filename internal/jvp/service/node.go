@@ -97,8 +97,8 @@ func (s *NodeService) DescribeNode(ctx context.Context, nodeName string) (*entit
 		}
 	}
 
-	// fallback: if requesting local and only default exists with different name
-	if nodeName == "local" && len(nodes) == 1 {
+	// fallback: if only one node exists, return it even when name mismatches (common for default local)
+	if len(nodes) == 1 {
 		return nodes[0], nil
 	}
 

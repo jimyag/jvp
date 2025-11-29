@@ -225,7 +225,13 @@ func (s *NodeStorage) GetConnection(nodeName string) (*libvirt.Client, error) {
 	// 获取配置（使用不加锁的版本）
 	config, err := s.get(nodeName)
 	if err != nil {
-		return nil, err
+		// 如果找不到指定节点且仅有一个节点配置，使用唯一的节点作为 fallback
+		configs, listErr := s.listUnlocked()
+		if listErr != nil || len(configs) != 1 {
+			return nil, err
+		}
+		config = configs[0]
+		nodeName = config.Name
 	}
 
 	// 创建新连接

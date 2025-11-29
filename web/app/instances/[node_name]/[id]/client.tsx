@@ -23,6 +23,7 @@ interface Instance {
   ip_address?: string;
   keypair_name?: string;
   created_at: string;
+  started_at?: string;
   updated_at?: string;
   domain_uuid?: string;
   domain_name?: string;
@@ -476,9 +477,9 @@ export default function InstanceDetailPage() {
           <h2 className="text-xl font-bold text-primary mb-4">Timestamps</h2>
           <dl className="space-y-3">
             <div>
-              <dt className="text-sm font-medium text-gray-500">Created At</dt>
+              <dt className="text-sm font-medium text-gray-500">Started At</dt>
               <dd className="mt-1 text-sm text-gray-900">
-                {instance.created_at ? new Date(instance.created_at).toLocaleString() : "N/A"}
+                {instance.started_at ? new Date(instance.started_at).toLocaleString() : "N/A"}
               </dd>
             </div>
             {instance.updated_at && (
