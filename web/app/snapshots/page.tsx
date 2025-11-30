@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import DashboardLayout from "@/components/DashboardLayout";
 import Header from "@/components/Header";
 import Table from "@/components/Table";
@@ -37,6 +38,7 @@ interface Snapshot {
 
 function SnapshotsContent() {
   const toast = useToast();
+  const searchParams = useSearchParams();
   const [nodes, setNodes] = useState<Node[]>([]);
   const [instances, setInstances] = useState<Instance[]>([]);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
@@ -56,6 +58,7 @@ function SnapshotsContent() {
 
   // 用于跟踪初始化状态
   const initDoneRef = useRef(false);
+  const lastParamsRef = useRef("");
 
   // 更新 URL 参数（使用 window.history 避免触发 React 重渲染）
   const updateURL = (node: string, vm: string) => {
@@ -66,19 +69,38 @@ function SnapshotsContent() {
     window.history.replaceState(null, "", newURL);
   };
 
-  // 初始化 - 只执行一次
+  // 使用 useSearchParams 监听 URL 参数变化
+  const urlNode = searchParams.get("node") || "";
+  const urlVM = searchParams.get("vm") || "";
+
+  // 监听 URL 参数变化并初始化
   useEffect(() => {
-    if (initDoneRef.current) return;
+    const currentParams = `${urlNode}|${urlVM}`;
+
+    // 如果参数没变化，跳过
+    if (lastParamsRef.current === currentParams) {
+      return;
+    }
+
+    // 如果已经初始化过了，跳过
+    if (initDoneRef.current) {
+      return;
+    }
+
+    // 如果参数为空，先保存当前参数，但不初始化，等待参数更新
+    if (!urlNode && !urlVM) {
+      lastParamsRef.current = currentParams;
+      return;
+    }
+
+    // 参数有效，执行初始化
+    lastParamsRef.current = currentParams;
     initDoneRef.current = true;
 
-    // 从 window.location 读取 URL 参数，避免 searchParams 的异步问题
-    const params = new URLSearchParams(window.location.search);
-    const urlNode = params.get("node") || "";
-    const urlVM = params.get("vm") || "";
-
+    // 直接使用 searchParams 的值进行初始化
     initializeData(urlNode, urlVM);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [urlNode, urlVM]); // 依赖 URL 参数变化
 
   // 初始化数据加载
   const initializeData = async (urlNode: string, urlVM: string) => {
@@ -126,8 +148,27 @@ function SnapshotsContent() {
       }
 
       // 4. 确定选中的 VM（支持按 id 或 name 匹配）
-      const matchedInstance = urlVM && instanceList.find((i) => i.id === urlVM || i.name === urlVM);
-      const targetVM = matchedInstance ? matchedInstance.id : instanceList[0].id;
+      let targetVM: string;
+      if (urlVM) {
+        // 如果 URL 中有 VM 参数，优先使用它（即使列表中找不到也先设置）
+        const matchedInstance = instanceList.find((i) => i.id === urlVM || i.name === urlVM);
+        if (matchedInstance) {
+          targetVM = matchedInstance.id;
+        } else {
+          // 如果在当前节点找不到该 VM，可能是节点不对或 VM 不存在
+          // 此时不应该回退到第一个实例，而应该保持 URL 中的值或清空
+          console.warn(`VM ${urlVM} not found in node ${targetNode}`);
+          targetVM = urlVM; // 保持 URL 中的值，让用户看到参数
+          setSelectedVM(targetVM);
+          setSnapshots([]); // 清空快照列表
+          updateURL(targetNode, targetVM);
+          return; // 不继续获取快照
+        }
+      } else {
+        // 没有 URL 参数时才使用第一个实例
+        targetVM = instanceList[0].id;
+      }
+
       setSelectedVM(targetVM);
 
       // 5. 获取快照
@@ -550,5 +591,15 @@ function SnapshotsContent() {
 }
 
 export default function Page() {
-  return <SnapshotsContent />;
+  return (
+    <Suspense fallback={
+      <DashboardLayout>
+        <div className="card text-center py-12">
+          <p className="text-gray-500">Loading...</p>
+        </div>
+      </DashboardLayout>
+    }>
+      <SnapshotsContent />
+    </Suspense>
+  );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import Link from "next/link";
 import DashboardLayout from "@/components/DashboardLayout";
 import Header from "@/components/Header";
 import Table from "@/components/Table";
@@ -494,12 +495,12 @@ export default function InstancesPage() {
       key: "snapshots",
       label: "Snapshots",
       render: (_: unknown, row: Instance) => (
-        <a
+        <Link
           href={`/snapshots?node=${encodeURIComponent(row.node_name)}&vm=${encodeURIComponent(row.id)}`}
           className="text-blue-600 hover:underline text-sm"
         >
           View
-        </a>
+        </Link>
       ),
     },
     {
