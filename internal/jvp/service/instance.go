@@ -492,6 +492,7 @@ func (s *InstanceService) DescribeInstances(ctx context.Context, req *entity.Des
 			Autostart:  domainInfo.Autostart,
 			Interfaces: convertInterfaces(client, domainInfo.NetworkInfo),
 			StartedAt:  formatStartTime(domainInfo.StartTime),
+			Disks:      convertDisks(client, domain.Name),
 		}
 
 		// TODO: 如果需要 TemplateID，可以从 domain metadata 读取
@@ -575,6 +576,22 @@ func formatStartTime(t *time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
+func convertDisks(client libvirt.LibvirtClient, domainName string) []entity.InstanceDisk {
+	disks, err := client.GetDomainDisks(domainName)
+	if err != nil {
+		return nil
+	}
+	result := make([]entity.InstanceDisk, 0, len(disks))
+	for _, d := range disks {
+		result = append(result, entity.InstanceDisk{
+			Target: d.Target.Dev,
+			Path:   d.Source.File,
+			Format: d.Driver.Type,
+		})
+	}
+	return result
+}
+
 // GetInstance 获取单个实例信息
 func (s *InstanceService) GetInstance(ctx context.Context, nodeName, instanceID string) (*entity.Instance, error) {
 	// 获取节点的 libvirt 客户端
@@ -614,6 +631,7 @@ func (s *InstanceService) GetInstance(ctx context.Context, nodeName, instanceID 
 		Autostart:  domainInfo.Autostart,
 		Interfaces: convertInterfaces(client, domainInfo.NetworkInfo),
 		StartedAt:  formatStartTime(domainInfo.StartTime),
+		Disks:      convertDisks(client, domain.Name),
 	}
 
 	return instance, nil

@@ -62,6 +62,11 @@ type LibvirtClient interface {
 
 	// Snapshot 操作
 	ListSnapshots(domainName string) ([]string, error)
+	CreateSnapshot(domainName string, snapshotXML string, flags libvirt.DomainSnapshotCreateFlags) error
+	GetSnapshotXML(domainName, snapshotName string) (*DomainSnapshotXML, error)
+	ListSnapshotXML(domainName string) ([]DomainSnapshotXML, error)
+	DeleteSnapshot(domainName, snapshotName string, flags libvirt.DomainSnapshotDeleteFlags) error
+	RevertToSnapshot(domainName, snapshotName string, flags libvirt.DomainSnapshotRevertFlags) error
 
 	// Network Interface 操作
 	ListInterfaces() ([]libvirt.Interface, error)

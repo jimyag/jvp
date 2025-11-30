@@ -22,6 +22,7 @@ type API struct {
 	consoleWS   *ConsoleWS
 	storagePool *StoragePoolAPI
 	template    *Template
+	snapshot    *Snapshot
 	frontendFS  http.FileSystem
 }
 
@@ -32,6 +33,7 @@ func New(
 	keyPairService *service.KeyPairService,
 	storagePoolService *service.StoragePoolService,
 	templateService *service.TemplateService,
+	snapshotService *service.SnapshotService,
 	cfg *config.Config,
 ) (*API, error) {
 	// 先禁用 Gin 的 debug 路由输出（避免打印带函数名的路由信息）
@@ -48,6 +50,7 @@ func New(
 		consoleWS:   NewConsoleWS(instanceService),
 		storagePool: NewStoragePoolAPI(storagePoolService),
 		template:    NewTemplate(templateService),
+		snapshot:    NewSnapshot(snapshotService),
 	}
 
 	apiGroup := engine.Group("/api")
@@ -58,6 +61,7 @@ func New(
 	api.consoleWS.RegisterRoutes(apiGroup)
 	api.storagePool.RegisterRoutes(apiGroup)
 	api.template.RegisterRoutes(apiGroup)
+	api.snapshot.RegisterRoutes(apiGroup)
 	api.mountFrontend()
 
 	api.server = &http.Server{

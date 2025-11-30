@@ -96,6 +96,10 @@ func (s *StorageService) CreateVolume(ctx context.Context, req *entity.CreateInt
 
 // ListVolumes 列出存储池中的所有卷
 func (s *StorageService) ListVolumes(ctx context.Context, poolName string) ([]*entity.Volume, error) {
+	logger := zerolog.Ctx(ctx)
+
+	diskMaps := buildDiskMaps(s.libvirtClient, logger)
+
 	volInfos, err := s.libvirtClient.ListVolumes(poolName)
 	if err != nil {
 		return nil, fmt.Errorf("list volumes in pool %s: %w", poolName, err)
@@ -105,6 +109,12 @@ func (s *StorageService) ListVolumes(ctx context.Context, poolName string) ([]*e
 	for _, volInfo := range volInfos {
 		// 跳过 _templates_ 目录本身和目录中的文件
 		if volInfo.Name == TemplatesDirName || strings.Contains(volInfo.Path, "/"+TemplatesDirName+"/") {
+			continue
+		}
+		if isSnapshotVolume(volInfo, diskMaps.snapshotPaths) {
+			continue
+		}
+		if volInfo.Name == SnapshotsDirName || strings.Contains(volInfo.Path, "/"+SnapshotsDirName+"/") {
 			continue
 		}
 
@@ -149,9 +159,11 @@ func (s *StorageService) ListStoragePools(ctx context.Context, includeVolumes bo
 					Msg("Failed to list volumes in pool")
 				// 继续处理其他池，不中断
 			} else {
+				diskMaps := buildDiskMaps(s.libvirtClient, logger)
 				// 过滤掉 _templates_ 目录本身和目录中的文件
 				for _, volInfo := range volInfos {
-					if volInfo.Name != TemplatesDirName && !strings.Contains(volInfo.Path, "/"+TemplatesDirName+"/") {
+					if volInfo.Name != TemplatesDirName && !strings.Contains(volInfo.Path, "/"+TemplatesDirName+"/") &&
+						!isSnapshotVolume(volInfo, diskMaps.snapshotPaths) {
 						volumeCount++
 					}
 				}
@@ -197,9 +209,11 @@ func (s *StorageService) GetStoragePool(ctx context.Context, poolName string, in
 		if err != nil {
 			return nil, fmt.Errorf("list volumes in pool %s: %w", poolName, err)
 		}
+		diskMaps := buildDiskMaps(s.libvirtClient, logger)
 		// 过滤掉 _templates_ 目录本身和目录中的文件
 		for _, volInfo := range volInfos {
-			if volInfo.Name != TemplatesDirName && !strings.Contains(volInfo.Path, "/"+TemplatesDirName+"/") {
+			if volInfo.Name != TemplatesDirName && !strings.Contains(volInfo.Path, "/"+TemplatesDirName+"/") &&
+				!isSnapshotVolume(volInfo, diskMaps.snapshotPaths) {
 				volumeCount++
 			}
 		}

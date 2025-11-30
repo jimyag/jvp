@@ -1,10 +1,15 @@
-import InstanceDetailPage from "./client";
-
-export const dynamicParams = false;
+import { Suspense } from "react";
+import InstanceDetailClient from "./client";
 
 export default function Page() {
-  return <InstanceDetailPage />;
+  return (
+    <Suspense fallback={null}>
+      <InstanceDetailClient />
+    </Suspense>
+  );
 }
+
+export const dynamicParams = false;
 
 export async function generateStaticParams() {
   return [{ node_name: "placeholder-node", id: "placeholder-id" }];

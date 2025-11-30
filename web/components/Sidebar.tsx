@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Server, Key, Menu, X, Database, Package, Boxes } from "lucide-react";
+import { Server, Key, Menu, X, Database, Package, Boxes, Camera } from "lucide-react";
 import { useState } from "react";
 
 const navigation = [
@@ -10,6 +10,7 @@ const navigation = [
   { name: "Instances", href: "/instances", icon: Server },
   { name: "Storage Pools", href: "/storage-pools", icon: Database },
   { name: "Templates", href: "/templates", icon: Package },
+  { name: "Snapshots", href: "/snapshots", icon: Camera },
   { name: "Key Pairs", href: "/keypairs", icon: Key },
 ];
 

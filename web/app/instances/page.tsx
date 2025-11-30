@@ -25,6 +25,7 @@ interface Instance {
   domain_name?: string;
   ip_address?: string;
   interfaces?: { ips?: string[] }[];
+  disks?: { target?: string; path?: string; format?: string }[];
 }
 
 interface Node {
@@ -488,6 +489,18 @@ export default function InstancesPage() {
       key: "template_id",
       label: "Template",
       render: (value: unknown) => <span>{value ? String(value).substring(0, 12) + "..." : "N/A"}</span>
+    },
+    {
+      key: "snapshots",
+      label: "Snapshots",
+      render: (_: unknown, row: Instance) => (
+        <a
+          href={`/snapshots?node=${encodeURIComponent(row.node_name)}&vm=${encodeURIComponent(row.id)}`}
+          className="text-blue-600 hover:underline text-sm"
+        >
+          View
+        </a>
+      ),
     },
     {
       key: "actions",

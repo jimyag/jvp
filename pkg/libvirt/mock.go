@@ -257,6 +257,37 @@ func (m *MockClient) ListSnapshots(domainName string) ([]string, error) {
 	return args.Get(0).([]string), args.Error(1)
 }
 
+func (m *MockClient) CreateSnapshot(domainName string, snapshotXML string, flags libvirt.DomainSnapshotCreateFlags) error {
+	args := m.Called(domainName, snapshotXML, flags)
+	return args.Error(0)
+}
+
+func (m *MockClient) GetSnapshotXML(domainName, snapshotName string) (*DomainSnapshotXML, error) {
+	args := m.Called(domainName, snapshotName)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*DomainSnapshotXML), args.Error(1)
+}
+
+func (m *MockClient) ListSnapshotXML(domainName string) ([]DomainSnapshotXML, error) {
+	args := m.Called(domainName)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]DomainSnapshotXML), args.Error(1)
+}
+
+func (m *MockClient) DeleteSnapshot(domainName, snapshotName string, flags libvirt.DomainSnapshotDeleteFlags) error {
+	args := m.Called(domainName, snapshotName, flags)
+	return args.Error(0)
+}
+
+func (m *MockClient) RevertToSnapshot(domainName, snapshotName string, flags libvirt.DomainSnapshotRevertFlags) error {
+	args := m.Called(domainName, snapshotName, flags)
+	return args.Error(0)
+}
+
 // Network Interface 操作
 func (m *MockClient) ListInterfaces() ([]libvirt.Interface, error) {
 	args := m.Called()

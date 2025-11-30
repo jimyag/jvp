@@ -6,6 +6,7 @@ import DashboardLayout from "@/components/DashboardLayout";
 import Header from "@/components/Header";
 import StatusBadge from "@/components/StatusBadge";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import Table from "@/components/Table";
 import { useToast } from "@/components/ToastContainer";
 import { Play, Square, RefreshCw, Trash2, ArrowLeft, Key, Edit, Monitor } from "lucide-react";
 import Modal from "@/components/Modal";
@@ -28,6 +29,7 @@ interface Instance {
   domain_uuid?: string;
   domain_name?: string;
   interfaces?: InstanceInterface[];
+  disks?: { target?: string; path?: string; format?: string }[];
 }
 
 type InstanceInterface = {
@@ -234,6 +236,12 @@ export default function InstanceDetailPage() {
     }
   };
 
+  const disksColumns = [
+    { key: "target", label: "Target" },
+    { key: "path", label: "Path" },
+    { key: "format", label: "Format" },
+  ];
+
   if (loading) {
     return (
       <DashboardLayout>
@@ -343,6 +351,18 @@ export default function InstanceDetailPage() {
             </button>
           </div>
         </div>
+      </div>
+
+      <div className="card">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-semibold text-gray-900">Disks</h2>
+        </div>
+        <Table
+          columns={disksColumns}
+          data={instance.disks || []}
+          emptyMessage="No disks"
+          keyField="target"
+        />
       </div>
 
       {/* Details */}

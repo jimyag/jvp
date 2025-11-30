@@ -1033,12 +1033,59 @@ func (c *Client) CheckGuestAgentAvailable(domain libvirt.Domain) (bool, error) {
 
 // DomainSnapshotXML 快照 XML 结构
 type DomainSnapshotXML struct {
-	XMLName xml.Name `xml:"domainsnapshot"`
-	Name    string   `xml:"name"`
+	XMLName      xml.Name                 `xml:"domainsnapshot"`
+	Name         string                   `xml:"name"`
+	State        string                   `xml:"state,omitempty"`
+	CreationTime int64                    `xml:"creationTime,omitempty"`
+	Description  string                   `xml:"description,omitempty"`
+	Parent       *DomainSnapshotParentXML `xml:"parent,omitempty"`
+	Memory       *DomainSnapshotMemoryXML `xml:"memory,omitempty"`
+	Disks        []DomainSnapshotDiskXML  `xml:"disks>disk,omitempty"`
+}
+
+type DomainSnapshotParentXML struct {
+	Name string `xml:"name"`
+}
+
+type DomainSnapshotMemoryXML struct {
+	Snapshot string `xml:"snapshot,attr,omitempty"`
+	File     string `xml:"file,attr,omitempty"`
+}
+
+type DomainSnapshotDiskXML struct {
+	XMLName  xml.Name                     `xml:"disk"`
+	Name     string                       `xml:"name,attr"`
+	Snapshot string                       `xml:"snapshot,attr,omitempty"`
+	Driver   *DomainSnapshotDiskDriverXML `xml:"driver,omitempty"`
+	Source   *DomainSnapshotDiskSourceXML `xml:"source,omitempty"`
+}
+
+type DomainSnapshotDiskDriverXML struct {
+	Type string `xml:"type,attr,omitempty"`
+}
+
+type DomainSnapshotDiskSourceXML struct {
+	File string `xml:"file,attr,omitempty"`
 }
 
 // ListSnapshots 列出域的所有快照名称
 func (c *Client) ListSnapshots(domainName string) ([]string, error) {
+	snapshots, err := c.ListSnapshotXML(domainName)
+	if err != nil {
+		return nil, err
+	}
+
+	names := make([]string, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		if snapshot.Name != "" {
+			names = append(names, snapshot.Name)
+		}
+	}
+	return names, nil
+}
+
+// ListSnapshotXML 获取域的快照 XML 信息
+func (c *Client) ListSnapshotXML(domainName string) ([]DomainSnapshotXML, error) {
 	// 获取 domain
 	domain, err := c.conn.DomainLookupByName(domainName)
 	if err != nil {
@@ -1052,7 +1099,7 @@ func (c *Client) ListSnapshots(domainName string) ([]string, error) {
 	}
 
 	// 提取快照名称
-	names := make([]string, 0, len(snapshots))
+	result := make([]DomainSnapshotXML, 0, len(snapshots))
 	for _, snapshot := range snapshots {
 		// 获取快照的 XML 描述
 		xmlDesc, err := c.conn.DomainSnapshotGetXMLDesc(snapshot, 0)
@@ -1067,11 +1114,86 @@ func (c *Client) ListSnapshots(domainName string) ([]string, error) {
 		}
 
 		if snapshotXML.Name != "" {
-			names = append(names, snapshotXML.Name)
+			result = append(result, snapshotXML)
 		}
 	}
 
-	return names, nil
+	return result, nil
+}
+
+// GetSnapshotXML 获取指定快照的 XML 信息
+func (c *Client) GetSnapshotXML(domainName, snapshotName string) (*DomainSnapshotXML, error) {
+	domain, err := c.conn.DomainLookupByName(domainName)
+	if err != nil {
+		return nil, fmt.Errorf("lookup domain %s: %w", domainName, err)
+	}
+
+	snapshot, err := c.conn.DomainSnapshotLookupByName(domain, snapshotName, 0)
+	if err != nil {
+		return nil, fmt.Errorf("lookup snapshot %s for domain %s: %w", snapshotName, domainName, err)
+	}
+
+	xmlDesc, err := c.conn.DomainSnapshotGetXMLDesc(snapshot, 0)
+	if err != nil {
+		return nil, fmt.Errorf("get snapshot XML for %s: %w", snapshotName, err)
+	}
+
+	var snapshotXML DomainSnapshotXML
+	if err := xml.Unmarshal([]byte(xmlDesc), &snapshotXML); err != nil {
+		return nil, fmt.Errorf("unmarshal snapshot XML for %s: %w", snapshotName, err)
+	}
+
+	return &snapshotXML, nil
+}
+
+// CreateSnapshot 创建快照
+func (c *Client) CreateSnapshot(domainName string, snapshotXML string, flags libvirt.DomainSnapshotCreateFlags) error {
+	// 获取 domain
+	domain, err := c.conn.DomainLookupByName(domainName)
+	if err != nil {
+		return fmt.Errorf("lookup domain %s: %w", domainName, err)
+	}
+
+	if _, err := c.conn.DomainSnapshotCreateXML(domain, snapshotXML, uint32(flags)); err != nil {
+		return fmt.Errorf("create snapshot for domain %s: %w", domainName, err)
+	}
+	return nil
+}
+
+// DeleteSnapshot 删除快照
+func (c *Client) DeleteSnapshot(domainName, snapshotName string, flags libvirt.DomainSnapshotDeleteFlags) error {
+	domain, err := c.conn.DomainLookupByName(domainName)
+	if err != nil {
+		return fmt.Errorf("lookup domain %s: %w", domainName, err)
+	}
+
+	snapshot, err := c.conn.DomainSnapshotLookupByName(domain, snapshotName, 0)
+	if err != nil {
+		return fmt.Errorf("lookup snapshot %s for domain %s: %w", snapshotName, domainName, err)
+	}
+
+	if err := c.conn.DomainSnapshotDelete(snapshot, flags); err != nil {
+		return fmt.Errorf("delete snapshot %s for domain %s: %w", snapshotName, domainName, err)
+	}
+	return nil
+}
+
+// RevertToSnapshot 回滚快照
+func (c *Client) RevertToSnapshot(domainName, snapshotName string, flags libvirt.DomainSnapshotRevertFlags) error {
+	domain, err := c.conn.DomainLookupByName(domainName)
+	if err != nil {
+		return fmt.Errorf("lookup domain %s: %w", domainName, err)
+	}
+
+	snapshot, err := c.conn.DomainSnapshotLookupByName(domain, snapshotName, 0)
+	if err != nil {
+		return fmt.Errorf("lookup snapshot %s for domain %s: %w", snapshotName, domainName, err)
+	}
+
+	if err := c.conn.DomainRevertToSnapshot(snapshot, uint32(flags)); err != nil {
+		return fmt.Errorf("revert to snapshot %s for domain %s: %w", snapshotName, domainName, err)
+	}
+	return nil
 }
 
 // ListInterfaces 列出所有网络接口

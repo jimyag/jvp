@@ -16,6 +16,14 @@ type Instance struct {
 	DomainName string              `json:"domain_name"`           // Libvirt Domain 名称
 	Autostart  bool                `json:"autostart"`             // 是否开机自启动
 	Interfaces []InstanceInterface `json:"interfaces,omitempty"`  // 网络接口信息
+	Disks      []InstanceDisk      `json:"disks,omitempty"`       // 磁盘信息
+}
+
+// InstanceDisk 磁盘信息
+type InstanceDisk struct {
+	Target string `json:"target"`
+	Path   string `json:"path"`
+	Format string `json:"format"`
 }
 
 // InstanceInterface 网络接口信息

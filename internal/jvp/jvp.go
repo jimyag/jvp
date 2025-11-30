@@ -65,13 +65,16 @@ func New(cfg *config.Config) (*Server, error) {
 	templateStore := service.NewTemplateStore(nodeService.GetNodeStorage)
 	templateService := service.NewTemplateService(nodeService.GetNodeStorage, templateStore)
 
-	// 8. 创建 Instance Service
+	// 8. 创建 Snapshot Service
+	snapshotService := service.NewSnapshotService(nodeService)
+
+	// 9. 创建 Instance Service
 	instanceService, err := service.NewInstanceService(nodeService, templateService, keyPairService)
 	if err != nil {
 		return nil, err
 	}
 
-	// 9. 创建 API
+	// 10. 创建 API
 	apiInstance, err := api.New(
 		nodeService,
 		instanceService,
@@ -79,6 +82,7 @@ func New(cfg *config.Config) (*Server, error) {
 		keyPairService,
 		storagePoolService,
 		templateService,
+		snapshotService,
 		cfg,
 	)
 	if err != nil {

@@ -307,16 +307,22 @@ StoragePoolService → VolumeService
 - 删除了旧的 ImageService，完全使用 TemplateService 替代
 
 #### 2.3 Snapshot 模块（新增）
-- [ ] 后端 service: snapshot.go（快照服务）
-- [ ] 后端 entity: snapshot.go（快照实体）
-- [ ] 后端 API: snapshot.go（快照 API）
-- [ ] 前端页面：app/snapshots/
+- [x] 后端 service: snapshot.go（快照服务）
+- [x] 后端 entity: snapshot.go（快照实体）
+- [x] 后端 API: snapshot.go（快照 API）
+- [x] 前端页面：app/snapshots/
 
 功能：
 - 列举/查询快照
 - 删除快照
 - 从快照创建虚拟机
 - 导出快照为模板
+
+技术实现进展（2025-11-29）：
+- 快照目录：外部磁盘快照统一存储在对应存储池的 `_snapshots_/<vm>/` 下，volume 列表会过滤此目录
+- 支持创建（外部快照）、列举、查询详情、删除、回滚；API 采用 Action 风格
+- 内存快照保持默认路径（不自定义）；导出/克隆前端仍待实现
+- 前端：新增 snapshots 页面，支持选择 Node/VM、创建/刷新/删除/回滚快照，展示基础信息
 
 注意：快照的创建在 VM 模块中
 

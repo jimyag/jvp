@@ -7,9 +7,56 @@ import (
 
 	"github.com/jimyag/jvp/internal/jvp/entity"
 	"github.com/jimyag/jvp/pkg/idgen"
+	"github.com/jimyag/jvp/pkg/libvirt"
 	"github.com/jimyag/jvp/pkg/qemuimg"
 	"github.com/rs/zerolog"
 )
+
+func isSnapshotVolume(volInfo *libvirt.VolumeInfo, snapshotPaths map[string]struct{}) bool {
+	// 标准目录命中
+	if volInfo.Name == SnapshotsDirName || strings.Contains(volInfo.Path, "/"+SnapshotsDirName+"/") {
+		return true
+	}
+	// 路径命中已知快照 overlay
+	if _, ok := snapshotPaths[volInfo.Path]; ok {
+		return true
+	}
+	return false
+}
+
+type diskMaps struct {
+	snapshotPaths map[string]struct{}
+}
+
+func buildDiskMaps(client libvirt.LibvirtClient, logger *zerolog.Logger) diskMaps {
+	snapshotPaths := make(map[string]struct{})
+
+	domains, err := client.GetVMSummaries()
+	if err != nil {
+		logger.Warn().Err(err).Msg("Failed to list domains for snapshot filtering; will skip snapshot path set")
+		return diskMaps{snapshotPaths: snapshotPaths}
+	}
+
+	for _, domain := range domains {
+		snapshots, err := client.ListSnapshotXML(domain.Name)
+		if err != nil {
+			logger.Debug().
+				Str("domain", domain.Name).
+				Err(err).
+				Msg("Skip snapshot listing for domain")
+			continue
+		}
+		for _, snap := range snapshots {
+			for _, disk := range snap.Disks {
+				if disk.Source != nil && disk.Source.File != "" {
+					snapshotPaths[disk.Source.File] = struct{}{}
+				}
+			}
+		}
+	}
+
+	return diskMaps{snapshotPaths: snapshotPaths}
+}
 
 // VolumeService 存储卷服务
 type VolumeService struct {
@@ -120,6 +167,8 @@ func (s *VolumeService) ListVolumes(ctx context.Context, req *entity.ListVolumes
 		return nil, fmt.Errorf("get node storage: %w", err)
 	}
 
+	diskMaps := buildDiskMaps(nodeStorage, logger)
+
 	// 列举卷
 	volInfos, err := nodeStorage.ListVolumes(req.PoolName)
 	if err != nil {
@@ -128,8 +177,11 @@ func (s *VolumeService) ListVolumes(ctx context.Context, req *entity.ListVolumes
 
 	volumes := make([]entity.Volume, 0, len(volInfos))
 	for _, volInfo := range volInfos {
-		// 跳过 _templates_ 目录本身和目录中的文件
+		// 跳过模板目录和快照卷（含非规范命名）
 		if volInfo.Name == TemplatesDirName || strings.Contains(volInfo.Path, "/"+TemplatesDirName+"/") {
+			continue
+		}
+		if isSnapshotVolume(volInfo, diskMaps.snapshotPaths) {
 			continue
 		}
 
