@@ -240,6 +240,29 @@ export default function InstanceDetailPage() {
     { key: "target", label: "Target" },
     { key: "path", label: "Path" },
     { key: "format", label: "Format" },
+    {
+      key: "capacity_b",
+      label: "Capacity",
+      render: (value: unknown) => {
+        const cap = Number(value || 0);
+        return <span>{cap > 0 ? `${(cap / 1024 / 1024 / 1024).toFixed(2)} GB` : "-"}</span>;
+      },
+    },
+    {
+      key: "allocation_b",
+      label: "Allocated",
+      render: (value: unknown, row: any) => {
+        const alloc = Number(value || 0);
+        const cap = Number(row.capacity_b || 0);
+        const pct = cap > 0 ? ((alloc / cap) * 100).toFixed(0) : "";
+        return (
+          <span>
+            {alloc > 0 ? `${(alloc / 1024 / 1024 / 1024).toFixed(2)} GB` : "-"}
+            {pct ? ` (${pct}%)` : ""}
+          </span>
+        );
+      },
+    },
   ];
 
   if (loading) {

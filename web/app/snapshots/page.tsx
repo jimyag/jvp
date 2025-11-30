@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import DashboardLayout from "@/components/DashboardLayout";
 import Header from "@/components/Header";
 import Table from "@/components/Table";
@@ -35,8 +36,9 @@ interface Snapshot {
   disks?: { target?: string; path?: string; format?: string }[];
 }
 
-export default function SnapshotsPage() {
+function SnapshotsContent() {
   const toast = useToast();
+  const searchParams = useSearchParams();
   const [nodes, setNodes] = useState<Node[]>([]);
   const [instances, setInstances] = useState<Instance[]>([]);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
@@ -55,8 +57,11 @@ export default function SnapshotsPage() {
   });
 
   useEffect(() => {
-    fetchNodes();
-  }, []);
+    const spNode = searchParams.get("node") || "";
+    const spVM = searchParams.get("vm") || "";
+    fetchNodes(spNode, spVM);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   useEffect(() => {
     if (selectedNode) {
@@ -72,7 +77,7 @@ export default function SnapshotsPage() {
     }
   }, [selectedNode, selectedVM]);
 
-  const fetchNodes = async () => {
+  const fetchNodes = async (preferredNode?: string, preferredVM?: string) => {
     try {
       const res = await fetch("/api/list-nodes", {
         method: "POST",
@@ -83,8 +88,14 @@ export default function SnapshotsPage() {
         const data = await res.json();
         const list = data.nodes || [];
         setNodes(list);
-        if (list.length > 0 && !selectedNode) {
-          setSelectedNode(list[0].name);
+        if (list.length > 0) {
+          const nextNode = preferredNode && list.some((n: Node) => n.name === preferredNode)
+            ? preferredNode
+            : selectedNode || list[0].name;
+          setSelectedNode(nextNode);
+          if (preferredVM) {
+            setSelectedVM(preferredVM);
+          }
         }
       } else {
         toast.error("Failed to load nodes");
@@ -484,5 +495,13 @@ export default function SnapshotsPage() {
         variant="warning"
       />
     </DashboardLayout>
+  );
+}
+
+export default function Page() {
+  return (
+    <Suspense fallback={<div className="card text-center py-12"><p className="text-gray-500">Loading snapshots...</p></div>}>
+      <SnapshotsContent />
+    </Suspense>
   );
 }

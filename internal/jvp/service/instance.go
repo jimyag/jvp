@@ -584,9 +584,11 @@ func convertDisks(client libvirt.LibvirtClient, domainName string) []entity.Inst
 	result := make([]entity.InstanceDisk, 0, len(disks))
 	for _, d := range disks {
 		result = append(result, entity.InstanceDisk{
-			Target: d.Target.Dev,
-			Path:   d.Source.File,
-			Format: d.Driver.Type,
+			Target:      d.Target.Dev,
+			Path:        d.Source.File,
+			Format:      d.Driver.Type,
+			CapacityB:   d.CapacityB,
+			AllocationB: d.AllocationB,
 		})
 	}
 	return result

@@ -104,11 +104,13 @@ type DomainDevices struct {
 
 // DomainDisk represents a disk device
 type DomainDisk struct {
-	Type   string           `xml:"type,attr"`
-	Device string           `xml:"device,attr"`
-	Driver DomainDiskDriver `xml:"driver"`
-	Source DomainDiskSource `xml:"source"`
-	Target DomainDiskTarget `xml:"target"`
+	Type        string           `xml:"type,attr"`
+	Device      string           `xml:"device,attr"`
+	Driver      DomainDiskDriver `xml:"driver"`
+	Source      DomainDiskSource `xml:"source"`
+	Target      DomainDiskTarget `xml:"target"`
+	CapacityB   uint64           `xml:"-"` // filled via StorageVolGetInfo
+	AllocationB uint64           `xml:"-"` // filled via StorageVolGetInfo
 }
 
 // DomainDiskDriver represents disk driver configuration

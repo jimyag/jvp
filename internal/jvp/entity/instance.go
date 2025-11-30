@@ -21,9 +21,11 @@ type Instance struct {
 
 // InstanceDisk 磁盘信息
 type InstanceDisk struct {
-	Target string `json:"target"`
-	Path   string `json:"path"`
-	Format string `json:"format"`
+	Target      string `json:"target"`
+	Path        string `json:"path"`
+	Format      string `json:"format"`
+	CapacityB   uint64 `json:"capacity_b,omitempty"`
+	AllocationB uint64 `json:"allocation_b,omitempty"`
 }
 
 // InstanceInterface 网络接口信息

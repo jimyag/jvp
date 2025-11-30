@@ -178,5 +178,22 @@ func (c *Client) GetDomainDisks(domainName string) ([]DomainDisk, error) {
 		return nil, fmt.Errorf("unmarshal domain XML: %w", err)
 	}
 
-	return domainXML.Devices.Disks, nil
+	disks := domainXML.Devices.Disks
+
+	// 补充容量信息（best-effort）
+	for i, d := range disks {
+		if d.Source.File == "" {
+			continue
+		}
+		vol, err := c.conn.StorageVolLookupByPath(d.Source.File)
+		if err != nil {
+			continue
+		}
+		if _, capB, allocB, err := c.conn.StorageVolGetInfo(vol); err == nil {
+			disks[i].CapacityB = capB
+			disks[i].AllocationB = allocB
+		}
+	}
+
+	return disks, nil
 }
