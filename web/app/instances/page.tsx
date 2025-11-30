@@ -508,14 +508,14 @@ export default function InstancesPage() {
       render: (_: unknown, row: Record<string, unknown>) => {
         const instance = row as unknown as Instance;
         return (
-          <div className="flex gap-2">
+          <div className="flex gap-2 whitespace-nowrap">
             {instance.state === "running" ? (
               <button
                 onClick={() => handleAction(instance, "stop")}
                 className="p-2 text-gray-600 hover:text-red-600 transition-colors"
                 title="Stop"
               >
-                <Square size={16} />
+                <Square size={18} />
               </button>
             ) : (
               <button
@@ -523,7 +523,7 @@ export default function InstancesPage() {
                 className="p-2 text-gray-600 hover:text-green-600 transition-colors"
                 title="Start"
               >
-                <Play size={16} />
+                <Play size={18} />
               </button>
             )}
             <button
@@ -531,14 +531,14 @@ export default function InstancesPage() {
               className="p-2 text-gray-600 hover:text-blue-600 transition-colors"
               title="Reboot"
             >
-              <RefreshCw size={16} />
+              <RefreshCw size={18} />
             </button>
             <button
               onClick={() => handleDeleteClick(instance)}
               className="p-2 text-gray-600 hover:text-red-600 transition-colors"
               title="Delete"
             >
-              <Trash2 size={16} />
+              <Trash2 size={18} />
             </button>
           </div>
         );

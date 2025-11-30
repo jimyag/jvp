@@ -1,7 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
 import Header from "@/components/Header";
 import Table from "@/components/Table";
@@ -38,7 +37,6 @@ interface Snapshot {
 
 function SnapshotsContent() {
   const toast = useToast();
-  const searchParams = useSearchParams();
   const [nodes, setNodes] = useState<Node[]>([]);
   const [instances, setInstances] = useState<Instance[]>([]);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
@@ -56,57 +54,101 @@ function SnapshotsContent() {
     with_memory: false,
   });
 
+  // 用于跟踪初始化状态
+  const initDoneRef = useRef(false);
+
+  // 更新 URL 参数（使用 window.history 避免触发 React 重渲染）
+  const updateURL = (node: string, vm: string) => {
+    const params = new URLSearchParams();
+    if (node) params.set("node", node);
+    if (vm) params.set("vm", vm);
+    const newURL = params.toString() ? `/snapshots?${params.toString()}` : "/snapshots";
+    window.history.replaceState(null, "", newURL);
+  };
+
+  // 初始化 - 只执行一次
   useEffect(() => {
-    const spNode = searchParams.get("node") || "";
-    const spVM = searchParams.get("vm") || "";
-    fetchNodes(spNode, spVM);
+    if (initDoneRef.current) return;
+    initDoneRef.current = true;
+
+    // 从 window.location 读取 URL 参数，避免 searchParams 的异步问题
+    const params = new URLSearchParams(window.location.search);
+    const urlNode = params.get("node") || "";
+    const urlVM = params.get("vm") || "";
+
+    initializeData(urlNode, urlVM);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
+  }, []);
 
-  useEffect(() => {
-    if (selectedNode) {
-      fetchInstances(selectedNode);
-    }
-  }, [selectedNode]);
-
-  useEffect(() => {
-    if (selectedNode && selectedVM) {
-      fetchSnapshots(selectedNode, selectedVM);
-    } else {
-      setSnapshots([]);
-    }
-  }, [selectedNode, selectedVM]);
-
-  const fetchNodes = async (preferredNode?: string, preferredVM?: string) => {
+  // 初始化数据加载
+  const initializeData = async (urlNode: string, urlVM: string) => {
     try {
-      const res = await fetch("/api/list-nodes", {
+      // 1. 获取节点列表
+      const nodesRes = await fetch("/api/list-nodes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
       });
-      if (res.ok) {
-        const data = await res.json();
-        const list = data.nodes || [];
-        setNodes(list);
-        if (list.length > 0) {
-          const nextNode = preferredNode && list.some((n: Node) => n.name === preferredNode)
-            ? preferredNode
-            : selectedNode || list[0].name;
-          setSelectedNode(nextNode);
-          if (preferredVM) {
-            setSelectedVM(preferredVM);
-          }
-        }
-      } else {
+      if (!nodesRes.ok) {
         toast.error("Failed to load nodes");
+        return;
       }
+      const nodesData = await nodesRes.json();
+      const nodeList = nodesData.nodes || [];
+      setNodes(nodeList);
+
+      if (nodeList.length === 0) {
+        return;
+      }
+
+      // 2. 确定选中的节点
+      const nodeExists = urlNode && nodeList.some((n: Node) => n.name === urlNode);
+      const targetNode = nodeExists ? urlNode : nodeList[0].name;
+      setSelectedNode(targetNode);
+
+      // 3. 获取该节点的实例列表
+      const instancesRes = await fetch("/api/instances/describe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ node_name: targetNode }),
+      });
+      if (!instancesRes.ok) {
+        toast.error("Failed to load instances");
+        return;
+      }
+      const instancesData = await instancesRes.json();
+      const instanceList: Instance[] = instancesData.instances || [];
+      setInstances(instanceList);
+
+      if (instanceList.length === 0) {
+        updateURL(targetNode, "");
+        return;
+      }
+
+      // 4. 确定选中的 VM（支持按 id 或 name 匹配）
+      const matchedInstance = urlVM && instanceList.find((i) => i.id === urlVM || i.name === urlVM);
+      const targetVM = matchedInstance ? matchedInstance.id : instanceList[0].id;
+      setSelectedVM(targetVM);
+
+      // 5. 获取快照
+      fetchSnapshots(targetNode, targetVM);
+
+      // 6. 更新 URL（保持参数一致）
+      updateURL(targetNode, targetVM);
+
     } catch (err) {
       console.error(err);
-      toast.error("Failed to load nodes");
+      toast.error("Failed to initialize");
     }
   };
 
-  const fetchInstances = async (nodeName: string) => {
+  // 用户手动切换节点时
+  const handleNodeChange = async (nodeName: string) => {
+    setSelectedNode(nodeName);
+    setSelectedVM("");
+    setInstances([]);
+    setSnapshots([]);
+
     try {
       const res = await fetch("/api/instances/describe", {
         method: "POST",
@@ -118,12 +160,12 @@ function SnapshotsContent() {
         const list: Instance[] = data.instances || [];
         setInstances(list);
         if (list.length > 0) {
-          const exists = list.some((i) => i.id === selectedVM);
-          if (!exists) {
-            setSelectedVM(list[0].id);
-          }
+          const firstVM = list[0].id;
+          setSelectedVM(firstVM);
+          fetchSnapshots(nodeName, firstVM);
+          updateURL(nodeName, firstVM);
         } else {
-          setSelectedVM("");
+          updateURL(nodeName, "");
         }
       } else {
         toast.error("Failed to load instances");
@@ -131,6 +173,15 @@ function SnapshotsContent() {
     } catch (err) {
       console.error(err);
       toast.error("Failed to load instances");
+    }
+  };
+
+  // 用户手动切换 VM 时
+  const handleVMChange = (vmId: string) => {
+    setSelectedVM(vmId);
+    if (selectedNode && vmId) {
+      fetchSnapshots(selectedNode, vmId);
+      updateURL(selectedNode, vmId);
     }
   };
 
@@ -360,7 +411,7 @@ function SnapshotsContent() {
             <select
               className="input"
               value={selectedNode}
-              onChange={(e) => setSelectedNode(e.target.value)}
+              onChange={(e) => handleNodeChange(e.target.value)}
             >
               {nodes.map((node) => (
                 <option key={node.name} value={node.name}>
@@ -376,7 +427,7 @@ function SnapshotsContent() {
             <select
               className="input"
               value={selectedVM}
-              onChange={(e) => setSelectedVM(e.target.value)}
+              onChange={(e) => handleVMChange(e.target.value)}
             >
               {instances.map((vm) => (
                 <option key={vm.id} value={vm.id}>
@@ -499,9 +550,5 @@ function SnapshotsContent() {
 }
 
 export default function Page() {
-  return (
-    <Suspense fallback={<div className="card text-center py-12"><p className="text-gray-500">Loading snapshots...</p></div>}>
-      <SnapshotsContent />
-    </Suspense>
-  );
+  return <SnapshotsContent />;
 }

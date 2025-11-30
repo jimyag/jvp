@@ -29,7 +29,7 @@ export default function Table({ columns, data, emptyMessage = "No data available
               {columns.map((column) => (
                 <th
                   key={column.key}
-                  className="px-6 py-4 text-left text-xs font-bold text-primary uppercase tracking-wider"
+                  className="px-5 py-4 text-left text-sm font-bold text-primary uppercase tracking-wider whitespace-nowrap"
                 >
                   {column.label}
                 </th>
@@ -43,7 +43,7 @@ export default function Table({ columns, data, emptyMessage = "No data available
                 className="hover:bg-gray-50 transition-colors duration-150"
               >
                 {columns.map((column) => (
-                  <td key={column.key} className="px-6 py-4 text-sm text-gray-900">
+                  <td key={column.key} className="px-5 py-4 text-base text-gray-900">
                     {column.render
                       ? column.render(row[column.key], row)
                       : String(row[column.key] ?? "")}
