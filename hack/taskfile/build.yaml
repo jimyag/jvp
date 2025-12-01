@@ -10,11 +10,11 @@ tasks:
       - go-mod-tidy
     cmds:
       - |
-        cd web && npm install && npm run export
+        cd web-vite && npm install && npm run build
       - |
         rm -rf ./internal/jvp/api/static
         mkdir -p ./internal/jvp/api/static
-        cp -r ./web/out/* ./internal/jvp/api/static/
+        cp -r ./web-vite/dist/* ./internal/jvp/api/static/
       - |
         CGO_ENABLED=0 GOOS={{.GO_OS}} GOARCH={{.GO_ARCH}} \
         GOMODCACHE={{.GO_PATH}}/pkg/mod \
@@ -25,11 +25,11 @@ tasks:
     desc: 编译某个系统架构的二进制文件
     cmds:
       - |
-        cd web && npm install && npm run export
+        cd web-vite && npm install && npm run build
       - |
         rm -rf ./internal/jvp/api/static
         mkdir -p ./internal/jvp/api/static
-        cp -r ./web/out/* ./internal/jvp/api/static/
+        cp -r ./web-vite/dist/* ./internal/jvp/api/static/
       - |
         rm -rf ./bin/{{.GO_OS}}_{{.GO_ARCH}}
       - |

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VNC Console</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background-color: #000;
+            overflow: hidden;
+            font-family: system-ui, -apple-system, sans-serif;
+        }
+        #screen {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        #status {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 10px 15px;
+            border-radius: 5px;
+            font-size: 14px;
+            z-index: 1000;
+        }
+        .connecting {
+            color: #fbbf24;
+        }
+        .connected {
+            color: #10b981;
+        }
+        .disconnected {
+            color: #ef4444;
+        }
+    </style>
+</head>
+<body>
+    <div id="status" class="connecting">Connecting...</div>
+    <div id="screen"></div>
+
+    <script type="module">
+        // 使用本地的 noVNC ES module
+        import RFB from '/novnc/rfb.js';
+
+        const status = document.getElementById('status');
+        const screen = document.getElementById('screen');
+
+        // 从 URL 参数获取 WebSocket地址
+        const urlParams = new URLSearchParams(window.location.search);
+        const wsUrl = urlParams.get('ws');
+
+        if (!wsUrl) {
+            status.textContent = 'Error: Missing WebSocket URL';
+            status.className = 'disconnected';
+            console.error('No WebSocket URL provided');
+        } else {
+            try {
+                // 创建 RFB 连接
+                const rfb = new RFB(screen, wsUrl, {
+                    credentials: { password: '' }
+                });
+
+                // 设置缩放选项
+                rfb.scaleViewport = true;
+                rfb.resizeSession = true;
+
+                // 连接事件
+                rfb.addEventListener('connect', () => {
+                    console.log('VNC connected');
+                    status.textContent = 'Connected';
+                    status.className = 'connected';
+                    // 3秒后隐藏状态
+                    setTimeout(() => {
+                        status.style.display = 'none';
+                    }, 3000);
+                });
+
+                // 断开连接事件
+                rfb.addEventListener('disconnect', (e) => {
+                    console.log('VNC disconnected:', e.detail);
+                    status.textContent = 'Disconnected';
+                    status.className = 'disconnected';
+                    status.style.display = 'block';
+                });
+
+                // 安全失败事件
+                rfb.addEventListener('securityfailure', (e) => {
+                    console.error('VNC security failure:', e.detail);
+                    status.textContent = 'Authentication failed';
+                    status.className = 'disconnected';
+                });
+
+            } catch (error) {
+                console.error('Failed to initialize VNC:', error);
+                status.textContent = 'Error: ' + error.message;
+                status.className = 'disconnected';
+            }
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,71 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-background text-primary antialiased;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply px-6 py-2.5 font-medium uppercase text-sm border-2 transition-all duration-200 hover:scale-[1.02];
+  }
+
+  .btn-primary {
+    @apply btn bg-accent text-white border-accent hover:bg-accent-dark hover:border-accent-dark;
+  }
+
+  .btn-secondary {
+    @apply btn bg-white text-primary border-primary hover:bg-primary hover:text-white;
+  }
+
+  .btn-danger {
+    @apply btn bg-coral text-white border-coral hover:bg-red-600 hover:border-red-600;
+  }
+
+  .card {
+    @apply bg-background-card border border-gray-200 rounded-lg p-6 transition-all duration-200 hover:shadow-lg;
+  }
+
+  .input {
+    @apply w-full px-4 py-2.5 border-2 border-gray-300 rounded focus:outline-none focus:border-accent transition-colors;
+  }
+
+  .label {
+    @apply block text-sm font-medium text-primary mb-2;
+  }
+}
+
+@layer utilities {
+  .animate-fadeIn {
+    animation: fadeIn 0.2s ease-in-out;
+  }
+
+  .animate-slideIn {
+    animation: slideIn 0.3s ease-out;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: scale(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  @keyframes slideIn {
+    from {
+      opacity: 0;
+      transform: translateX(100%);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+}
