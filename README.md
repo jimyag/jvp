@@ -105,6 +105,31 @@ task build
 http://localhost:7777
 ```
 
+## 未来计划
+
+JVP 正在持续开发中，以下功能计划在未来版本中支持：
+
+### 用户体验增强
+- **国际化（i18n）**：支持多语言切换（中文、英文等）
+- **深色/浅色主题切换**：支持主题切换和系统主题自动检测
+- **用户引导**：首次使用引导、功能提示、快速开始向导
+
+### 网络功能增强
+- **多种网络配置**：桥接、NAT、虚拟网络、直通网络、VLAN、网络 QoS 等
+- **网络隔离**：支持网络隔离和多网卡绑定
+
+### 设备直通虚拟化
+- **PCIe 设备直通**：GPU、网卡、NVMe 等 PCIe 设备直通
+- **USB 设备直通**：USB 设备直通和热插拔支持
+- **磁盘直通**：物理磁盘、分区、LVM 逻辑卷直通
+
+### Windows 虚拟机支持
+- **Windows 安装支持**：Windows ISO 镜像、VirtIO 驱动集成
+- **Windows 优化配置**：CPU 模式优化、时钟同步、性能优化
+- **Windows 工具集成**：QEMU Guest Agent、VirtIO 驱动自动安装
+
+更多详细信息请参考 [实现计划](docs/implement/implementation-plan.md)。
+
 ## 相关资料
 
 - <https://www.voidking.com/dev-libvirt-create-vm/>

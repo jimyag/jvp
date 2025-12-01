@@ -105,6 +105,31 @@ After building, the frontend is embedded in the binary file. After starting the 
 http://localhost:7777
 ```
 
+## Future Plans
+
+JVP is under continuous development. The following features are planned for future releases:
+
+### User Experience Enhancements
+- **Internationalization (i18n)**: Support for multiple languages (Chinese, English, etc.)
+- **Dark/Light Theme Toggle**: Theme switching with automatic system theme detection
+- **User Onboarding**: First-time user guide, feature tooltips, quick start wizard
+
+### Network Feature Enhancements
+- **Multiple Network Configurations**: Bridge, NAT, virtual networks, passthrough networks, VLAN, network QoS, etc.
+- **Network Isolation**: Support for network isolation and multi-NIC bonding
+
+### Device Passthrough Virtualization
+- **PCIe Device Passthrough**: GPU, network cards, NVMe, and other PCIe device passthrough
+- **USB Device Passthrough**: USB device passthrough and hot-plug support
+- **Disk Passthrough**: Physical disk, partition, and LVM logical volume passthrough
+
+### Windows Virtual Machine Support
+- **Windows Installation Support**: Windows ISO images, VirtIO driver integration
+- **Windows Optimization**: CPU mode optimization, clock synchronization, performance tuning
+- **Windows Tools Integration**: QEMU Guest Agent, automatic VirtIO driver installation
+
+For more details, please refer to the [Implementation Plan](docs/implement/implementation-plan.md).
+
 ## Related Resources
 
 - <https://www.voidking.com/dev-libvirt-create-vm/>

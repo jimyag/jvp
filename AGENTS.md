@@ -45,18 +45,14 @@
 **示例**：
 ```bash
 # 编译项目
-go build -o bin/jvp ./cmd/jvp/
+task build
 
-# 启动服务
-./bin/jvp serve --port 8080
-
-# 测试 API
-curl -X POST http://localhost:8080/api/list-nodes -d '{}'
 ```
 
 ### 4. 文档约定
 
 **现有文档**：
+
 - `docs/` 目录下的文档是项目的正式文档
 - 只有在用户明确要求时才创建新的文档文件
 
@@ -75,17 +71,8 @@ curl -X POST http://localhost:8080/api/list-nodes -d '{}'
 功能已完成！以下是测试命令：
 
 # 1. 编译
-go build -o bin/jvp ./cmd/jvp/
+task build
 
-# 2. 启动后端
-./bin/jvp serve --port 8080
-
-# 3. 启动前端
-cd web && npm run dev
-
-# 4. 测试创建节点
-curl -X POST http://localhost:8080/api/create-node \
-  -d '{"name":"node1","uri":"qemu+ssh://root@192.168.2.100/system"}'
 ```
 
 ❌ **不好的回复**：

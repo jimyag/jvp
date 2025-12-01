@@ -376,6 +376,148 @@ StoragePoolService → VolumeService
 - [ ] 集成测试
 - [ ] 文档更新
 
+### 阶段 6：用户体验与高级功能（第 9-10 周）
+
+#### 6.1 前端用户体验增强
+
+##### 6.1.1 国际化（i18n）
+- [ ] 集成国际化框架（react-i18next 或类似）
+- [ ] 支持多语言切换（中文、英文等）
+- [ ] 翻译所有前端文本内容
+- [ ] 语言选择器组件
+- [ ] 语言偏好持久化存储
+
+技术实现：
+- 使用 react-i18next 或 react-intl
+- 语言文件按模块组织（instances, nodes, storage 等）
+- 支持动态语言切换
+- 浏览器语言自动检测
+
+##### 6.1.2 深色/浅色主题切换
+- [ ] 主题系统设计（CSS Variables / Tailwind Dark Mode）
+- [ ] 主题切换组件
+- [ ] 深色模式样式适配
+- [ ] 主题偏好持久化存储
+- [ ] 系统主题自动检测
+
+技术实现：
+- 使用 Tailwind CSS 的 dark mode 功能
+- CSS Variables 定义主题颜色
+- localStorage 存储用户偏好
+- 支持跟随系统主题
+
+##### 6.1.3 用户引导与帮助
+- [ ] 首次使用引导（Onboarding）
+- [ ] 功能提示（Tooltips）
+- [ ] 帮助文档集成
+- [ ] 快速开始向导
+- [ ] 空状态引导
+
+功能点：
+- 首次访问时的功能导览
+- 关键操作的提示说明
+- 常见问题解答
+- 快速创建第一个虚拟机的引导流程
+- 空状态页面的操作建议
+
+#### 6.2 网络配置增强
+
+##### 6.2.1 多种网络配置设置
+- [ ] 桥接网络（Bridge）配置
+- [ ] NAT 网络配置
+- [ ] 虚拟网络（Virtual Network）配置
+- [ ] 直通网络（Passthrough）配置
+- [ ] 网络隔离配置
+- [ ] 多网卡绑定
+- [ ] VLAN 配置
+- [ ] 网络 QoS 设置
+
+技术实现：
+- 扩展 Network 模块支持多种网络类型
+- libvirt network XML 配置生成
+- 网络配置验证和测试
+- 网络拓扑可视化（可选）
+
+#### 6.3 设备直通虚拟化
+
+##### 6.3.1 PCIe 设备直通
+- [ ] PCIe 设备列表查询
+- [ ] GPU 直通配置
+- [ ] 网卡直通配置
+- [ ] NVMe 直通配置
+- [ ] 直通设备绑定/解绑
+- [ ] IOMMU 配置检查
+- [ ] VFIO 驱动支持
+
+技术实现：
+- 通过 libvirt 配置 hostdev
+- 检查 IOMMU 和 VFIO 支持
+- 设备绑定状态管理
+- 直通设备热插拔支持
+
+##### 6.3.2 USB 设备直通
+- [ ] USB 设备列表查询
+- [ ] USB 设备直通配置
+- [ ] USB 设备热插拔
+- [ ] USB 设备过滤规则
+
+技术实现：
+- libvirt USB hostdev 配置
+- USB 设备热插拔监听
+- USB 设备权限管理
+
+##### 6.3.3 磁盘直通
+- [ ] 物理磁盘直通配置
+- [ ] 磁盘分区直通
+- [ ] LVM 逻辑卷直通
+- [ ] 直通磁盘性能优化
+
+技术实现：
+- libvirt disk 配置使用 hostdev
+- 磁盘权限和访问控制
+- 直通磁盘性能测试
+
+#### 6.4 Windows 虚拟机支持
+
+##### 6.4.1 Windows 安装支持
+- [ ] Windows ISO 镜像支持
+- [ ] Windows 安装引导配置
+- [ ] VirtIO 驱动集成
+- [ ] Windows 激活支持（可选）
+
+##### 6.4.2 Windows 优化配置
+- [ ] CPU 模式优化（host-passthrough）
+- [ ] 时钟同步配置（QEMU Guest Agent）
+- [ ] 磁盘缓存策略优化
+- [ ] 网络驱动优化
+- [ ] 显示驱动优化（QXL/VirtIO）
+
+##### 6.4.3 Windows 工具集成
+- [ ] QEMU Guest Agent for Windows
+- [ ] VirtIO 驱动自动安装
+- [ ] Windows 系统信息查询
+- [ ] Windows 密码重置支持
+
+技术实现：
+- Windows 模板元数据标记
+- Windows 特定的 cloud-init 配置
+- VirtIO ISO 自动挂载
+- Windows 特定的设备配置
+
+##### 6.4.4 Windows 性能优化
+- [ ] CPU 拓扑优化
+- [ ] 内存大页支持
+- [ ] 磁盘 I/O 优化
+- [ ] 网络性能优化
+- [ ] GPU 直通支持（Windows）
+
+依赖关系：
+```
+NodeService → DevicePassthroughService
+InstanceService → DevicePassthroughService
+NetworkService → Enhanced Network Config
+```
+
 ## 技术细节
 
 ### API 风格统一
@@ -581,8 +723,9 @@ description: Ubuntu 22.04 LTS Server Cloud Image
 - 阶段 3（Network）：1 周
 - 阶段 4（VM）：2 周
 - 阶段 5（集成与优化）：1 周
+- 阶段 6（用户体验与高级功能）：2 周
 
-总计：8 周
+总计：10 周
 
 ## 风险与挑战
 
