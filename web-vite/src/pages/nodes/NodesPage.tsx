@@ -5,7 +5,7 @@ import Table from "@/components/Table";
 import StatusBadge from "@/components/StatusBadge";
 import { useToast } from "@/components/ToastContainer";
 import { apiPost } from "@/lib/api";
-import { RefreshCw, Server, Info, Plus, Trash2 } from "lucide-react";
+import { RefreshCw, Server, Info, Plus, Trash2, AlertCircle } from "lucide-react";
 
 interface Node {
   name: string;
@@ -286,6 +286,22 @@ export default function NodesPage() {
                   <p className="text-xs text-gray-500 mt-1">
                     Connection URI for libvirt
                   </p>
+                  {createForm.type === "remote" && (
+                    <div className="mt-2 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+                      <div className="flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 text-yellow-600 mt-0.5 flex-shrink-0" />
+                        <div className="text-xs text-yellow-800">
+                          <p className="font-semibold mb-1">SSH Keyless Login Required</p>
+                          <p className="mb-1">Before connecting to a remote node via SSH, ensure SSH keyless login is configured:</p>
+                          <ol className="list-decimal list-inside space-y-0.5 ml-1">
+                            <li>Generate SSH key pair (if not exists): <code className="bg-yellow-100 px-1 rounded">ssh-keygen -t rsa</code></li>
+                            <li>Copy public key to remote node: <code className="bg-yellow-100 px-1 rounded">ssh-copy-id user@host</code></li>
+                            <li>Test keyless login: <code className="bg-yellow-100 px-1 rounded">ssh user@host</code></li>
+                          </ol>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div>

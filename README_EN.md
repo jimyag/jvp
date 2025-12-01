@@ -40,10 +40,14 @@ JVP is a virtualization platform based on QEMU/KVM and libvirt, providing comple
 
 ### Nodes and Storage
 
-- **Node Management**: Support local/remote libvirt; automatically creates `local (qemu:///system)` node when no configuration exists
-- **Node Summary**: CPU/memory/NUMA/virtualization capabilities overview
-- **Storage Pool Management**: List/create/start/stop/delete storage pools, view storage pool usage
-- **Storage Volume Management**: List volumes, create volumes, view volume details (capacity, allocation, format), delete volumes
+- **Multi-Node Management**: Support managing multiple libvirt nodes (local and remote) simultaneously, building distributed virtualization clusters
+  - **Local Node**: Automatically creates `local (qemu:///system)` node
+  - **Remote Nodes**: Add remote nodes via libvirt URI (e.g., `qemu+ssh://user@host/system`)
+  - **Node Types**: Support compute, storage, hybrid, and other node types
+  - **Node Operations**: Add, delete, enable, disable nodes
+- **Node Summary**: View hardware information for each node (CPU/memory/NUMA/virtualization capabilities, etc.)
+- **Storage Pool Management**: Manage storage pools by node, list/create/start/stop/delete storage pools, view storage pool usage
+- **Storage Volume Management**: List volumes by node and storage pool, create volumes, view volume details (capacity, allocation, format), delete volumes
 
 ### Snapshot Management
 
