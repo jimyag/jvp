@@ -297,65 +297,65 @@ export default function InstanceDetailPage() {
               <StatusBadge status={instance.state} />
             </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             {instance.state === "running" ? (
               <button
                 onClick={() => handleAction("stop")}
-                className="btn-secondary flex items-center gap-2"
+                className="btn-secondary flex items-center gap-2 px-4 py-2 border-2 border-primary hover:bg-primary hover:text-white transition-all"
                 title="Stop"
               >
-                <Square size={16} />
-                Stop
+                <Square size={18} className="text-red-600" />
+                <span>Stop</span>
               </button>
             ) : (
               <button
                 onClick={() => handleAction("start")}
-                className="btn-primary flex items-center gap-2"
+                className="btn-primary flex items-center gap-2 px-4 py-2 border-2 border-accent hover:bg-accent-dark hover:border-accent-dark transition-all"
                 title="Start"
               >
-                <Play size={16} />
-                Start
+                <Play size={18} className="text-white" />
+                <span>Start</span>
               </button>
             )}
             <button
               onClick={() => handleAction("reboot")}
-              className="btn-secondary flex items-center gap-2"
+              className="btn-secondary flex items-center gap-2 px-4 py-2 border-2 border-primary hover:bg-primary hover:text-white transition-all"
               title="Reboot"
             >
-              <RefreshCw size={16} />
-              Reboot
+              <RefreshCw size={18} className="text-blue-600" />
+              <span>Reboot</span>
             </button>
             <button
               onClick={handleEditClick}
-              className="btn-secondary flex items-center gap-2"
+              className="btn-secondary flex items-center gap-2 px-4 py-2 border-2 border-primary hover:bg-primary hover:text-white transition-all"
               title="Edit Instance"
             >
-              <Edit size={16} />
-              Edit
+              <Edit size={18} className="text-purple-600" />
+              <span>Edit</span>
             </button>
             <button
               onClick={() => navigate(`/instances/${nodeName}/${instanceId}/console`)}
-              className="btn-secondary flex items-center gap-2"
+              className="btn-secondary flex items-center gap-2 px-4 py-2 border-2 border-primary hover:bg-primary hover:text-white transition-all"
               title="Console"
             >
-              <Monitor size={16} />
-              Console
+              <Monitor size={18} className="text-accent" />
+              <span>Console</span>
             </button>
             <button
               onClick={() => setIsResetPasswordModalOpen(true)}
-              className="btn-secondary flex items-center gap-2"
+              className="btn-secondary flex items-center gap-2 px-4 py-2 border-2 border-primary hover:bg-primary hover:text-white transition-all"
               title="Reset Password"
             >
-              <Key size={16} />
-              Reset Password
+              <Key size={18} className="text-yellow-600" />
+              <span>Reset Password</span>
             </button>
             <button
               onClick={handleDeleteClick}
-              className="btn-danger flex items-center gap-2"
+              className="btn-danger flex items-center gap-2 px-4 py-2 border-2 border-coral hover:bg-red-600 hover:border-red-600 transition-all"
               title="Delete"
             >
-              <Trash2 size={16} />
-              Delete
+              <Trash2 size={18} className="text-white" />
+              <span>Delete</span>
             </button>
           </div>
         </div>
@@ -380,9 +380,10 @@ export default function InstanceDetailPage() {
 
       {/* Instance Details - Integrated Card */}
       <div className="bg-white rounded-lg p-6 shadow-sm">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-6">
-          {/* Basic Information - Multi-column layout */}
-          <div className="md:col-span-2 lg:col-span-1 space-y-3">
+        {/* First Row: Basic Information and Resources */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+          {/* Basic Information */}
+          <div className="space-y-3">
             <div className="flex items-center gap-2 mb-4 pb-3 border-b border-gray-200">
               <div className="p-1.5 bg-blue-50 rounded-lg">
                 <Info className="w-4 h-4 text-blue-600" />
@@ -460,6 +461,63 @@ export default function InstanceDetailPage() {
               )}
             </dl>
           </div>
+        </div>
+
+        {/* Second Row: Network Interfaces and Configuration */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Network Interfaces */}
+          {instance.interfaces && instance.interfaces.length > 0 ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 mb-4 pb-3 border-b border-gray-200">
+                <div className="p-1.5 bg-accent/10 rounded-lg">
+                  <Network className="w-4 h-4 text-accent" />
+                </div>
+                <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Network Interfaces</h3>
+              </div>
+              <div className="space-y-4">
+                {instance.interfaces.map((iface) => (
+                  <div key={`${iface.name}-${iface.mac}`} className="space-y-2.5">
+                    <div>
+                      <dt className="text-xs font-medium text-gray-500">Interface Name</dt>
+                      <dd className="mt-0.5 text-sm text-gray-900 font-mono font-semibold">{iface.name}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs font-medium text-gray-500">MAC Address</dt>
+                      <dd className="mt-0.5 text-sm text-gray-900 font-mono">{iface.mac}</dd>
+                    </div>
+                    {iface.ips && iface.ips.length > 0 && (
+                      <div>
+                        <dt className="text-xs font-medium text-gray-500">IP Address</dt>
+                        <dd className="mt-0.5 text-sm text-gray-900 font-mono">
+                          {iface.ips.map((ip, idx) => (
+                            <span key={ip} className={idx > 0 ? "block mt-0.5" : ""}>{ip}</span>
+                          ))}
+                        </dd>
+                      </div>
+                    )}
+                    <div>
+                      <dt className="text-xs font-medium text-gray-500">Network Mode</dt>
+                      <dd className="mt-0.5 text-sm text-gray-900 capitalize">{iface.type}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs font-medium text-gray-500">Network Source</dt>
+                      <dd className="mt-0.5 text-sm text-gray-900 font-mono">{iface.source}</dd>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 mb-4 pb-3 border-b border-gray-200">
+                <div className="p-1.5 bg-accent/10 rounded-lg">
+                  <Network className="w-4 h-4 text-accent" />
+                </div>
+                <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Network Interfaces</h3>
+              </div>
+              <p className="text-sm text-gray-500">No network interfaces</p>
+            </div>
+          )}
 
           {/* Configuration */}
           <div className="space-y-3">
@@ -491,50 +549,6 @@ export default function InstanceDetailPage() {
             </dl>
           </div>
         </div>
-
-        {/* Network Interfaces - Dedicated Section */}
-        {instance.interfaces && instance.interfaces.length > 0 && (
-          <div className="mt-6 pt-6 border-t border-gray-200">
-            <div className="flex items-center gap-2 mb-4 pb-3 border-b border-gray-200">
-              <div className="p-1.5 bg-accent/10 rounded-lg">
-                <Network className="w-4 h-4 text-accent" />
-              </div>
-              <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Network Interfaces</h3>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {instance.interfaces.map((iface) => (
-                <div key={`${iface.name}-${iface.mac}`} className="space-y-2.5">
-                  <div>
-                    <dt className="text-xs font-medium text-gray-500">Interface Name</dt>
-                    <dd className="mt-0.5 text-sm text-gray-900 font-mono font-semibold">{iface.name}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs font-medium text-gray-500">MAC Address</dt>
-                    <dd className="mt-0.5 text-sm text-gray-900 font-mono">{iface.mac}</dd>
-                  </div>
-                  {iface.ips && iface.ips.length > 0 && (
-                    <div>
-                      <dt className="text-xs font-medium text-gray-500">IP Address</dt>
-                      <dd className="mt-0.5 text-sm text-gray-900 font-mono">
-                        {iface.ips.map((ip, idx) => (
-                          <span key={ip} className={idx > 0 ? "block mt-0.5" : ""}>{ip}</span>
-                        ))}
-                      </dd>
-                    </div>
-                  )}
-                  <div>
-                    <dt className="text-xs font-medium text-gray-500">Network Mode</dt>
-                    <dd className="mt-0.5 text-sm text-gray-900 capitalize">{iface.type}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs font-medium text-gray-500">Network Source</dt>
-                    <dd className="mt-0.5 text-sm text-gray-900 font-mono">{iface.source}</dd>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
 
       {/* SSH Connection Info */}

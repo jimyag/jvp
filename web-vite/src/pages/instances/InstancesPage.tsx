@@ -417,11 +417,15 @@ export default function InstancesPage() {
     {
       key: "id",
       label: "ID",
-      render: (value: unknown, row: any) => (
-        <Link to={`/instances/${row.node_name}/${value}`} className="text-accent hover:underline font-mono text-xs">
-          {String(value).substring(0, 12)}...
-        </Link>
-      ),
+      render: (value: unknown, row: any) => {
+        const idStr = String(value);
+        const displayId = idStr.length > 12 ? `${idStr.substring(0, 12)}...` : idStr;
+        return (
+          <Link to={`/instances/${row.node_name}/${value}`} className="text-accent hover:underline font-mono text-xs">
+            {displayId}
+          </Link>
+        );
+      },
     },
     {
       key: "name",
@@ -479,7 +483,11 @@ export default function InstancesPage() {
     {
       key: "template_id",
       label: "Template",
-      render: (value: unknown) => <span>{value ? String(value).substring(0, 12) + "..." : "N/A"}</span>
+      render: (value: unknown) => {
+        if (!value) return <span>N/A</span>;
+        const valueStr = String(value);
+        return <span>{valueStr.length > 12 ? `${valueStr.substring(0, 12)}...` : valueStr}</span>;
+      }
     },
     {
       key: "snapshots",
