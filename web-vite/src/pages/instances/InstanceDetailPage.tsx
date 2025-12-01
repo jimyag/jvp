@@ -5,7 +5,7 @@ import StatusBadge from "@/components/StatusBadge";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import Table from "@/components/Table";
 import { useToast } from "@/components/ToastContainer";
-import { Play, Square, RefreshCw, Trash2, ArrowLeft, Key, Edit, Monitor } from "lucide-react";
+import { Play, Square, RefreshCw, Trash2, ArrowLeft, Key, Edit, Monitor, Info, Cpu, HardDrive, Settings, Network } from "lucide-react";
 import Modal from "@/components/Modal";
 
 interface Instance {
@@ -286,11 +286,16 @@ export default function InstanceDetailPage() {
       />
 
       {/* Status and Actions */}
-      <div className="card mb-6">
+      <div className="bg-white border-l-4 border-accent rounded-lg p-6 mb-6 shadow-sm">
         <div className="flex items-center justify-between mb-4">
-          <div>
-            <h2 className="text-xl font-bold text-primary mb-2">Status</h2>
-            <StatusBadge status={instance.state} />
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-accent/10 rounded-lg">
+              <Monitor className="w-5 h-5 text-accent" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-primary mb-2">Status</h2>
+              <StatusBadge status={instance.state} />
+            </div>
           </div>
           <div className="flex gap-2">
             {instance.state === "running" ? (
@@ -356,9 +361,14 @@ export default function InstanceDetailPage() {
         </div>
       </div>
 
-      <div className="card">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-lg font-semibold text-gray-900">Disks</h2>
+      <div className="bg-white border-l-4 border-blue-500 rounded-lg p-6 shadow-sm mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-blue-50 rounded-lg">
+              <HardDrive className="w-5 h-5 text-blue-600" />
+            </div>
+            <h2 className="text-lg font-semibold text-gray-900">Disks</h2>
+          </div>
         </div>
         <Table
           columns={disksColumns}
@@ -368,159 +378,174 @@ export default function InstanceDetailPage() {
         />
       </div>
 
-      {/* Details */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Basic Information */}
-        <div className="card">
-          <h2 className="text-xl font-bold text-primary mb-4">Basic Information</h2>
-          <dl className="space-y-3">
-            <div>
-              <dt className="text-sm font-medium text-gray-500">Instance ID</dt>
-              <dd className="mt-1 text-sm text-gray-900 font-mono">{instance.id}</dd>
-            </div>
-            <div>
-              <dt className="text-sm font-medium text-gray-500">Name</dt>
-              <dd className="mt-1 text-sm text-gray-900">{instance.name}</dd>
-            </div>
-            <div>
-              <dt className="text-sm font-medium text-gray-500">Node</dt>
-              <dd className="mt-1 text-sm text-gray-900">{instance.node_name || nodeName}</dd>
-            </div>
-            <div>
-              <dt className="text-sm font-medium text-gray-500">Status</dt>
-              <dd className="mt-1">
-                <StatusBadge status={instance.state} />
-              </dd>
-            </div>
-            <div>
-              <dt className="text-sm font-medium text-gray-500">Auto Start</dt>
-              <dd className="mt-1 text-sm text-gray-900">
-                {instance.autostart ? "Enabled" : "Disabled"}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-sm font-medium text-gray-500">IP Address</dt>
-              <dd className="mt-1 text-sm text-gray-900 font-mono">
-                {(() => {
-                  const ips = [
-                    instance.ip_address,
-                    ...(instance.interfaces?.flatMap((i) => i.ips || []) || []),
-                  ].filter(Boolean);
-                  if (ips.length === 0) {
-                    return "N/A";
-                  }
-                  return (
-                    <div className="flex flex-col gap-1">
-                      {ips.map((ip) => (
-                        <span key={ip}>{ip}</span>
-                      ))}
-                    </div>
-                  );
-                })()}
-              </dd>
-            </div>
-          </dl>
-        </div>
-
-        {/* Resources */}
-        <div className="card">
-          <h2 className="text-xl font-bold text-primary mb-4">Resources</h2>
-          <dl className="space-y-3">
-            <div>
-              <dt className="text-sm font-medium text-gray-500">vCPUs</dt>
-              <dd className="mt-1 text-sm text-gray-900">{instance.vcpus} cores</dd>
-            </div>
-            <div>
-              <dt className="text-sm font-medium text-gray-500">Memory</dt>
-              <dd className="mt-1 text-sm text-gray-900">
-                {(instance.memory_mb / 1024).toFixed(2)} GB
-              </dd>
-            </div>
-            {instance.volume_id && (
-              <div>
-                <dt className="text-sm font-medium text-gray-500">Volume ID</dt>
-                <dd className="mt-1 text-sm text-gray-900 font-mono">{instance.volume_id}</dd>
+      {/* Instance Details - Integrated Card */}
+      <div className="bg-white rounded-lg p-6 shadow-sm">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-6">
+          {/* Basic Information - Multi-column layout */}
+          <div className="md:col-span-2 lg:col-span-1 space-y-3">
+            <div className="flex items-center gap-2 mb-4 pb-3 border-b border-gray-200">
+              <div className="p-1.5 bg-blue-50 rounded-lg">
+                <Info className="w-4 h-4 text-blue-600" />
               </div>
-            )}
-          </dl>
+              <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Basic Information</h3>
+            </div>
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-2.5">
+              <div>
+                <dt className="text-xs font-medium text-gray-500">Instance ID</dt>
+                <dd className="mt-0.5 text-sm text-gray-900 font-mono break-all">{instance.id}</dd>
+              </div>
+              <div>
+                <dt className="text-xs font-medium text-gray-500">Name</dt>
+                <dd className="mt-0.5 text-sm text-gray-900">{instance.name}</dd>
+              </div>
+              <div>
+                <dt className="text-xs font-medium text-gray-500">Node</dt>
+                <dd className="mt-0.5 text-sm text-gray-900">{instance.node_name || nodeName}</dd>
+              </div>
+              <div>
+                <dt className="text-xs font-medium text-gray-500">Status</dt>
+                <dd className="mt-0.5">
+                  <StatusBadge status={instance.state} />
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs font-medium text-gray-500">Auto Start</dt>
+                <dd className="mt-0.5 text-sm text-gray-900">
+                  {instance.autostart ? "Enabled" : "Disabled"}
+                </dd>
+              </div>
+              {instance.started_at && (
+                <div>
+                  <dt className="text-xs font-medium text-gray-500">Started At</dt>
+                  <dd className="mt-0.5 text-sm text-gray-900">
+                    {new Date(instance.started_at).toLocaleString()}
+                  </dd>
+                </div>
+              )}
+              {instance.updated_at && (
+                <div>
+                  <dt className="text-xs font-medium text-gray-500">Updated At</dt>
+                  <dd className="mt-0.5 text-sm text-gray-900">
+                    {new Date(instance.updated_at).toLocaleString()}
+                  </dd>
+                </div>
+              )}
+            </dl>
+          </div>
+
+          {/* Resources */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 mb-4 pb-3 border-b border-gray-200">
+              <div className="p-1.5 bg-green-50 rounded-lg">
+                <Cpu className="w-4 h-4 text-green-600" />
+              </div>
+              <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Resources</h3>
+            </div>
+            <dl className="space-y-2.5">
+              <div>
+                <dt className="text-xs font-medium text-gray-500">vCPUs</dt>
+                <dd className="mt-0.5 text-sm text-gray-900">{instance.vcpus} cores</dd>
+              </div>
+              <div>
+                <dt className="text-xs font-medium text-gray-500">Memory</dt>
+                <dd className="mt-0.5 text-sm text-gray-900">
+                  {(instance.memory_mb / 1024).toFixed(2)} GB
+                </dd>
+              </div>
+              {instance.volume_id && (
+                <div>
+                  <dt className="text-xs font-medium text-gray-500">Volume ID</dt>
+                  <dd className="mt-0.5 text-sm text-gray-900 font-mono break-all">{instance.volume_id}</dd>
+                </div>
+              )}
+            </dl>
+          </div>
+
+          {/* Configuration */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 mb-4 pb-3 border-b border-gray-200">
+              <div className="p-1.5 bg-purple-50 rounded-lg">
+                <Settings className="w-4 h-4 text-purple-600" />
+              </div>
+              <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Configuration</h3>
+            </div>
+            <dl className="space-y-2.5">
+              <div>
+                <dt className="text-xs font-medium text-gray-500">Template ID</dt>
+                <dd className="mt-0.5 text-sm text-gray-900 font-mono break-all">
+                  {instance.template_id || "N/A"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs font-medium text-gray-500">Domain UUID</dt>
+                <dd className="mt-0.5 text-sm text-gray-900 font-mono break-all">
+                  {instance.domain_uuid || "N/A"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs font-medium text-gray-500">Key Pair</dt>
+                <dd className="mt-0.5 text-sm text-gray-900">
+                  {instance.keypair_name || "None"}
+                </dd>
+              </div>
+            </dl>
+          </div>
         </div>
 
-        {/* Configuration */}
-        <div className="card">
-          <h2 className="text-xl font-bold text-primary mb-4">Configuration</h2>
-          <dl className="space-y-3">
-            <div>
-              <dt className="text-sm font-medium text-gray-500">Template ID</dt>
-              <dd className="mt-1 text-sm text-gray-900 font-mono">
-                {instance.template_id || "N/A"}
-              </dd>
+        {/* Network Interfaces - Dedicated Section */}
+        {instance.interfaces && instance.interfaces.length > 0 && (
+          <div className="mt-6 pt-6 border-t border-gray-200">
+            <div className="flex items-center gap-2 mb-4 pb-3 border-b border-gray-200">
+              <div className="p-1.5 bg-accent/10 rounded-lg">
+                <Network className="w-4 h-4 text-accent" />
+              </div>
+              <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Network Interfaces</h3>
             </div>
-            <div>
-              <dt className="text-sm font-medium text-gray-500">Domain UUID</dt>
-              <dd className="mt-1 text-sm text-gray-900 font-mono">
-                {instance.domain_uuid || "N/A"}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-sm font-medium text-gray-500">Key Pair</dt>
-              <dd className="mt-1 text-sm text-gray-900">
-                {instance.keypair_name || "None"}
-              </dd>
-            </div>
-            {instance.interfaces && instance.interfaces.length > 0 && (
-              <div>
-                <dt className="text-sm font-medium text-gray-500">Network Interfaces</dt>
-                <dd className="mt-2 text-sm text-gray-900">
-                  <div className="space-y-2">
-                    {instance.interfaces.map((iface) => (
-                      <div key={`${iface.name}-${iface.mac}`} className="border rounded p-3 bg-gray-50">
-                        <div className="flex justify-between text-sm">
-                          <span className="font-mono">{iface.name}</span>
-                          <span className="font-mono text-gray-600">{iface.mac}</span>
-                        </div>
-                        <div className="text-xs text-gray-600 mt-1">
-                          {iface.type} → {iface.source}
-                        </div>
-                        {iface.ips && iface.ips.length > 0 && (
-                          <div className="text-xs text-gray-700 mt-1">
-                            IPs: {iface.ips.join(", ")}
-                          </div>
-                        )}
-                      </div>
-                    ))}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {instance.interfaces.map((iface) => (
+                <div key={`${iface.name}-${iface.mac}`} className="space-y-2.5">
+                  <div>
+                    <dt className="text-xs font-medium text-gray-500">Interface Name</dt>
+                    <dd className="mt-0.5 text-sm text-gray-900 font-mono font-semibold">{iface.name}</dd>
                   </div>
-                </dd>
-              </div>
-            )}
-          </dl>
-        </div>
-
-        {/* Timestamps */}
-        <div className="card">
-          <h2 className="text-xl font-bold text-primary mb-4">Timestamps</h2>
-          <dl className="space-y-3">
-            <div>
-              <dt className="text-sm font-medium text-gray-500">Started At</dt>
-              <dd className="mt-1 text-sm text-gray-900">
-                {instance.started_at ? new Date(instance.started_at).toLocaleString() : "N/A"}
-              </dd>
+                  <div>
+                    <dt className="text-xs font-medium text-gray-500">MAC Address</dt>
+                    <dd className="mt-0.5 text-sm text-gray-900 font-mono">{iface.mac}</dd>
+                  </div>
+                  {iface.ips && iface.ips.length > 0 && (
+                    <div>
+                      <dt className="text-xs font-medium text-gray-500">IP Address</dt>
+                      <dd className="mt-0.5 text-sm text-gray-900 font-mono">
+                        {iface.ips.map((ip, idx) => (
+                          <span key={ip} className={idx > 0 ? "block mt-0.5" : ""}>{ip}</span>
+                        ))}
+                      </dd>
+                    </div>
+                  )}
+                  <div>
+                    <dt className="text-xs font-medium text-gray-500">Network Mode</dt>
+                    <dd className="mt-0.5 text-sm text-gray-900 capitalize">{iface.type}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-medium text-gray-500">Network Source</dt>
+                    <dd className="mt-0.5 text-sm text-gray-900 font-mono">{iface.source}</dd>
+                  </div>
+                </div>
+              ))}
             </div>
-            {instance.updated_at && (
-              <div>
-                <dt className="text-sm font-medium text-gray-500">Updated At</dt>
-                <dd className="mt-1 text-sm text-gray-900">
-                  {new Date(instance.updated_at).toLocaleString()}
-                </dd>
-              </div>
-            )}
-          </dl>
-        </div>
+          </div>
+        )}
       </div>
 
       {/* SSH Connection Info */}
       {instance.ip_address && instance.state === "running" && (
-        <div className="card mt-6">
-          <h2 className="text-xl font-bold text-primary mb-4">Connection</h2>
+        <div className="bg-white border-l-4 border-accent rounded-lg p-6 shadow-sm mt-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 bg-accent/10 rounded-lg">
+              <Network className="w-5 h-5 text-accent" />
+            </div>
+            <h2 className="text-xl font-bold text-primary">Connection</h2>
+          </div>
           <div className="bg-gray-50 p-4 rounded border border-gray-200">
             <p className="text-sm text-gray-600 mb-2">SSH Command:</p>
             <code className="text-sm bg-gray-900 text-green-400 p-3 rounded block font-mono">
