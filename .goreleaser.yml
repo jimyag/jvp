@@ -46,9 +46,9 @@ release:
   # 自动生成 release notes
   mode: replace
   header: |
-    ## {{ .TagName }}
+    ## {{ .Tag }}
 
-    {{ if .ReleaseNotes }}{{ .ReleaseNotes }}{{ else }}Release {{ .TagName }}{{ end }}
+    {{ if .ReleaseNotes }}{{ .ReleaseNotes }}{{ else }}Release {{ .Tag }}{{ end }}
   footer: |
     ---
 
