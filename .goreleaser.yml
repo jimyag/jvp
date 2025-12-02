@@ -8,9 +8,9 @@ project_name: jvp
 # 构建前钩子：构建前端并复制到 static 目录
 before:
   hooks:
-    - cd web-vite && npm install && npm run build
-    - rm -rf ./internal/jvp/api/static && mkdir -p ./internal/jvp/api/static
-    - cp -r ./web-vite/dist/* ./internal/jvp/api/static/
+    - sh -c "cd web-vite && npm install && npm run build"
+    - sh -c "rm -rf ./internal/jvp/api/static && mkdir -p ./internal/jvp/api/static"
+    - sh -c "cp -r ./web-vite/dist/* ./internal/jvp/api/static/"
 
 # 构建配置
 builds:
