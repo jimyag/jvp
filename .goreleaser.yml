@@ -55,38 +55,20 @@ release:
     **Full Changelog**: https://github.com/jimyag/jvp/compare/{{ .PreviousTag }}...{{ .Tag }}
 
 # Docker 镜像配置（使用 dockers_v2）
-# 每个架构单独构建，使用临时标签（包含架构信息）
-# 然后通过 manifest 合并成多架构镜像
+# 简化配置：GoReleaser 会自动构建多架构镜像并创建 manifest
 dockers_v2:
-  - id: amd64
-    platforms:
+  - platforms:
       - linux/amd64
-    images:
-      - "ghcr.io/jimyag/jvp:{{ .Tag }}-amd64"
-    dockerfile: Dockerfile
-    labels:
-      org.opencontainers.image.created: "{{.Date}}"
-      org.opencontainers.image.title: "{{.ProjectName}}"
-      org.opencontainers.image.revision: "{{.FullCommit}}"
-      org.opencontainers.image.version: "{{.Tag}}"
-
-  - id: arm64
-    platforms:
       - linux/arm64
     images:
-      - "ghcr.io/jimyag/jvp:{{ .Tag }}-arm64"
+      - "ghcr.io/jimyag/jvp"
+    tags:
+      - "{{ .Tag }}"
+      - "latest"
     dockerfile: Dockerfile
+    sbom: none # 禁用 SBOM，避免 docker driver 不支持 attestation 的问题
     labels:
       org.opencontainers.image.created: "{{.Date}}"
       org.opencontainers.image.title: "{{.ProjectName}}"
       org.opencontainers.image.revision: "{{.FullCommit}}"
       org.opencontainers.image.version: "{{.Tag}}"
-
-  # 多架构 manifest
-  - id: manifest
-    ids:
-      - amd64
-      - arm64
-    images:
-      - "ghcr.io/jimyag/jvp:{{ .Tag }}"
-      - "ghcr.io/jimyag/jvp:latest"

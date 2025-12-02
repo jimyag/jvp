@@ -18,8 +18,9 @@ RUN addgroup -g 1000 jvp && \
 WORKDIR /app
 
 # 从构建上下文复制二进制文件
-# GoReleaser 会自动将构建好的二进制文件复制到这里
-COPY jvp /app/jvp
+# GoReleaser 会自动将构建好的二进制文件复制到 $TARGETPLATFORM/ 目录
+ARG TARGETPLATFORM
+COPY ${TARGETPLATFORM}/jvp /app/jvp
 
 # 设置权限
 RUN chmod +x /app/jvp && \
