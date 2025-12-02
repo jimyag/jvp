@@ -1,0 +1,42 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*" # 匹配所有以 v 开头的 tag，如 v1.0.0
+
+permissions:
+  contents: write # 用于创建 Release 和上传文件
+  packages: write # 用于推送 Docker 镜像到 GitHub Container Registry
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 需要完整历史记录用于生成 changelog
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: latest
+          cache-dependency-path: go.sum
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22" # 使用 Node.js 22 LTS（vite 要求 ^20.19.0 || >=22.12.0）
+          cache: "npm"
+          cache-dependency-path: web-vite/package-lock.json
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v5
+        with:
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

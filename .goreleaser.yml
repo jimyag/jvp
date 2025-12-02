@@ -1,0 +1,92 @@
+# GoReleaser 配置文件
+# 用于自动构建多平台二进制并发布到 GitHub Release
+
+version: 2
+
+project_name: jvp
+
+# 构建前钩子：构建前端并复制到 static 目录
+before:
+  hooks:
+    - cd web-vite && npm install && npm run build
+    - rm -rf ./internal/jvp/api/static && mkdir -p ./internal/jvp/api/static
+    - cp -r ./web-vite/dist/* ./internal/jvp/api/static/
+
+# 构建配置
+builds:
+  - id: jvp
+    main: ./cmd/jvp/main.go
+    binary: jvp
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X 'github.com/jimmicro/version.GitTag={{.Tag}}'
+      - -X 'github.com/jimmicro/version.BuildTime={{.Date}}'
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+# 归档配置
+archives:
+  - id: default
+    formats:
+      - tar.gz
+      - zip
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
+
+# GitHub Release 配置
+release:
+  github:
+    owner: jimyag
+    name: jvp
+  # 自动生成 release notes
+  mode: replace
+  header: |
+    ## {{ .TagName }}
+
+    {{ if .ReleaseNotes }}{{ .ReleaseNotes }}{{ else }}Release {{ .TagName }}{{ end }}
+  footer: |
+    ---
+
+    **Full Changelog**: https://github.com/jimyag/jvp/compare/{{ .PreviousTag }}...{{ .Tag }}
+
+# Docker 镜像配置（使用 dockers_v2）
+# 每个架构单独构建，使用临时标签（包含架构信息）
+# 然后通过 manifest 合并成多架构镜像
+dockers_v2:
+  - id: amd64
+    platforms:
+      - linux/amd64
+    images:
+      - "ghcr.io/jimyag/jvp:{{ .Tag }}-amd64"
+    dockerfile: Dockerfile
+    labels:
+      org.opencontainers.image.created: "{{.Date}}"
+      org.opencontainers.image.title: "{{.ProjectName}}"
+      org.opencontainers.image.revision: "{{.FullCommit}}"
+      org.opencontainers.image.version: "{{.Tag}}"
+
+  - id: arm64
+    platforms:
+      - linux/arm64
+    images:
+      - "ghcr.io/jimyag/jvp:{{ .Tag }}-arm64"
+    dockerfile: Dockerfile
+    labels:
+      org.opencontainers.image.created: "{{.Date}}"
+      org.opencontainers.image.title: "{{.ProjectName}}"
+      org.opencontainers.image.revision: "{{.FullCommit}}"
+      org.opencontainers.image.version: "{{.Tag}}"
+
+  # 多架构 manifest
+  - id: manifest
+    ids:
+      - amd64
+      - arm64
+    images:
+      - "ghcr.io/jimyag/jvp:{{ .Tag }}"
+      - "ghcr.io/jimyag/jvp:latest"
