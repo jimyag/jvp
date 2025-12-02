@@ -16,25 +16,28 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0 # 需要完整历史记录用于生成 changelog
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
-          go-version: latest
+          go-version: stable # Latest stable version
           cache-dependency-path: go.sum
 
+      - name: Check Go version
+        run: go version
+
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22" # 使用 Node.js 22 LTS（vite 要求 ^20.19.0 || >=22.12.0）
           cache: "npm"
           cache-dependency-path: web-vite/package-lock.json
 
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v5
+        uses: goreleaser/goreleaser-action@v6
         with:
           version: latest
           args: release --clean
