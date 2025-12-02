@@ -37,6 +37,10 @@ archives:
       - tar.gz
       - zip
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
+    # 使用 none* 来避免匹配任何文件，从而只包含二进制文件
+    # 如果不设置 files，goreleaser 默认会包含 LICENSE*、README*、CHANGELOG 等文件
+    files:
+      - none*
 
 # GitHub Release 配置
 release:
