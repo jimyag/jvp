@@ -1,0 +1,84 @@
+# docker-compose.yml - JVP with libvirtd
+# 在容器内运行完整的虚拟化环境
+
+services:
+  jvp:
+    build:
+      context: .
+      dockerfile: Dockerfile.libvirt
+    image: jvp:libvirt
+    container_name: jvp
+    hostname: jvp
+
+    # 特权模式或精细化权限
+    # 方式一：privileged 模式（简单但权限较大）
+    privileged: true
+
+    # 方式二：精细化权限（更安全，但可能需要调整）
+    # cap_add:
+    #   - NET_ADMIN      # 网络管理
+    #   - SYS_ADMIN      # libvirtd 需要
+    #   - MKNOD          # 创建设备节点
+    #   - SYS_PTRACE     # 调试支持
+    #   - DAC_OVERRIDE   # 文件权限
+    #   - SETPCAP        # 能力管理
+    #   - NET_RAW        # 原始套接字
+    # security_opt:
+    #   - apparmor:unconfined
+    #   - seccomp:unconfined
+
+    # 设备挂载
+    devices:
+      - /dev/kvm:/dev/kvm # KVM 加速（必需）
+      - /dev/net/tun:/dev/net/tun # TAP 网络
+      # - /dev/vhost-net:/dev/vhost-net   # 高性能网络（可选）
+
+    # 端口映射
+    ports:
+      - "7777:7777" # JVP Web/API
+      # - "5900-5910:5900-5910"  # VNC 端口范围（如需直接访问 VM VNC）
+
+    # 存储卷
+    volumes:
+      # libvirt 数据持久化
+      - libvirt-data:/var/lib/libvirt
+      # JVP 数据持久化
+      - jvp-data:/app/data
+      # 可选：挂载本地 ISO 或镜像目录
+      # - ./images:/var/lib/libvirt/images
+
+    # 环境变量
+    environment:
+      - TZ=Asia/Shanghai
+      - JVP_ADDRESS=0.0.0.0:7777
+      - JVP_DATA_DIR=/app/data
+      - LIBVIRT_URI=qemu:///system
+
+    # cgroup 支持（某些环境可能需要）
+    cgroup: host
+    # 或者挂载 cgroup
+    # volumes:
+    #   - /sys/fs/cgroup:/sys/fs/cgroup:rw
+
+    # 网络模式
+    # 默认使用 bridge 网络
+    # 如果需要 VM 直接获取外部 IP，可以使用 host 网络
+    # network_mode: host
+
+    # 重启策略
+    restart: unless-stopped
+
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7777/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+# 命名卷
+volumes:
+  libvirt-data:
+    driver: local
+  jvp-data:
+    driver: local
