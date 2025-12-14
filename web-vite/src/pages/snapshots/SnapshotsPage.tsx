@@ -85,11 +85,13 @@ export default function SnapshotsPage() {
 
   const initializeData = async (urlNode: string, urlVM: string) => {
     try {
+      // 获取节点列表
       const nodesRes = await fetch("/api/list-nodes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
       });
+
       if (!nodesRes.ok) {
         toast.error("Failed to load nodes");
         return;
@@ -102,10 +104,12 @@ export default function SnapshotsPage() {
         return;
       }
 
+      // 选择节点
       const nodeExists = urlNode && nodeList.some((n: Node) => n.name === urlNode);
       const targetNode = nodeExists ? urlNode : nodeList[0].name;
       setSelectedNode(targetNode);
 
+      // 获取该节点的实例
       const instancesRes = await fetch("/api/instances/describe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -126,6 +130,7 @@ export default function SnapshotsPage() {
 
       let targetVM: string;
       if (urlVM) {
+        // URL 指定了 VM
         const matchedInstance = instanceList.find((i) => i.id === urlVM || i.name === urlVM);
         if (matchedInstance) {
           targetVM = matchedInstance.id;
@@ -138,7 +143,32 @@ export default function SnapshotsPage() {
           return;
         }
       } else {
-        targetVM = instanceList[0].id;
+        // 智能选择有快照的 VM：并行检查所有 VM 的快照
+        const snapshotChecks = await Promise.all(
+          instanceList.map(async (instance) => {
+            try {
+              const res = await fetch("/api/list-snapshots", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ node_name: targetNode, vm_name: instance.id }),
+              });
+              if (res.ok) {
+                const data = await res.json();
+                return {
+                  vmId: instance.id,
+                  snapshotCount: (data.snapshots || []).length,
+                };
+              }
+              return { vmId: instance.id, snapshotCount: 0 };
+            } catch {
+              return { vmId: instance.id, snapshotCount: 0 };
+            }
+          })
+        );
+
+        // 优先选择有快照的 VM，否则选第一个
+        const vmWithSnapshots = snapshotChecks.find((c) => c.snapshotCount > 0);
+        targetVM = vmWithSnapshots?.vmId || instanceList[0].id;
       }
 
       setSelectedVM(targetVM);
@@ -167,10 +197,36 @@ export default function SnapshotsPage() {
         const list: Instance[] = data.instances || [];
         setInstances(list);
         if (list.length > 0) {
-          const firstVM = list[0].id;
-          setSelectedVM(firstVM);
-          fetchSnapshots(nodeName, firstVM);
-          updateURL(nodeName, firstVM);
+          // 智能选择有快照的 VM：并行检查所有 VM 的快照
+          const snapshotChecks = await Promise.all(
+            list.map(async (instance) => {
+              try {
+                const snapRes = await fetch("/api/list-snapshots", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ node_name: nodeName, vm_name: instance.id }),
+                });
+                if (snapRes.ok) {
+                  const snapData = await snapRes.json();
+                  return {
+                    vmId: instance.id,
+                    snapshotCount: (snapData.snapshots || []).length,
+                  };
+                }
+                return { vmId: instance.id, snapshotCount: 0 };
+              } catch {
+                return { vmId: instance.id, snapshotCount: 0 };
+              }
+            })
+          );
+
+          // 优先选择有快照的 VM，否则选第一个
+          const vmWithSnapshots = snapshotChecks.find((c) => c.snapshotCount > 0);
+          const targetVM = vmWithSnapshots?.vmId || list[0].id;
+
+          setSelectedVM(targetVM);
+          fetchSnapshots(nodeName, targetVM);
+          updateURL(nodeName, targetVM);
         } else {
           updateURL(nodeName, "");
         }

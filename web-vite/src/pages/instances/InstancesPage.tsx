@@ -110,19 +110,47 @@ export default function InstancesPage() {
 
   const fetchNodes = async () => {
     try {
-      const response = await fetch("/api/list-nodes", {
+      const nodesRes = await fetch("/api/list-nodes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
       });
-      if (response.ok) {
-        const data = await response.json();
-        const nodeList = data.nodes || [];
+
+      if (nodesRes.ok) {
+        const nodesData = await nodesRes.json();
+        const nodeList = nodesData.nodes || [];
         setNodes(nodeList);
+
         if (nodeList.length > 0) {
           const exists = nodeList.some((n: Node) => n.name === selectedNode);
           if (!exists) {
-            setSelectedNode(nodeList[0].name);
+            // 智能选择有实例的节点：并行检查各节点的实例数量
+            const instanceChecks = await Promise.all(
+              nodeList.map(async (node: Node) => {
+                try {
+                  const res = await fetch("/api/instances/describe", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ node_name: node.name }),
+                  });
+                  if (res.ok) {
+                    const data = await res.json();
+                    return {
+                      nodeName: node.name,
+                      instanceCount: (data.instances || []).length,
+                    };
+                  }
+                  return { nodeName: node.name, instanceCount: 0 };
+                } catch {
+                  return { nodeName: node.name, instanceCount: 0 };
+                }
+              })
+            );
+
+            // 优先选择有实例的节点，否则选第一个
+            const nodeWithInstances = instanceChecks.find((c) => c.instanceCount > 0);
+            const smartNode = nodeWithInstances?.nodeName || nodeList[0].name;
+            setSelectedNode(smartNode);
           }
         }
       }

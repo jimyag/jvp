@@ -74,9 +74,37 @@ export default function StoragePoolsPage() {
       const response = await apiPost<{ nodes: Node[] }>("/api/list-nodes", {});
       const nodeList = response.nodes || [];
       setNodes(nodeList);
-      // Auto-select first node if available
+
+      // Auto-select node if needed
       if (nodeList.length > 0 && (!selectedNode || !nodeList.some((n) => n.name === selectedNode))) {
-        setSelectedNode(nodeList[0].name);
+        // 尝试智能选择有存储池数据的节点
+        let smartNode = nodeList[0].name;
+
+        // 并行检查各节点的存储池情况
+        const poolChecks = await Promise.all(
+          nodeList.map(async (node) => {
+            try {
+              const poolsRes = await apiPost<ListStoragePoolsResponse>(
+                "/api/list-storage-pools",
+                { node_name: node.name }
+              );
+              return {
+                nodeName: node.name,
+                poolCount: (poolsRes.pools || []).length,
+              };
+            } catch {
+              return { nodeName: node.name, poolCount: 0 };
+            }
+          })
+        );
+
+        // 找出有存储池的节点
+        const nodeWithPools = poolChecks.find((p) => p.poolCount > 0);
+        if (nodeWithPools) {
+          smartNode = nodeWithPools.nodeName;
+        }
+
+        setSelectedNode(smartNode);
       }
     } catch (error: any) {
       console.error("Failed to fetch nodes:", error);

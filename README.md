@@ -81,6 +81,52 @@ JVP 是一个基于 QEMU/KVM 和 libvirt 的虚拟化平台，提供完整的虚
 - **远程控制台**：集成 VNC 和 Serial 控制台，支持图形和文本界面访问
 - **统一管理**：通过 Web 界面管理所有资源（实例、节点、存储、模板、快照、密钥对）
 
+## 环境要求
+
+### 必需工具
+
+| 工具                           | 用途                                       |
+| ------------------------------ | ------------------------------------------ |
+| **libvirt**                    | 虚拟化管理核心（libvirtd 守护进程）        |
+| **virsh**                      | 执行 qemu-agent-command                    |
+| **qemu-img**                   | 磁盘镜像操作（创建、调整大小、转换、快照） |
+| **genisoimage** 或 **mkisofs** | 生成 cloud-init ISO                        |
+| **ssh**                        | 远程节点连接（VNC/串口代理、文件传输）     |
+
+### 可选工具
+
+| 工具               | 用途                                         |
+| ------------------ | -------------------------------------------- |
+| **wget**           | 下载模板镜像（优先使用）                     |
+| **curl**           | 下载模板镜像（wget 不可用时回退）            |
+| **ip**             | 查询 ARP 邻居表获取 VM IP（优先使用）        |
+| **arp**            | 查询 ARP 表获取 VM IP（ip 命令不可用时回退） |
+| **virt-customize** | 重置虚拟机密码（兜底方案）                   |
+| **socat**          | 远程节点 VNC/串口转发（远程节点上需要）      |
+
+### 远程节点额外要求
+
+如果使用远程 libvirt 节点（如 `qemu+ssh://user@host/system`），远程主机需要：
+
+- **ssh** 服务
+- **socat**（VNC/串口控制台）
+- **genisoimage** 或 **mkisofs**（cloud-init ISO 生成）
+- **find**, **cat**, **mkdir**, **rm**（基础 shell 命令）
+
+### 安装命令
+
+**Debian/Ubuntu:**
+
+```bash
+apt install libvirt-daemon-system qemu-utils genisoimage wget curl openssh-client libguestfs-tools socat
+```
+
+**RHEL/CentOS/Fedora:**
+
+```bash
+dnf install libvirt qemu-img genisoimage wget curl openssh-clients libguestfs-tools socat
+```
+
 ## 如何使用
 
 ### 构建项目

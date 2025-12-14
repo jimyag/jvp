@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import Header from "@/components/Header";
 import Table from "@/components/Table";
 import { useToast } from "@/components/ToastContainer";
@@ -61,6 +62,35 @@ interface StoragePoolItem {
   name: string;
 }
 
+// 预设的常用 Cloud Image URL
+const PRESET_CLOUD_IMAGES = [
+  {
+    name: "Ubuntu 24.04 LTS (Noble)",
+    url: "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img",
+    os: { name: "Ubuntu", version: "24.04", arch: "x86_64" },
+  },
+  {
+    name: "Ubuntu 22.04 LTS (Jammy)",
+    url: "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img",
+    os: { name: "Ubuntu", version: "22.04", arch: "x86_64" },
+  },
+  {
+    name: "Debian 12 (Bookworm)",
+    url: "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2",
+    os: { name: "Debian", version: "12", arch: "x86_64" },
+  },
+  {
+    name: "CentOS Stream 9",
+    url: "https://cloud.centos.org/centos/9-stream/x86_64/images/CentOS-Stream-GenericCloud-9-latest.x86_64.qcow2",
+    os: { name: "CentOS Stream", version: "9", arch: "x86_64" },
+  },
+  {
+    name: "Rocky Linux 9",
+    url: "https://download.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud.latest.x86_64.qcow2",
+    os: { name: "Rocky Linux", version: "9", arch: "x86_64" },
+  },
+];
+
 const initialRegisterForm = {
   nodeName: "",
   poolName: "",
@@ -76,10 +106,12 @@ const initialRegisterForm = {
   qga: false,
   sourceType: "existing_volume",
   cloudUrl: "",
+  presetImage: "", // 预设镜像选择
 };
 
 export default function TemplatesPage() {
   const toast = useToast();
+  const [searchParams] = useSearchParams();
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({ nodeName: "", poolName: "" });
@@ -98,6 +130,22 @@ export default function TemplatesPage() {
   const [downloadTask, setDownloadTask] = useState<DownloadTask | null>(null);
   const [downloadTasks, setDownloadTasks] = useState<DownloadTask[]>([]);
 
+  // 用于防止重复初始化
+  const initDoneRef = useRef(false);
+
+  // 从 URL 获取参数
+  const urlNode = searchParams.get("node") || "";
+  const urlPool = searchParams.get("pool") || "";
+
+  // 更新 URL（不触发页面刷新）
+  const updateURL = useCallback((node: string, pool: string) => {
+    const params = new URLSearchParams();
+    if (node) params.set("node", node);
+    if (pool) params.set("pool", pool);
+    const newURL = params.toString() ? `/templates?${params.toString()}` : "/templates";
+    window.history.replaceState(null, "", newURL);
+  }, []);
+
   const fetchTemplates = useCallback(async () => {
     setLoading(true);
     try {
@@ -114,62 +162,188 @@ export default function TemplatesPage() {
     }
   }, [filters, toast]);
 
-  const fetchNodes = useCallback(async () => {
+  const initializeData = useCallback(async () => {
+    if (initDoneRef.current) return;
+    initDoneRef.current = true;
+
     setLoadingNodes(true);
     try {
-      const response = await apiPost<{ nodes: NodeItem[] }>("/api/list-nodes", {});
-      const nodeList = response.nodes || [];
+      // 获取节点列表
+      const nodesResponse = await apiPost<{ nodes: NodeItem[] }>("/api/list-nodes", {});
+      const nodeList = nodesResponse.nodes || [];
       setNodes(nodeList);
-      const defaultNodeName = nodeList[0]?.name || "";
-      setRegisterForm((prev) => {
-        if (prev.nodeName && nodeList.some((node) => node.name === prev.nodeName)) {
-          return prev;
+
+      if (nodeList.length === 0) {
+        setLoadingNodes(false);
+        return;
+      }
+
+      // 确定目标节点
+      let targetNode: string;
+      const urlNodeExists = urlNode && nodeList.some((n) => n.name === urlNode);
+
+      if (urlNodeExists) {
+        targetNode = urlNode;
+      } else {
+        // 智能选择有模板的节点：并行检查每个节点
+        const nodeChecks = await Promise.all(
+          nodeList.map(async (node) => {
+            try {
+              // 先获取该节点的存储池
+              const poolsRes = await apiPost<{ pools: StoragePoolItem[] }>(
+                "/api/list-storage-pools",
+                { node_name: node.name }
+              );
+              const nodePools = poolsRes.pools || [];
+              if (nodePools.length === 0) {
+                return { nodeName: node.name, hasTemplates: false, firstPoolWithData: "" };
+              }
+              // 检查第一个有模板的存储池
+              for (const pool of nodePools) {
+                try {
+                  const templatesRes = await apiPost<ListTemplatesResponse>(
+                    "/api/list-templates",
+                    { node_name: node.name, pool_name: pool.name }
+                  );
+                  if ((templatesRes.templates || []).length > 0) {
+                    return { nodeName: node.name, hasTemplates: true, firstPoolWithData: pool.name };
+                  }
+                } catch {
+                  // 继续检查下一个存储池
+                }
+              }
+              return { nodeName: node.name, hasTemplates: false, firstPoolWithData: nodePools[0]?.name || "" };
+            } catch {
+              return { nodeName: node.name, hasTemplates: false, firstPoolWithData: "" };
+            }
+          })
+        );
+
+        const nodeWithTemplates = nodeChecks.find((c) => c.hasTemplates);
+        if (nodeWithTemplates) {
+          targetNode = nodeWithTemplates.nodeName;
+          // 直接使用已找到的有数据的存储池
+          const poolsResponse = await apiPost<{ pools: StoragePoolItem[] }>(
+            "/api/list-storage-pools",
+            { node_name: targetNode }
+          );
+          setFilterPools(poolsResponse.pools || []);
+          setFilters({ nodeName: targetNode, poolName: nodeWithTemplates.firstPoolWithData });
+          setRegisterForm((prev) => ({ ...prev, nodeName: targetNode }));
+          updateURL(targetNode, nodeWithTemplates.firstPoolWithData);
+          return;
         }
-        return {
-          ...prev,
-          nodeName: defaultNodeName,
-        };
-      });
-      setFilters((prev) => {
-        if (prev.nodeName && nodeList.some((node) => node.name === prev.nodeName)) {
-          return prev;
-        }
-        return {
-          ...prev,
-          nodeName: defaultNodeName,
-        };
-      });
+        targetNode = nodeList[0]?.name || "";
+      }
+
+      // 获取目标节点的存储池
+      const poolsResponse = await apiPost<{ pools: StoragePoolItem[] }>(
+        "/api/list-storage-pools",
+        { node_name: targetNode }
+      );
+      const pools = poolsResponse.pools || [];
+      setFilterPools(pools);
+
+      if (pools.length === 0) {
+        setFilters({ nodeName: targetNode, poolName: "" });
+        setRegisterForm((prev) => ({ ...prev, nodeName: targetNode }));
+        updateURL(targetNode, "");
+        return;
+      }
+
+      // 确定目标存储池
+      let targetPool: string;
+      const urlPoolExists = urlPool && pools.some((p) => p.name === urlPool);
+
+      if (urlPoolExists) {
+        targetPool = urlPool;
+      } else {
+        // 智能选择有模板的存储池：并行检查每个存储池
+        const templateChecks = await Promise.all(
+          pools.map(async (pool) => {
+            try {
+              const res = await apiPost<ListTemplatesResponse>("/api/list-templates", {
+                node_name: targetNode,
+                pool_name: pool.name,
+              });
+              return {
+                poolName: pool.name,
+                templateCount: (res.templates || []).length,
+              };
+            } catch {
+              return { poolName: pool.name, templateCount: 0 };
+            }
+          })
+        );
+
+        const poolWithTemplates = templateChecks.find((c) => c.templateCount > 0);
+        targetPool = poolWithTemplates?.poolName || pools[0]?.name || "";
+      }
+
+      // 设置状态并更新 URL
+      setFilters({ nodeName: targetNode, poolName: targetPool });
+      setRegisterForm((prev) => ({
+        ...prev,
+        nodeName: targetNode,
+      }));
+      updateURL(targetNode, targetPool);
     } catch (error: any) {
-      console.error("Failed to load nodes:", error);
-      toast.error(error?.message || "Failed to load nodes");
+      console.error("Failed to initialize:", error);
+      toast.error(error?.message || "Failed to initialize");
     } finally {
       setLoadingNodes(false);
     }
-  }, [toast]);
+  }, [urlNode, urlPool, updateURL, toast]);
 
-  const fetchFilterPools = useCallback(
+  // 手动切换节点时调用
+  const handleNodeChange = useCallback(
     async (nodeName: string) => {
       if (!nodeName) {
         setFilterPools([]);
-        setFilters((prev) => ({ ...prev, poolName: "" }));
+        setFilters((prev) => ({ ...prev, nodeName: "", poolName: "" }));
+        updateURL("", "");
         return;
       }
+
       setLoadingFilterPools(true);
       try {
-        const response = await apiPost<{ pools: StoragePoolItem[] }>(
+        // 获取该节点的存储池
+        const poolsResponse = await apiPost<{ pools: StoragePoolItem[] }>(
           "/api/list-storage-pools",
-          {
-            node_name: nodeName,
-          }
+          { node_name: nodeName }
         );
-        const pools = response.pools || [];
+        const pools = poolsResponse.pools || [];
         setFilterPools(pools);
-        setFilters((prev) => ({
-          ...prev,
-          poolName: pools.some((pool) => pool.name === prev.poolName)
-            ? prev.poolName
-            : pools[0]?.name || "",
-        }));
+
+        if (pools.length === 0) {
+          setFilters({ nodeName, poolName: "" });
+          updateURL(nodeName, "");
+          return;
+        }
+
+        // 智能选择有模板的存储池：并行检查每个存储池
+        const templateChecks = await Promise.all(
+          pools.map(async (pool) => {
+            try {
+              const res = await apiPost<ListTemplatesResponse>("/api/list-templates", {
+                node_name: nodeName,
+                pool_name: pool.name,
+              });
+              return {
+                poolName: pool.name,
+                templateCount: (res.templates || []).length,
+              };
+            } catch {
+              return { poolName: pool.name, templateCount: 0 };
+            }
+          })
+        );
+
+        const poolWithTemplates = templateChecks.find((c) => c.templateCount > 0);
+        const targetPool = poolWithTemplates?.poolName || pools[0]?.name || "";
+
+        setFilters({ nodeName, poolName: targetPool });
+        updateURL(nodeName, targetPool);
       } catch (error: any) {
         console.error("Failed to load storage pools:", error);
         toast.error(error?.message || "Failed to load storage pools");
@@ -177,7 +351,18 @@ export default function TemplatesPage() {
         setLoadingFilterPools(false);
       }
     },
-    [toast]
+    [updateURL, toast]
+  );
+
+  // 手动切换存储池时调用
+  const handlePoolChange = useCallback(
+    (poolName: string) => {
+      setFilters((prev) => {
+        updateURL(prev.nodeName, poolName);
+        return { ...prev, poolName };
+      });
+    },
+    [updateURL]
   );
 
   const fetchRegisterPools = useCallback(
@@ -214,21 +399,21 @@ export default function TemplatesPage() {
     [toast]
   );
 
+  // 初始化（只执行一次）
   useEffect(() => {
-    fetchTemplates();
-  }, [fetchTemplates]);
+    initializeData();
+  }, [initializeData]);
 
+  // 当 filters 变化时获取模板列表
   useEffect(() => {
-    fetchNodes();
-  }, [fetchNodes]);
+    if (filters.nodeName && filters.poolName) {
+      fetchTemplates();
+    }
+  }, [filters, fetchTemplates]);
 
   useEffect(() => {
     fetchRegisterPools(registerForm.nodeName);
   }, [registerForm.nodeName, fetchRegisterPools]);
-
-  useEffect(() => {
-    fetchFilterPools(filters.nodeName);
-  }, [filters.nodeName, fetchFilterPools]);
 
   const formattedDate = (value?: string) => {
     if (!value) return "N/A";
@@ -549,17 +734,10 @@ export default function TemplatesPage() {
               <label className="text-sm text-gray-600">Node Filter</label>
               <select
                 value={filters.nodeName}
-                onChange={(e) =>
-                  setFilters((prev) => ({
-                    ...prev,
-                    nodeName: e.target.value,
-                    poolName: "",
-                  }))
-                }
+                onChange={(e) => handleNodeChange(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 disabled={loadingNodes}
               >
-                <option value="">All Nodes</option>
                 {nodes.map((node) => (
                   <option key={node.name} value={node.name}>
                     {node.name}
@@ -571,13 +749,10 @@ export default function TemplatesPage() {
               <label className="text-sm text-gray-600">Pool Filter</label>
               <select
                 value={filters.poolName}
-                onChange={(e) =>
-                  setFilters((prev) => ({ ...prev, poolName: e.target.value }))
-                }
+                onChange={(e) => handlePoolChange(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 disabled={!filters.nodeName || loadingFilterPools}
               >
-                <option value="">All Pools</option>
                 {filterPools.map((pool) => (
                   <option key={pool.name} value={pool.name}>
                     {pool.name}
@@ -689,23 +864,82 @@ export default function TemplatesPage() {
                   </select>
                 </div>
                 {registerForm.sourceType === "cloud_image" && (
-                  <div className="md:col-span-2">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Download URL <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={registerForm.cloudUrl}
-                      onChange={(e) =>
-                        setRegisterForm({ ...registerForm, cloudUrl: e.target.value })
-                      }
-                      placeholder="https://cloud-images.example.com/image.qcow2"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 font-mono text-sm"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      Provide the download URL for this cloud image.
-                    </p>
-                  </div>
+                  <>
+                    <div className="md:col-span-2">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Select Cloud Image
+                      </label>
+                      <select
+                        value={registerForm.presetImage}
+                        onChange={(e) => {
+                          const selected = e.target.value;
+                          if (selected === "custom") {
+                            setRegisterForm({
+                              ...registerForm,
+                              presetImage: "custom",
+                              cloudUrl: "",
+                            });
+                          } else if (selected) {
+                            const preset = PRESET_CLOUD_IMAGES.find((img) => img.url === selected);
+                            if (preset) {
+                              // 从 URL 提取文件名作为默认 volume name
+                              const urlParts = preset.url.split("/");
+                              const fileName = urlParts[urlParts.length - 1];
+                              setRegisterForm({
+                                ...registerForm,
+                                presetImage: selected,
+                                cloudUrl: preset.url,
+                                volumeName: registerForm.volumeName || fileName,
+                                name: registerForm.name || preset.name,
+                                osName: preset.os.name,
+                                osVersion: preset.os.version,
+                                osArch: preset.os.arch,
+                              });
+                            }
+                          } else {
+                            setRegisterForm({
+                              ...registerForm,
+                              presetImage: "",
+                              cloudUrl: "",
+                            });
+                          }
+                        }}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="">-- Select a preset image --</option>
+                        {PRESET_CLOUD_IMAGES.map((img) => (
+                          <option key={img.url} value={img.url}>
+                            {img.name}
+                          </option>
+                        ))}
+                        <option value="custom">Custom URL...</option>
+                      </select>
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Download URL <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={registerForm.cloudUrl}
+                        onChange={(e) =>
+                          setRegisterForm({
+                            ...registerForm,
+                            cloudUrl: e.target.value,
+                            presetImage: "custom",
+                          })
+                        }
+                        placeholder="https://cloud-images.example.com/image.qcow2"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+                        readOnly={registerForm.presetImage !== "" && registerForm.presetImage !== "custom"}
+                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        {registerForm.presetImage && registerForm.presetImage !== "custom"
+                          ? "URL auto-filled from selected preset. Select 'Custom URL...' to enter manually."
+                          : "Enter the download URL for this cloud image."}
+                      </p>
+                    </div>
+                  </>
                 )}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
