@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from "react";
-import { Link } from "react-router-dom";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import Header from "@/components/Header";
 import Table from "@/components/Table";
 import StatusBadge from "@/components/StatusBadge";
@@ -53,6 +53,7 @@ interface KeyPair {
 
 export default function InstancesPage() {
   const toast = useToast();
+  const [searchParams] = useSearchParams();
   const [instances, setInstances] = useState<Instance[]>([]);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [storagePools, setStoragePools] = useState<StoragePool[]>([]);
@@ -65,6 +66,19 @@ export default function InstancesPage() {
   const [instanceToDelete, setInstanceToDelete] = useState<{id: string, nodeName: string} | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedNode, setSelectedNode] = useState<string>("");
+
+  const initDoneRef = useRef(false);
+
+  // 从 URL 获取参数
+  const urlNode = searchParams.get("node") || "";
+
+  // 更新 URL（不触发页面刷新）
+  const updateURL = useCallback((node: string) => {
+    const params = new URLSearchParams();
+    if (node) params.set("node", node);
+    const newURL = params.toString() ? `/instances?${params.toString()}` : "/instances";
+    window.history.replaceState(null, "", newURL);
+  }, []);
   const [currentStep, setCurrentStep] = useState(0);
   const [keypairInputMethod, setKeypairInputMethod] = useState<"select" | "upload" | "manual">("select");
   const [manualPublicKey, setManualPublicKey] = useState("");
@@ -108,7 +122,10 @@ export default function InstancesPage() {
     return filtered;
   }, [instances, searchQuery, selectedNode]);
 
-  const fetchNodes = async () => {
+  const fetchNodes = useCallback(async () => {
+    if (initDoneRef.current) return;
+    initDoneRef.current = true;
+
     try {
       const nodesRes = await fetch("/api/list-nodes", {
         method: "POST",
@@ -122,42 +139,25 @@ export default function InstancesPage() {
         setNodes(nodeList);
 
         if (nodeList.length > 0) {
-          const exists = nodeList.some((n: Node) => n.name === selectedNode);
-          if (!exists) {
-            // 智能选择有实例的节点：并行检查各节点的实例数量
-            const instanceChecks = await Promise.all(
-              nodeList.map(async (node: Node) => {
-                try {
-                  const res = await fetch("/api/instances/describe", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ node_name: node.name }),
-                  });
-                  if (res.ok) {
-                    const data = await res.json();
-                    return {
-                      nodeName: node.name,
-                      instanceCount: (data.instances || []).length,
-                    };
-                  }
-                  return { nodeName: node.name, instanceCount: 0 };
-                } catch {
-                  return { nodeName: node.name, instanceCount: 0 };
-                }
-              })
-            );
+          // 检查 URL 参数中的节点是否存在
+          const urlNodeExists = urlNode && nodeList.some((n: Node) => n.name === urlNode);
 
-            // 优先选择有实例的节点，否则选第一个
-            const nodeWithInstances = instanceChecks.find((c) => c.instanceCount > 0);
-            const smartNode = nodeWithInstances?.nodeName || nodeList[0].name;
-            setSelectedNode(smartNode);
-          }
+          // 如果 URL 指定的节点存在则使用它，否则使用第一个节点
+          const targetNode = urlNodeExists ? urlNode : nodeList[0].name;
+          setSelectedNode(targetNode);
+          updateURL(targetNode);
         }
       }
     } catch (error) {
       console.error("Failed to fetch nodes:", error);
     }
-  };
+  }, [urlNode, updateURL]);
+
+  // 手动切换节点时调用
+  const handleNodeChange = useCallback((nodeName: string) => {
+    setSelectedNode(nodeName);
+    updateURL(nodeName);
+  }, [updateURL]);
 
   const fetchInstances = async () => {
     if (!selectedNode) return;
@@ -596,7 +596,7 @@ export default function InstancesPage() {
         <select
           className="input w-48"
           value={selectedNode}
-          onChange={(e) => setSelectedNode(e.target.value)}
+          onChange={(e) => handleNodeChange(e.target.value)}
         >
           {nodes.map((node) => (
             <option key={node.name} value={node.name}>
