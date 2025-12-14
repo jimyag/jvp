@@ -5,8 +5,8 @@ services:
   jvp:
     build:
       context: .
-      dockerfile: Dockerfile.libvirt
-    image: jvp:libvirt
+      dockerfile: Dockerfile
+    image: ghcr.io/jimyag/jvp:latest
     container_name: jvp
     hostname: jvp
 
