@@ -8,23 +8,23 @@ jimyag's virtualization platform. jimyag 的虚拟化平台
 
 JVP 是一个基于 QEMU/KVM 和 libvirt 的虚拟化平台，提供完整的虚拟机生命周期管理功能。支持通过 RESTful API 和现代化的 Web 管理界面创建、管理和监控虚拟机实例。
 
-![JVP](docs/static/Snipaste_2025-11-29_19-36-26.png)
+![节点管理](docs/static/nodes.png)
 
-![JVP](docs/static/Snipaste_2025-11-29_19-37-42.png)
+![实例列表](docs/static/instance.png)
 
-![JVP](docs/static/Snipaste_2025-11-29_19-38-00.png)
+![实例详情](docs/static/instance-detail.png)
 
-![JVP](docs/static/Snipaste_2025-11-29_19-38-12.png)
+![VNC 控制台](docs/static/instance-vnc.png)
 
-![JVP](docs/static/Snipaste_2025-11-29_19-38-25.png)
+![串口控制台](docs/static/instance-console.png)
 
-![JVP](docs/static/Snipaste_2025-11-29_19-38-36.png)
+![存储池列表](docs/static/storage-pool.png)
 
-![JVP](docs/static/Snipaste_2025-11-29_19-38-58.png)
+![存储池详情](docs/static/storage-pool-detail.png)
 
-![JVP](docs/static/Snipaste_2025-12-02_00-00-03.png)
+![模板管理](docs/static/template.png)
 
-![JVP](docs/static/Snipaste_2025-12-02_00-00-16.png)
+![快照管理](docs/static/snapshot.png)
 
 ## 核心功能
 
