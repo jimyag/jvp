@@ -10,7 +10,7 @@ tasks:
       - go-mod-tidy
     cmds:
       - |
-        cd web-vite && npm install && npm run build
+        cd web-vite && bun install && bun run build
       - |
         rm -rf ./internal/jvp/api/static
         mkdir -p ./internal/jvp/api/static
@@ -25,7 +25,7 @@ tasks:
     desc: 编译某个系统架构的二进制文件
     cmds:
       - |
-        cd web-vite && npm install && npm run build
+        cd web-vite && bun install && bun run build
       - |
         rm -rf ./internal/jvp/api/static
         mkdir -p ./internal/jvp/api/static
