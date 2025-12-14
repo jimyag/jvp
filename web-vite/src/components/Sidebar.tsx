@@ -71,8 +71,16 @@ export default function Sidebar() {
           {/* Footer */}
           <div className="p-4 border-t border-gray-700">
             <p className="text-xs text-gray-400">
-              © 2024 JVP Platform
+              © {new Date().getFullYear()} JVP Platform
             </p>
+            <a
+              href="https://github.com/jimyag/jvp"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-gray-500 hover:text-gray-300 mt-1 inline-block"
+            >
+              GitHub
+            </a>
           </div>
         </div>
       </aside>
