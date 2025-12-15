@@ -10,7 +10,6 @@ echo ""
 echo "=== Checking KVM support ==="
 if [ -e /dev/kvm ]; then
     echo "[OK] /dev/kvm exists"
-    # 确保权限正确
     chmod 666 /dev/kvm 2>/dev/null || true
 else
     echo "[WARN] /dev/kvm not found - VMs will run without KVM acceleration (slow)"
@@ -21,7 +20,6 @@ if [ -e /dev/net/tun ]; then
     echo "[OK] /dev/net/tun exists"
 else
     echo "[WARN] /dev/net/tun not found - network may not work"
-    # 尝试创建
     mkdir -p /dev/net
     mknod /dev/net/tun c 10 200 2>/dev/null || true
     chmod 666 /dev/net/tun 2>/dev/null || true
@@ -34,6 +32,7 @@ mkdir -p /var/run/libvirt
 mkdir -p /var/lib/libvirt/images
 mkdir -p /var/lib/libvirt/qemu
 mkdir -p /var/log/libvirt/qemu
+mkdir -p /var/log/supervisor
 mkdir -p /app/data
 
 # 启动 virtlogd（libvirt 日志守护进程）
@@ -47,53 +46,45 @@ fi
 echo ""
 echo "=== Starting libvirtd ==="
 libvirtd -d -l
-sleep 2
 
-# 检查 libvirtd 状态
-if pgrep -x libvirtd > /dev/null; then
-    echo "[OK] libvirtd is running"
-else
-    echo "[ERROR] libvirtd failed to start"
-    exit 1
-fi
+# 等待 libvirtd 就绪（带重试）
+echo "Waiting for libvirtd to be ready..."
+MAX_RETRIES=30
+RETRY_COUNT=0
+while ! virsh -c qemu:///system version &>/dev/null; do
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+    if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+        echo "[ERROR] libvirtd failed to start after ${MAX_RETRIES} seconds"
+        exit 1
+    fi
+    echo "  Waiting... ($RETRY_COUNT/$MAX_RETRIES)"
+    sleep 1
+done
+echo "[OK] libvirtd is ready"
 
 # 配置默认网络
 echo ""
 echo "=== Configuring default network ==="
-# 检查默认网络是否已定义
 if ! virsh net-info default &>/dev/null; then
     echo "Defining default network..."
     virsh net-define /etc/libvirt/qemu/networks/default.xml || true
 fi
 
-# 启动默认网络
 if virsh net-info default 2>/dev/null | grep -q "Active:.*no"; then
     echo "Starting default network..."
     virsh net-start default || true
 fi
 
-# 设置默认网络自动启动
 virsh net-autostart default 2>/dev/null || true
 
-# 显示网络状态
+# 显示状态（允许失败，仅用于日志）
 echo ""
 echo "=== Network status ==="
-virsh net-list --all
+virsh net-list --all || echo "[WARN] Failed to list networks"
 
-# 显示存储池状态
 echo ""
 echo "=== Storage pools ==="
-virsh pool-list --all
-
-# 检查连接
-echo ""
-echo "=== Testing libvirt connection ==="
-if virsh -c qemu:///system version; then
-    echo "[OK] libvirt connection successful"
-else
-    echo "[ERROR] Cannot connect to libvirt"
-    exit 1
-fi
+virsh pool-list --all || echo "[WARN] Failed to list storage pools"
 
 # 启动 supervisord（管理 JVP 进程）
 echo ""
