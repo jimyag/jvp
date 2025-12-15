@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -424,13 +425,8 @@ func (s *TemplateService) lookupVolume(client libvirt.LibvirtClient, poolName, v
 		}
 
 		if fileExists {
-			// 根据文件扩展名判断格式
-			format := "raw"
-			if strings.HasSuffix(candidate, ".qcow2") {
-				format = "qcow2"
-			} else if strings.HasSuffix(candidate, ".img") {
-				format = "raw"
-			}
+			// 检测镜像实际格式
+			format := detectImageFormat(filePath, candidate, client.IsRemoteConnection())
 
 			return &libvirt.VolumeInfo{
 				Name:        candidate,
@@ -471,6 +467,63 @@ func normalizeNodeName(nodeName string) string {
 		return "local"
 	}
 	return nodeName
+}
+
+// detectImageFormat 检测镜像的实际格式
+// 对于 .qcow2 后缀直接返回 qcow2
+// 对于 .img 等其他后缀，使用 qemu-img info 检测
+func detectImageFormat(filePath, fileName string, isRemote bool) string {
+	// 如果是 .qcow2 后缀，直接返回
+	if strings.HasSuffix(fileName, ".qcow2") {
+		return "qcow2"
+	}
+
+	// 如果是 .raw 后缀，直接返回
+	if strings.HasSuffix(fileName, ".raw") {
+		return "raw"
+	}
+
+	// 对于 .img 等其他后缀，需要实际检测
+	// 因为 cloud images 的 .img 文件可能是 qcow2 格式
+	if isRemote {
+		// 远程节点：暂时无法检测，返回 qcow2（大多数 cloud image 是 qcow2）
+		// TODO: 后续可以通过 SSH 执行 qemu-img info
+		return "qcow2"
+	}
+
+	// 本地：使用 qemu-img info 检测
+	format, err := detectFormatWithQemuImg(filePath)
+	if err != nil {
+		// 检测失败，默认返回 qcow2（因为大多数 cloud image 是 qcow2）
+		return "qcow2"
+	}
+	return format
+}
+
+// detectFormatWithQemuImg 使用 qemu-img info 检测镜像格式
+func detectFormatWithQemuImg(filePath string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "qemu-img", "info", filePath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("qemu-img info failed: %w", err)
+	}
+
+	// 解析输出，查找 "file format: xxx" 行
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "file format:") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				return strings.TrimSpace(parts[1]), nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("failed to parse format from qemu-img info output")
 }
 
 func cloneTags(tags []string) []string {

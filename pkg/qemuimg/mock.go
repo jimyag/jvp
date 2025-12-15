@@ -41,6 +41,12 @@ func (m *MockClient) Info(ctx context.Context, imagePath string) (string, error)
 	return args.String(0), args.Error(1)
 }
 
+// GetFormat 实现 QemuImgClient 接口
+func (m *MockClient) GetFormat(ctx context.Context, imagePath string) (string, error) {
+	args := m.Called(ctx, imagePath)
+	return args.String(0), args.Error(1)
+}
+
 // Check 实现 QemuImgClient 接口
 func (m *MockClient) Check(ctx context.Context, imagePath, format string) error {
 	args := m.Called(ctx, imagePath, format)

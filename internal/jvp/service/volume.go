@@ -227,20 +227,21 @@ func (s *VolumeService) DescribeVolume(ctx context.Context, req *entity.Describe
 		return nil, fmt.Errorf("get node storage: %w", err)
 	}
 
-	// 查询卷信息
-	volumeName := req.VolumeID + ".qcow2"
-	volInfo, err := nodeStorage.GetVolume(req.PoolName, volumeName)
-	if err != nil {
-		// 尝试其他扩展名
-		volumeName = req.VolumeID + ".raw"
+	// 查询卷信息，尝试多种扩展名
+	extensions := []string{".qcow2", ".raw", ".img", ".iso"}
+	var volInfo *libvirt.VolumeInfo
+	var volumeName string
+	var lastErr error
+	for _, ext := range extensions {
+		volumeName = req.VolumeID + ext
 		volInfo, err = nodeStorage.GetVolume(req.PoolName, volumeName)
-		if err != nil {
-			volumeName = req.VolumeID + ".img"
-			volInfo, err = nodeStorage.GetVolume(req.PoolName, volumeName)
-			if err != nil {
-				return nil, fmt.Errorf("get volume: %w", err)
-			}
+		if err == nil {
+			break
 		}
+		lastErr = err
+	}
+	if volInfo == nil {
+		return nil, fmt.Errorf("get volume: %w", lastErr)
 	}
 
 	volume := &entity.Volume{
@@ -330,27 +331,23 @@ func (s *VolumeService) DeleteVolume(ctx context.Context, req *entity.DeleteVolu
 		return fmt.Errorf("get node storage: %w", err)
 	}
 
-	// 删除卷
-	volumeName := req.VolumeID + ".qcow2"
-	err = nodeStorage.DeleteVolume(req.PoolName, volumeName)
-	if err != nil {
-		// 尝试其他扩展名
-		volumeName = req.VolumeID + ".raw"
+	// 删除卷，尝试多种扩展名
+	extensions := []string{".qcow2", ".raw", ".img", ".iso"}
+	var lastErr error
+	for _, ext := range extensions {
+		volumeName := req.VolumeID + ext
 		err = nodeStorage.DeleteVolume(req.PoolName, volumeName)
-		if err != nil {
-			volumeName = req.VolumeID + ".img"
-			err = nodeStorage.DeleteVolume(req.PoolName, volumeName)
-			if err != nil {
-				return fmt.Errorf("delete volume: %w", err)
-			}
+		if err == nil {
+			logger.Info().
+				Str("volume_id", req.VolumeID).
+				Str("volume_name", volumeName).
+				Msg("Volume deleted successfully")
+			return nil
 		}
+		lastErr = err
 	}
 
-	logger.Info().
-		Str("volume_id", req.VolumeID).
-		Msg("Volume deleted successfully")
-
-	return nil
+	return fmt.Errorf("delete volume: %w", lastErr)
 }
 
 // CreateVolumeFromURL 从 URL 下载并创建存储卷

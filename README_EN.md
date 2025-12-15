@@ -83,26 +83,89 @@ JVP is a virtualization platform based on QEMU/KVM and libvirt, providing comple
 
 ## How to Use
 
-### Build Project
+### Option 1: Docker Deployment (Recommended)
+
+Docker deployment runs libvirtd inside the container, completely taking over the host's virtualization environment.
+
+**1. Stop host libvirt services**
+
+```bash
+sudo systemctl stop libvirtd libvirtd.socket virtlogd virtlogd.socket
+sudo systemctl disable libvirtd libvirtd.socket virtlogd virtlogd.socket
+```
+
+**2. Create data directory**
+
+```bash
+sudo mkdir -p /var/lib/jvp
+```
+
+**3. Start the container**
+
+```bash
+# Using docker-compose
+docker compose up -d
+
+# Or using docker run directly
+docker run -d \
+  --name jvp \
+  --hostname jvp \
+  --privileged \
+  --network host \
+  --cgroup host \
+  --device /dev/kvm:/dev/kvm \
+  --device /dev/net/tun:/dev/net/tun \
+  --device /dev/vhost-net:/dev/vhost-net \
+  -v /var/lib/libvirt:/var/lib/libvirt \
+  -v /var/run/libvirt:/var/run/libvirt \
+  -v /etc/libvirt:/etc/libvirt \
+  -v /var/lib/jvp:/app/data \
+  -e TZ=Asia/Shanghai \
+  -e JVP_ADDRESS=0.0.0.0:7777 \
+  -e JVP_DATA_DIR=/app/data \
+  -e LIBVIRT_URI=qemu:///system \
+  --restart unless-stopped \
+  ghcr.io/jimyag/jvp:latest
+```
+
+**4. Access the Web interface**
+
+```
+http://<server-ip>:7777
+```
+
+### Option 2: Build and Run Locally
+
+**1. Build the project**
 
 ```bash
 # Build complete binary file including frontend
 task build
 ```
 
-### Run Service
+**2. Run the service**
 
 ```bash
 # Run JVP service (default port 7777)
 ./bin/jvp
 ```
 
-### Access Web Interface
+**3. Access the Web interface**
 
 After building, the frontend is embedded in the binary file. After starting the service, access:
 
-```bash
+```
 http://localhost:7777
+```
+
+### Local Debugging (Docker)
+
+```bash
+# Build local debug image
+task debug-image
+
+# Modify image in docker-compose.yml to jvp:local, then start
+docker compose up -d
 ```
 
 ## Future Plans

@@ -875,8 +875,7 @@ func (c *Client) buildDevices(config *CreateVMConfig) DomainDevices {
 		Videos: []DomainVideo{
 			{
 				Model: DomainVideoModel{
-					Type:  "qxl",
-					VRam:  65536,
+					Type:  "virtio",
 					Heads: 1,
 				},
 			},
