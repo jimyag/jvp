@@ -165,10 +165,10 @@ docker run -d \
   -v /var/lib/libvirt:/var/lib/libvirt \
   -v /var/run/libvirt:/var/run/libvirt \
   -v /etc/libvirt:/etc/libvirt \
-  -v /var/lib/jvp:/app/data \
+  -v /var/lib/jvp:/var/lib/jvp \
   -e TZ=Asia/Shanghai \
   -e JVP_ADDRESS=0.0.0.0:7777 \
-  -e JVP_DATA_DIR=/app/data \
+  -e JVP_DATA_DIR=/var/lib/jvp \
   -e LIBVIRT_URI=qemu:///system \
   --restart unless-stopped \
   ghcr.io/jimyag/jvp:latest

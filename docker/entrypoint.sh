@@ -34,6 +34,8 @@ mkdir -p /var/lib/libvirt/qemu
 mkdir -p /var/log/libvirt/qemu
 mkdir -p /var/log/supervisor
 mkdir -p /app/data
+mkdir -p /var/lib/jvp/qemu
+chown libvirt-qemu:kvm /var/lib/jvp/qemu 2>/dev/null || true
 
 # 清理残留的 socket 和 PID 文件（从宿主机挂载可能残留）
 echo ""

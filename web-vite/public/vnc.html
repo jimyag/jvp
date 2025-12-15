@@ -22,6 +22,16 @@
             align-items: center;
             justify-content: center;
         }
+        /* noVNC canvas 容器 */
+        #screen > div {
+            width: 100% !important;
+            height: 100% !important;
+        }
+        #screen canvas {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
         #status {
             position: absolute;
             top: 10px;
@@ -70,15 +80,29 @@
                     credentials: { password: '' }
                 });
 
-                // 设置缩放选项
+                // 设置缩放选项 - scaleViewport 会自动缩放以适应容器
                 rfb.scaleViewport = true;
-                rfb.resizeSession = true;
+                rfb.resizeSession = false; // 不调整远程分辨率
+                rfb.clipViewport = false;  // 不裁剪，完整显示
+
+                // 更新缩放的函数
+                const updateScale = () => {
+                    if (rfb && rfb._connected) {
+                        // 先关闭再开启，强制重新计算
+                        rfb.scaleViewport = false;
+                        requestAnimationFrame(() => {
+                            rfb.scaleViewport = true;
+                        });
+                    }
+                };
 
                 // 连接事件
                 rfb.addEventListener('connect', () => {
                     console.log('VNC connected');
                     status.textContent = 'Connected';
                     status.className = 'connected';
+                    // 连接后立即更新缩放
+                    setTimeout(updateScale, 100);
                     // 3秒后隐藏状态
                     setTimeout(() => {
                         status.style.display = 'none';
@@ -98,6 +122,13 @@
                     console.error('VNC security failure:', e.detail);
                     status.textContent = 'Authentication failed';
                     status.className = 'disconnected';
+                });
+
+                // 窗口大小变化时更新缩放
+                let resizeTimeout;
+                window.addEventListener('resize', () => {
+                    clearTimeout(resizeTimeout);
+                    resizeTimeout = setTimeout(updateScale, 100);
                 });
 
             } catch (error) {

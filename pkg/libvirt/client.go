@@ -9,6 +9,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/digitalocean/go-libvirt"
@@ -505,10 +506,61 @@ func (c *Client) DefineDomain(config *CreateVMConfig) (libvirt.Domain, error) {
 
 // StartDomain 启动已定义的域
 func (c *Client) StartDomain(domain libvirt.Domain) error {
+	// 启动前确保 VNC socket 目录存在
+	if err := c.ensureVNCSocketDir(domain); err != nil {
+		log.Warn().Err(err).Str("domain", domain.Name).Msg("Failed to ensure VNC socket directory")
+	}
+
 	err := c.conn.DomainCreate(domain)
 	if err != nil {
 		return fmt.Errorf("failed to start domain %s: %v", domain.Name, err)
 	}
+	return nil
+}
+
+// ensureVNCSocketDir 确保 VNC socket 目录存在
+func (c *Client) ensureVNCSocketDir(domain libvirt.Domain) error {
+	// 获取 domain XML
+	xmlDesc, err := c.conn.DomainGetXMLDesc(domain, 0)
+	if err != nil {
+		return fmt.Errorf("get domain XML: %w", err)
+	}
+
+	// 解析 VNC socket 路径
+	// 查找 <graphics type='vnc' ... socket='/path/to/socket' />
+	// 使用简单的字符串查找
+	socketStart := strings.Index(xmlDesc, "socket='/var/lib/jvp/qemu/")
+	if socketStart == -1 {
+		// 没有使用 Unix socket 的 VNC
+		return nil
+	}
+
+	// 提取 socket 路径
+	socketStart += len("socket='")
+	socketEnd := strings.Index(xmlDesc[socketStart:], "'")
+	if socketEnd == -1 {
+		return nil
+	}
+	socketPath := xmlDesc[socketStart : socketStart+socketEnd]
+
+	// 获取目录
+	vncDir := filepath.Dir(socketPath)
+
+	// 创建目录
+	if c.IsRemoteConnection() {
+		if err := c.ExecuteRemoteCommand(fmt.Sprintf("mkdir -p '%s' && chmod 755 '%s'", vncDir, vncDir)); err != nil {
+			return fmt.Errorf("create VNC socket directory on remote: %w", err)
+		}
+		_ = c.ExecuteRemoteCommand(fmt.Sprintf("chown libvirt-qemu:kvm '%s' 2>/dev/null || chown qemu:qemu '%s' 2>/dev/null || true", vncDir, vncDir))
+	} else {
+		if err := os.MkdirAll(vncDir, 0o755); err != nil {
+			return fmt.Errorf("create VNC socket directory: %w", err)
+		}
+		if err := c.fixVNCDirOwnership(vncDir); err != nil {
+			log.Warn().Err(err).Str("dir", vncDir).Msg("Failed to fix VNC directory ownership")
+		}
+	}
+
 	return nil
 }
 

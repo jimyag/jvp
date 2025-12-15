@@ -31,13 +31,13 @@ services:
       - /var/run/libvirt:/var/run/libvirt
       - /etc/libvirt:/etc/libvirt
       # JVP 数据持久化
-      - /var/lib/jvp:/app/data
+      - /var/lib/jvp:/var/lib/jvp
 
     # 环境变量
     environment:
       - TZ=Asia/Shanghai
       - JVP_ADDRESS=0.0.0.0:7777
-      - JVP_DATA_DIR=/app/data
+      - JVP_DATA_DIR=/var/lib/jvp
       - LIBVIRT_URI=qemu:///system
 
     # 使用宿主机网络（VM 网络桥接需要）

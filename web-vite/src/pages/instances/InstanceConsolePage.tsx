@@ -182,7 +182,7 @@ export default function InstanceConsolePage() {
       </div>
 
       {/* Console Display */}
-      <div className="card p-0 overflow-hidden" style={{ height: "calc(100vh - 280px)" }}>
+      <div className="card p-0 overflow-hidden flex-1" style={{ minHeight: "400px", height: "calc(100vh - 320px)" }}>
         {loading ? (
           <div className="flex items-center justify-center h-full bg-gray-50">
             <div className="text-center">
