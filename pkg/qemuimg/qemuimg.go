@@ -150,6 +150,39 @@ func (c *Client) Info(ctx context.Context, imagePath string) (string, error) {
 	return string(output), nil
 }
 
+// GetFormat 获取镜像的实际格式
+// 通过解析 qemu-img info 输出来获取格式
+//
+// 参数：
+//   - imagePath: 镜像文件路径
+//
+// 返回：
+//   - format 字符串（如 "qcow2", "raw"）
+//
+// 示例：
+//
+//	format, err := client.GetFormat(ctx, "/path/to/image.img")
+func (c *Client) GetFormat(ctx context.Context, imagePath string) (string, error) {
+	info, err := c.Info(ctx, imagePath)
+	if err != nil {
+		return "", err
+	}
+
+	// 解析输出，查找 "file format: xxx" 行
+	lines := strings.Split(info, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "file format:") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				return strings.TrimSpace(parts[1]), nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("failed to parse format from qemu-img info output for %s", imagePath)
+}
+
 // Check 检查镜像完整性
 //
 // 参数：

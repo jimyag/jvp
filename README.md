@@ -129,26 +129,89 @@ dnf install libvirt qemu-img genisoimage wget curl openssh-clients libguestfs-to
 
 ## 如何使用
 
-### 构建项目
+### 方式一：Docker 部署（推荐）
+
+Docker 部署会在容器内运行 libvirtd，完全接管宿主机的虚拟化环境。
+
+**1. 停止宿主机的 libvirt 服务**
+
+```bash
+sudo systemctl stop libvirtd libvirtd.socket virtlogd virtlogd.socket
+sudo systemctl disable libvirtd libvirtd.socket virtlogd virtlogd.socket
+```
+
+**2. 创建数据目录**
+
+```bash
+sudo mkdir -p /var/lib/jvp
+```
+
+**3. 启动容器**
+
+```bash
+# 使用 docker-compose
+docker compose up -d
+
+# 或直接使用 docker run
+docker run -d \
+  --name jvp \
+  --hostname jvp \
+  --privileged \
+  --network host \
+  --cgroup host \
+  --device /dev/kvm:/dev/kvm \
+  --device /dev/net/tun:/dev/net/tun \
+  --device /dev/vhost-net:/dev/vhost-net \
+  -v /var/lib/libvirt:/var/lib/libvirt \
+  -v /var/run/libvirt:/var/run/libvirt \
+  -v /etc/libvirt:/etc/libvirt \
+  -v /var/lib/jvp:/app/data \
+  -e TZ=Asia/Shanghai \
+  -e JVP_ADDRESS=0.0.0.0:7777 \
+  -e JVP_DATA_DIR=/app/data \
+  -e LIBVIRT_URI=qemu:///system \
+  --restart unless-stopped \
+  ghcr.io/jimyag/jvp:latest
+```
+
+**4. 访问 Web 界面**
+
+```
+http://<服务器IP>:7777
+```
+
+### 方式二：本地构建运行
+
+**1. 构建项目**
 
 ```bash
 # 构建包含前端的完整二进制文件
 task build
 ```
 
-### 运行服务
+**2. 运行服务**
 
 ```bash
 # 运行 JVP 服务（默认端口 7777）
 ./bin/jvp
 ```
 
-### 访问 Web 界面
+**3. 访问 Web 界面**
 
 构建完成后，前端已嵌入到二进制文件中。启动服务后访问：
 
-```bash
+```
 http://localhost:7777
+```
+
+### 本地调试（Docker）
+
+```bash
+# 构建本地调试镜像
+task debug-image
+
+# 修改 docker-compose.yml 中 image 为 jvp:local 后启动
+docker compose up -d
 ```
 
 ## 未来计划

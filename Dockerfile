@@ -1,7 +1,7 @@
 # Dockerfile for JVP
 # 包含 libvirtd 的完整虚拟化环境
 
-FROM debian:bookworm-slim
+FROM ubuntu:24.04
 
 # 设置环境变量
 ENV DEBIAN_FRONTEND=noninteractive \

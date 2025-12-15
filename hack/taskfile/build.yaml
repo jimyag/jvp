@@ -99,3 +99,20 @@ tasks:
     desc: 测试
     cmds:
       - go test -race -cover ./...
+
+  debug-image:
+    desc: 构建本地调试用的 Docker 镜像 (linux/amd64)
+    cmds:
+      - task: build-linux-amd64
+      - |
+        mkdir -p linux/amd64
+        cp bin/linux_amd64/jvp linux/amd64/jvp
+      - |
+        docker build --platform linux/amd64 -t jvp:local .
+      - |
+        rm -rf linux
+      - |
+        echo ""
+        echo "=== Build completed ==="
+        echo "Run: docker-compose up -d"
+        echo "Access: http://localhost:7777"

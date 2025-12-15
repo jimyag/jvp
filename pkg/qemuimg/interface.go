@@ -13,6 +13,8 @@ type QemuImgClient interface {
 	Convert(ctx context.Context, inputFormat, outputFormat, inputFile, outputFile string) error
 	// Info 获取镜像信息
 	Info(ctx context.Context, imagePath string) (string, error)
+	// GetFormat 获取镜像格式
+	GetFormat(ctx context.Context, imagePath string) (string, error)
 	// Check 检查镜像完整性
 	Check(ctx context.Context, imagePath, format string) error
 	// CreateEmpty 创建空镜像
