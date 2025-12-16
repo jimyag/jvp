@@ -71,6 +71,10 @@ dockers_v2:
       - "latest"
     dockerfile: Dockerfile
     sbom: none # 禁用 SBOM，避免 docker driver 不支持 attestation 的问题
+    # 额外需要复制到构建上下文的文件
+    extra_files:
+      - docker/entrypoint.sh
+      - docker/supervisord.conf
     labels:
       org.opencontainers.image.created: "{{.Date}}"
       org.opencontainers.image.title: "{{.ProjectName}}"
