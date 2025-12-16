@@ -8,23 +8,23 @@ jimyag's virtualization platform
 
 JVP is a virtualization platform based on QEMU/KVM and libvirt, providing complete virtual machine lifecycle management. It supports creating, managing, and monitoring virtual machine instances through RESTful API and a modern web management interface.
 
-![JVP](docs/static/Snipaste_2025-11-29_19-36-26.png)
+![Node Management](docs/static/nodes.png)
 
-![JVP](docs/static/Snipaste_2025-11-29_19-37-42.png)
+![Instance List](docs/static/instance.png)
 
-![JVP](docs/static/Snipaste_2025-11-29_19-38-00.png)
+![Instance Details](docs/static/instance-detail.png)
 
-![JVP](docs/static/Snipaste_2025-11-29_19-38-12.png)
+![VNC Console](docs/static/instance-vnc.png)
 
-![JVP](docs/static/Snipaste_2025-11-29_19-38-25.png)
+![Serial Console](docs/static/instance-console.png)
 
-![JVP](docs/static/Snipaste_2025-11-29_19-38-36.png)
+![Storage Pool List](docs/static/storage-pool.png)
 
-![JVP](docs/static/Snipaste_2025-11-29_19-38-58.png)
+![Storage Pool Details](docs/static/storage-pool-detail.png)
 
-![JVP](docs/static/Snipaste_2025-12-02_00-00-03.png)
+![Template Management](docs/static/template.png)
 
-![JVP](docs/static/Snipaste_2025-12-02_00-00-16.png)
+![Snapshot Management](docs/static/snapshot.png)
 
 ## Core Features
 
@@ -134,7 +134,57 @@ docker run -d \
 http://<server-ip>:7777
 ```
 
-### Option 2: Build and Run Locally
+### Option 2: Binary Deployment
+
+**1. Download the binary**
+
+Download the binary for your system from [GitHub Releases](https://github.com/jimyag/jvp/releases).
+
+```bash
+# Create directory
+sudo mkdir -p /opt/jvp
+
+# Download and extract (example for linux amd64)
+wget https://github.com/jimyag/jvp/releases/latest/download/jvp_linux_amd64.tar.gz
+tar -xzf jvp_linux_amd64.tar.gz -C /opt/jvp
+```
+
+**2. Create systemd service**
+
+```bash
+sudo tee /etc/systemd/system/jvp.service > /dev/null <<EOF
+[Unit]
+Description=JVP - jimyag's virtualization platform
+After=network.target libvirtd.service
+Wants=network.target
+
+[Service]
+User=root
+Group=root
+Restart=always
+ExecStart=/opt/jvp/jvp
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+**3. Start the service**
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable jvp
+sudo systemctl start jvp
+```
+
+**4. Access the Web interface**
+
+```
+http://<server-ip>:7777
+```
+
+### Option 3: Build and Run Locally
 
 **1. Build the project**
 

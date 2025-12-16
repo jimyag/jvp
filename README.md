@@ -180,7 +180,57 @@ docker run -d \
 http://<服务器IP>:7777
 ```
 
-### 方式二：本地构建运行
+### 方式二：二进制文件部署
+
+**1. 下载二进制文件**
+
+从 [GitHub Releases](https://github.com/jimyag/jvp/releases) 下载适合您系统的二进制文件。
+
+```bash
+# 创建目录
+sudo mkdir -p /opt/jvp
+
+# 下载并解压（以 linux amd64 为例）
+wget https://github.com/jimyag/jvp/releases/latest/download/jvp_linux_amd64.tar.gz
+tar -xzf jvp_linux_amd64.tar.gz -C /opt/jvp
+```
+
+**2. 创建 systemd 服务**
+
+```bash
+sudo tee /etc/systemd/system/jvp.service > /dev/null <<EOF
+[Unit]
+Description=JVP - jimyag's virtualization platform
+After=network.target libvirtd.service
+Wants=network.target
+
+[Service]
+User=root
+Group=root
+Restart=always
+ExecStart=/opt/jvp/jvp
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+**3. 启动服务**
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable jvp
+sudo systemctl start jvp
+```
+
+**4. 访问 Web 界面**
+
+```
+http://<服务器IP>:7777
+```
+
+### 方式三：本地构建运行
 
 **1. 构建项目**
 
