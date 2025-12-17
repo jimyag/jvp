@@ -1313,6 +1313,262 @@ func (c *Client) ListNetworks() ([]string, error) {
 	return names, nil
 }
 
+// ListNetworksInfo 列出所有网络的详细信息
+func (c *Client) ListNetworksInfo() ([]NetworkInfo, error) {
+	nets, _, err := c.conn.ConnectListAllNetworks(0, 0)
+	if err != nil {
+		return nil, fmt.Errorf("list networks: %w", err)
+	}
+
+	result := make([]NetworkInfo, 0, len(nets))
+	for _, n := range nets {
+		info, err := c.getNetworkInfo(n)
+		if err != nil {
+			continue
+		}
+		result = append(result, *info)
+	}
+	return result, nil
+}
+
+// GetNetwork 获取指定网络的详细信息
+func (c *Client) GetNetwork(name string) (*NetworkInfo, error) {
+	network, err := c.conn.NetworkLookupByName(name)
+	if err != nil {
+		return nil, fmt.Errorf("lookup network %s: %w", name, err)
+	}
+	return c.getNetworkInfo(network)
+}
+
+// GetNetworkXMLDesc 获取网络的 XML 描述
+func (c *Client) GetNetworkXMLDesc(name string) (string, error) {
+	network, err := c.conn.NetworkLookupByName(name)
+	if err != nil {
+		return "", fmt.Errorf("lookup network %s: %w", name, err)
+	}
+	xmlDesc, err := c.conn.NetworkGetXMLDesc(network, 0)
+	if err != nil {
+		return "", fmt.Errorf("get network XML: %w", err)
+	}
+	return xmlDesc, nil
+}
+
+// getNetworkInfo 从 libvirt.Network 获取 NetworkInfo
+func (c *Client) getNetworkInfo(network libvirt.Network) (*NetworkInfo, error) {
+	// 获取 XML 描述
+	xmlDesc, err := c.conn.NetworkGetXMLDesc(network, 0)
+	if err != nil {
+		return nil, fmt.Errorf("get network XML: %w", err)
+	}
+
+	var netXML NetworkXML
+	if err := xml.Unmarshal([]byte(xmlDesc), &netXML); err != nil {
+		return nil, fmt.Errorf("parse network XML: %w", err)
+	}
+
+	// 获取网络状态
+	active, err := c.conn.NetworkIsActive(network)
+	if err != nil {
+		return nil, fmt.Errorf("check network active: %w", err)
+	}
+
+	persistent, err := c.conn.NetworkIsPersistent(network)
+	if err != nil {
+		return nil, fmt.Errorf("check network persistent: %w", err)
+	}
+
+	autostart, err := c.conn.NetworkGetAutostart(network)
+	if err != nil {
+		// autostart 查询失败不是致命错误
+		autostart = 0
+	}
+
+	// 获取桥接名称
+	bridgeName := ""
+	if netXML.Bridge != nil {
+		bridgeName = netXML.Bridge.Name
+	}
+
+	// 判断网络模式
+	mode := "isolated"
+	if netXML.Forward != nil && netXML.Forward.Mode != "" {
+		mode = netXML.Forward.Mode
+	}
+
+	// 获取 IP 配置
+	ipAddress := ""
+	netmask := ""
+	dhcpStart := ""
+	dhcpEnd := ""
+	if netXML.IP != nil {
+		ipAddress = netXML.IP.Address
+		netmask = netXML.IP.Netmask
+		if netXML.IP.DHCP != nil && len(netXML.IP.DHCP.Range) > 0 {
+			dhcpStart = netXML.IP.DHCP.Range[0].Start
+			dhcpEnd = netXML.IP.DHCP.Range[0].End
+		}
+	}
+
+	// 格式化 UUID
+	uuidStr := fmt.Sprintf("%x", network.UUID)
+	if len(uuidStr) >= 32 {
+		uuidStr = fmt.Sprintf("%s-%s-%s-%s-%s",
+			uuidStr[0:8], uuidStr[8:12], uuidStr[12:16], uuidStr[16:20], uuidStr[20:32])
+	}
+
+	return &NetworkInfo{
+		Name:       network.Name,
+		UUID:       uuidStr,
+		Bridge:     bridgeName,
+		Active:     active == 1,
+		Persistent: persistent == 1,
+		Autostart:  autostart == 1,
+		Mode:       mode,
+		IPAddress:  ipAddress,
+		Netmask:    netmask,
+		DHCPStart:  dhcpStart,
+		DHCPEnd:    dhcpEnd,
+	}, nil
+}
+
+// CreateNetwork 创建新的虚拟网络
+func (c *Client) CreateNetwork(config NetworkConfig) (*NetworkInfo, error) {
+	// 生成网络 XML
+	netXML := NetworkXML{
+		Name: config.Name,
+	}
+
+	// 设置转发模式
+	if config.Mode != "" && config.Mode != "isolated" {
+		netXML.Forward = &NetworkForward{Mode: config.Mode}
+	}
+
+	// 设置桥接
+	if config.Bridge != "" {
+		netXML.Bridge = &NetworkBridge{Name: config.Bridge, STP: "on", Delay: "0"}
+	} else {
+		// 自动生成桥接名称
+		netXML.Bridge = &NetworkBridge{Name: "virbr-" + config.Name[:min(8, len(config.Name))], STP: "on", Delay: "0"}
+	}
+
+	// 设置 IP 配置
+	if config.IPAddress != "" {
+		netXML.IP = &NetworkIP{
+			Address: config.IPAddress,
+			Netmask: config.Netmask,
+		}
+		if config.DHCPStart != "" && config.DHCPEnd != "" {
+			netXML.IP.DHCP = &NetworkDHCP{
+				Range: []NetworkDHCPRange{{Start: config.DHCPStart, End: config.DHCPEnd}},
+			}
+		}
+	}
+
+	// 序列化为 XML
+	xmlData, err := xml.MarshalIndent(netXML, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshal network XML: %w", err)
+	}
+	xmlStr := xml.Header + string(xmlData)
+
+	// 定义网络
+	network, err := c.conn.NetworkDefineXML(xmlStr)
+	if err != nil {
+		return nil, fmt.Errorf("define network: %w", err)
+	}
+
+	// 启动网络
+	if err := c.conn.NetworkCreate(network); err != nil {
+		// 如果启动失败，尝试删除已定义的网络
+		_ = c.conn.NetworkUndefine(network)
+		return nil, fmt.Errorf("start network: %w", err)
+	}
+
+	// 设置自动启动
+	if config.Autostart {
+		if err := c.conn.NetworkSetAutostart(network, 1); err != nil {
+			// 自动启动设置失败不是致命错误
+		}
+	}
+
+	return c.getNetworkInfo(network)
+}
+
+// DeleteNetwork 删除虚拟网络
+func (c *Client) DeleteNetwork(name string) error {
+	network, err := c.conn.NetworkLookupByName(name)
+	if err != nil {
+		return fmt.Errorf("lookup network %s: %w", name, err)
+	}
+
+	// 检查网络是否活跃
+	active, err := c.conn.NetworkIsActive(network)
+	if err != nil {
+		return fmt.Errorf("check network active: %w", err)
+	}
+
+	// 如果活跃，先停止
+	if active == 1 {
+		if err := c.conn.NetworkDestroy(network); err != nil {
+			return fmt.Errorf("stop network: %w", err)
+		}
+	}
+
+	// 取消定义
+	if err := c.conn.NetworkUndefine(network); err != nil {
+		return fmt.Errorf("undefine network: %w", err)
+	}
+
+	return nil
+}
+
+// StartNetwork 启动虚拟网络
+func (c *Client) StartNetwork(name string) error {
+	network, err := c.conn.NetworkLookupByName(name)
+	if err != nil {
+		return fmt.Errorf("lookup network %s: %w", name, err)
+	}
+
+	if err := c.conn.NetworkCreate(network); err != nil {
+		return fmt.Errorf("start network: %w", err)
+	}
+
+	return nil
+}
+
+// StopNetwork 停止虚拟网络
+func (c *Client) StopNetwork(name string) error {
+	network, err := c.conn.NetworkLookupByName(name)
+	if err != nil {
+		return fmt.Errorf("lookup network %s: %w", name, err)
+	}
+
+	if err := c.conn.NetworkDestroy(network); err != nil {
+		return fmt.Errorf("stop network: %w", err)
+	}
+
+	return nil
+}
+
+// SetNetworkAutostart 设置网络自动启动
+func (c *Client) SetNetworkAutostart(name string, autostart bool) error {
+	network, err := c.conn.NetworkLookupByName(name)
+	if err != nil {
+		return fmt.Errorf("lookup network %s: %w", name, err)
+	}
+
+	var val int32 = 0
+	if autostart {
+		val = 1
+	}
+
+	if err := c.conn.NetworkSetAutostart(network, val); err != nil {
+		return fmt.Errorf("set network autostart: %w", err)
+	}
+
+	return nil
+}
+
 // ListNodeDevices 列出指定类型的节点设备
 // cap 参数可以是："pci", "usb", "storage", "net" 等
 func (c *Client) ListNodeDevices(cap string) ([]libvirt.NodeDevice, error) {

@@ -13,6 +13,7 @@ import StoragePoolDetailPage from './pages/storage-pools/StoragePoolDetailPage';
 import TemplatesPage from './pages/templates/TemplatesPage';
 import SnapshotsPage from './pages/snapshots/SnapshotsPage';
 import KeypairsPage from './pages/keypairs/KeypairsPage';
+import NetworksPage from './pages/networks/NetworksPage';
 
 const routes: RouteObject[] = [
   {
@@ -29,6 +30,7 @@ const routes: RouteObject[] = [
       { path: '/templates', element: <TemplatesPage /> },
       { path: '/snapshots', element: <SnapshotsPage /> },
       { path: '/keypairs', element: <KeypairsPage /> },
+      { path: '/networks', element: <NetworksPage /> },
     ]
   },
   { path: '*', element: <Navigate to="/instances" replace /> }

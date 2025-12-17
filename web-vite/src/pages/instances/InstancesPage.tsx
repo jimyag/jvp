@@ -51,6 +51,28 @@ interface KeyPair {
   fingerprint: string;
 }
 
+interface LibvirtNetwork {
+  name: string;
+  uuid: string;
+  mode: string;
+  state: string;
+  ip_address: string;
+  netmask: string;
+  dhcp_start: string;
+  dhcp_end: string;
+}
+
+interface HostBridge {
+  name: string;
+  state: string;
+  ips: string[];
+}
+
+interface NetworkSources {
+  libvirt_networks: LibvirtNetwork[];
+  host_bridges: HostBridge[];
+}
+
 export default function InstancesPage() {
   const toast = useToast();
   const [searchParams] = useSearchParams();
@@ -59,6 +81,7 @@ export default function InstancesPage() {
   const [storagePools, setStoragePools] = useState<StoragePool[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [keypairs, setKeypairs] = useState<KeyPair[]>([]);
+  const [networkSources, setNetworkSources] = useState<NetworkSources | null>(null);
   const [loading, setLoading] = useState(true);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -232,6 +255,43 @@ export default function InstancesPage() {
     }
   };
 
+  const fetchNetworkSources = async (nodeName: string) => {
+    if (!nodeName) return;
+    try {
+      const response = await fetch("/api/list-network-sources", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ node_name: nodeName }),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setNetworkSources(data.sources || null);
+        // Auto-select the first available network source
+        const sources = data.sources as NetworkSources | null;
+        if (sources) {
+          // Prefer active libvirt networks first
+          const activeNetwork = sources.libvirt_networks?.find(n => n.state === "active");
+          if (activeNetwork) {
+            setFormData(prev => ({
+              ...prev,
+              network_type: "network",
+              network_source: activeNetwork.name
+            }));
+          } else if (sources.host_bridges?.length > 0) {
+            // Fall back to first bridge
+            setFormData(prev => ({
+              ...prev,
+              network_type: "bridge",
+              network_source: sources.host_bridges[0].name
+            }));
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Failed to fetch network sources:", error);
+    }
+  };
+
   useEffect(() => {
     fetchNodes();
     fetchKeypairs();
@@ -246,6 +306,7 @@ export default function InstancesPage() {
   useEffect(() => {
     if (formData.node_name) {
       fetchStoragePools(formData.node_name);
+      fetchNetworkSources(formData.node_name);
     }
   }, [formData.node_name]);
 
@@ -800,38 +861,54 @@ export default function InstancesPage() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="label">Network Type</label>
-                  <select
-                    className="input"
-                    value={formData.network_type}
-                    onChange={(e) =>
-                      setFormData({ ...formData, network_type: e.target.value })
-                    }
-                  >
-                    <option value="bridge">Bridge</option>
-                    <option value="network">NAT Network</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="label">Network Source</label>
-                  <input
-                    type="text"
-                    className="input"
-                    value={formData.network_source}
-                    onChange={(e) =>
-                      setFormData({ ...formData, network_source: e.target.value })
-                    }
-                    placeholder={formData.network_type === "bridge" ? "br0" : "default"}
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    {formData.network_type === "bridge"
-                      ? "Bridge interface name (e.g., br0, virbr0)"
-                      : "Libvirt network name (e.g., default)"}
-                  </p>
-                </div>
+              <div>
+                <label className="label">Network</label>
+                <select
+                  className="input"
+                  value={`${formData.network_type}:${formData.network_source}`}
+                  onChange={(e) => {
+                    const [type, source] = e.target.value.split(':');
+                    setFormData({ ...formData, network_type: type, network_source: source });
+                  }}
+                  disabled={!formData.node_name}
+                >
+                  <option value="">Select Network</option>
+                  {networkSources?.libvirt_networks && networkSources.libvirt_networks.length > 0 && (
+                    <optgroup label="Libvirt Networks">
+                      {networkSources.libvirt_networks.map((net) => (
+                        <option
+                          key={`network:${net.name}`}
+                          value={`network:${net.name}`}
+                          disabled={net.state !== "active"}
+                        >
+                          {net.name} ({net.mode})
+                          {net.ip_address && ` - ${net.ip_address}`}
+                          {net.state !== "active" && " [inactive]"}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {networkSources?.host_bridges && networkSources.host_bridges.length > 0 && (
+                    <optgroup label="Host Bridges">
+                      {networkSources.host_bridges.map((br) => (
+                        <option
+                          key={`bridge:${br.name}`}
+                          value={`bridge:${br.name}`}
+                          disabled={br.state !== "up"}
+                        >
+                          {br.name}
+                          {br.ips && br.ips.length > 0 && ` (${br.ips[0]})`}
+                          {br.state !== "up" && " [down]"}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  {formData.network_type === "network"
+                    ? "Libvirt NAT network provides DHCP and NAT"
+                    : "Bridge connects VM directly to host network"}
+                </p>
               </div>
 
               <div>

@@ -23,6 +23,8 @@ type API struct {
 	storagePool *StoragePoolAPI
 	template    *Template
 	snapshot    *Snapshot
+	network     *NetworkAPI
+	bridge      *BridgeAPI
 	frontendFS  http.FileSystem
 }
 
@@ -34,6 +36,8 @@ func New(
 	storagePoolService *service.StoragePoolService,
 	templateService *service.TemplateService,
 	snapshotService *service.SnapshotService,
+	networkService *service.NetworkService,
+	bridgeService *service.BridgeService,
 	cfg *config.Config,
 ) (*API, error) {
 	// 先禁用 Gin 的 debug 路由输出（避免打印带函数名的路由信息）
@@ -51,6 +55,8 @@ func New(
 		storagePool: NewStoragePoolAPI(storagePoolService),
 		template:    NewTemplate(templateService),
 		snapshot:    NewSnapshot(snapshotService),
+		network:     NewNetworkAPI(networkService),
+		bridge:      NewBridgeAPI(bridgeService),
 	}
 
 	apiGroup := engine.Group("/api")
@@ -62,6 +68,8 @@ func New(
 	api.storagePool.RegisterRoutes(apiGroup)
 	api.template.RegisterRoutes(apiGroup)
 	api.snapshot.RegisterRoutes(apiGroup)
+	api.network.RegisterRoutes(apiGroup)
+	api.bridge.RegisterRoutes(apiGroup)
 	api.mountFrontend()
 
 	api.server = &http.Server{

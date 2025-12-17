@@ -140,18 +140,19 @@ type USBDevice struct {
 
 // NetworkInterface 网络接口
 type NetworkInterface struct {
-	Name      string   `json:"name"`       // 接口名称
-	MAC       string   `json:"mac"`        // MAC 地址
-	Speed     string   `json:"speed"`      // 速率
-	Duplex    string   `json:"duplex"`     // 双工模式
-	State     string   `json:"state"`      // 状态 (up/down)
-	IP        []string `json:"ip"`         // IP 地址列表
-	RXBytes   int64    `json:"rx_bytes"`   // 接收字节数
-	TXBytes   int64    `json:"tx_bytes"`   // 发送字节数
-	RXPackets int64    `json:"rx_packets"` // 接收包数
-	TXPackets int64    `json:"tx_packets"` // 发送包数
-	Errors    int64    `json:"errors"`     // 错误数
-	Dropped   int64    `json:"dropped"`    // 丢包数
+	Name      string   `json:"name"`                 // 接口名称
+	MAC       string   `json:"mac"`                  // MAC 地址
+	Speed     string   `json:"speed"`                // 速率
+	Duplex    string   `json:"duplex"`               // 双工模式
+	State     string   `json:"state"`                // 状态 (up/down)
+	IP        []string `json:"ip"`                   // IP 地址列表
+	RXBytes   int64    `json:"rx_bytes"`             // 接收字节数
+	TXBytes   int64    `json:"tx_bytes"`             // 发送字节数
+	RXPackets int64    `json:"rx_packets"`           // 接收包数
+	TXPackets int64    `json:"tx_packets"`           // 发送包数
+	Errors    int64    `json:"errors"`               // 错误数
+	Dropped   int64    `json:"dropped"`              // 丢包数
+	BoundTo   string   `json:"bound_to,omitempty"`   // 绑定到的网桥（如果有）
 }
 
 // Bridge 网桥

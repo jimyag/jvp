@@ -74,6 +74,16 @@ type LibvirtClient interface {
 	ListNetworkDHCPLeases(networkName string) ([]DHCPLease, error)
 	ListNetworks() ([]string, error)
 
+	// Network 管理
+	ListNetworksInfo() ([]NetworkInfo, error)
+	GetNetwork(name string) (*NetworkInfo, error)
+	GetNetworkXMLDesc(name string) (string, error)
+	CreateNetwork(config NetworkConfig) (*NetworkInfo, error)
+	DeleteNetwork(name string) error
+	StartNetwork(name string) error
+	StopNetwork(name string) error
+	SetNetworkAutostart(name string, autostart bool) error
+
 	// Node Device 操作
 	ListNodeDevices(cap string) ([]libvirt.NodeDevice, error)
 	GetNodeDeviceXMLDesc(dev libvirt.NodeDevice) (string, error)

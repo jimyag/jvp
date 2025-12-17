@@ -606,3 +606,82 @@ type DomainSecret struct {
 	Type string `xml:"type,attr"` // passphrase, vtpm
 	UUID string `xml:"uuid,attr,omitempty"`
 }
+
+// NetworkXML represents libvirt network XML structure
+// Reference: https://libvirt.org/formatnetwork.html
+type NetworkXML struct {
+	XMLName xml.Name        `xml:"network"`
+	Name    string          `xml:"name"`
+	UUID    string          `xml:"uuid,omitempty"`
+	Bridge  *NetworkBridge  `xml:"bridge,omitempty"`
+	Forward *NetworkForward `xml:"forward,omitempty"`
+	IP      *NetworkIP      `xml:"ip,omitempty"`
+}
+
+// NetworkBridge represents network bridge configuration
+type NetworkBridge struct {
+	Name  string `xml:"name,attr,omitempty"`
+	STP   string `xml:"stp,attr,omitempty"`   // on, off
+	Delay string `xml:"delay,attr,omitempty"` // forward delay in seconds
+}
+
+// NetworkForward represents network forward mode
+type NetworkForward struct {
+	Mode string `xml:"mode,attr,omitempty"` // nat, route, bridge, private, vepa, passthrough, hostdev
+}
+
+// NetworkIP represents network IP configuration
+type NetworkIP struct {
+	Address string       `xml:"address,attr,omitempty"` // gateway IP
+	Netmask string       `xml:"netmask,attr,omitempty"` // subnet mask
+	Prefix  int          `xml:"prefix,attr,omitempty"`  // CIDR prefix
+	DHCP    *NetworkDHCP `xml:"dhcp,omitempty"`
+}
+
+// NetworkDHCP represents DHCP configuration
+type NetworkDHCP struct {
+	Range []NetworkDHCPRange `xml:"range,omitempty"`
+	Host  []NetworkDHCPHost  `xml:"host,omitempty"`
+}
+
+// NetworkDHCPRange represents DHCP range
+type NetworkDHCPRange struct {
+	Start string `xml:"start,attr"`
+	End   string `xml:"end,attr"`
+}
+
+// NetworkDHCPHost represents static DHCP host reservation
+type NetworkDHCPHost struct {
+	MAC  string `xml:"mac,attr,omitempty"`
+	Name string `xml:"name,attr,omitempty"`
+	IP   string `xml:"ip,attr"`
+}
+
+// NetworkInfo represents libvirt network information
+type NetworkInfo struct {
+	Name       string `json:"name"`
+	UUID       string `json:"uuid"`
+	Bridge     string `json:"bridge"`
+	Active     bool   `json:"active"`
+	Persistent bool   `json:"persistent"`
+	Autostart  bool   `json:"autostart"`
+
+	// Network configuration
+	Mode      string `json:"mode"`       // nat/bridge/isolated/route
+	IPAddress string `json:"ip_address"` // Gateway IP (e.g., 192.168.122.1)
+	Netmask   string `json:"netmask"`    // Subnet mask
+	DHCPStart string `json:"dhcp_start"` // DHCP start IP
+	DHCPEnd   string `json:"dhcp_end"`   // DHCP end IP
+}
+
+// NetworkConfig represents configuration for creating a new network
+type NetworkConfig struct {
+	Name      string `json:"name"`
+	Mode      string `json:"mode"`       // nat/isolated
+	Bridge    string `json:"bridge"`     // Bridge name (optional, auto-generated)
+	IPAddress string `json:"ip_address"` // e.g., 192.168.100.1
+	Netmask   string `json:"netmask"`    // e.g., 255.255.255.0
+	DHCPStart string `json:"dhcp_start"` // e.g., 192.168.100.100
+	DHCPEnd   string `json:"dhcp_end"`   // e.g., 192.168.100.200
+	Autostart bool   `json:"autostart"`
+}
