@@ -29,11 +29,10 @@ func NewKeyPair(keyPairService *service.KeyPairService) *KeyPair {
 }
 
 func (k *KeyPair) RegisterRoutes(router *gin.RouterGroup) {
-	keypairRouter := router.Group("/keypairs")
-	keypairRouter.POST("/create", ginx.Adapt5(k.CreateKeyPair))
-	keypairRouter.POST("/import", ginx.Adapt5(k.ImportKeyPair))
-	keypairRouter.POST("/delete", ginx.Adapt5(k.DeleteKeyPair))
-	keypairRouter.POST("/describe", ginx.Adapt5(k.DescribeKeyPairs))
+	router.POST("/create-keypair", ginx.Adapt5(k.CreateKeyPair))
+	router.POST("/import-keypair", ginx.Adapt5(k.ImportKeyPair))
+	router.POST("/delete-keypair", ginx.Adapt5(k.DeleteKeyPair))
+	router.POST("/describe-keypairs", ginx.Adapt5(k.DescribeKeyPairs))
 }
 
 func (k *KeyPair) CreateKeyPair(ctx *gin.Context, req *entity.CreateKeyPairRequest) (*entity.CreateKeyPairResponse, error) {

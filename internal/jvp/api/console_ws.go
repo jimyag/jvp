@@ -31,10 +31,9 @@ func NewConsoleWS(instanceService *service.InstanceService) *ConsoleWS {
 }
 
 func (c *ConsoleWS) RegisterRoutes(router *gin.RouterGroup) {
-	consoleRouter := router.Group("/console")
-	// 路由包含 node_name 和 instance_id
-	consoleRouter.GET("/vnc/:node_name/:instance_id", c.HandleVNCWebSocket)
-	consoleRouter.GET("/serial/:node_name/:instance_id", c.HandleSerialWebSocket)
+	// WebSocket 路由包含 node_name 和 instance_id
+	router.GET("/get-vnc-console/:node_name/:instance_id", c.HandleVNCWebSocket)
+	router.GET("/get-serial-console/:node_name/:instance_id", c.HandleSerialWebSocket)
 }
 
 // HandleVNCWebSocket 处理 VNC WebSocket 连接

@@ -34,16 +34,15 @@ func NewInstance(instanceService *service.InstanceService) *Instance {
 }
 
 func (i *Instance) RegisterRoutes(router *gin.RouterGroup) {
-	instanceRouter := router.Group("/instances")
-	instanceRouter.POST("/run", ginx.Adapt5(i.RunInstances))
-	instanceRouter.POST("/describe", ginx.Adapt5(i.DescribeInstances))
-	instanceRouter.POST("/terminate", ginx.Adapt5(i.TerminateInstances))
-	instanceRouter.POST("/stop", ginx.Adapt5(i.StopInstances))
-	instanceRouter.POST("/start", ginx.Adapt5(i.StartInstances))
-	instanceRouter.POST("/reboot", ginx.Adapt5(i.RebootInstances))
-	instanceRouter.POST("/modify-attribute", ginx.Adapt5(i.ModifyInstanceAttribute))
-	instanceRouter.POST("/reset-password", ginx.Adapt5(i.ResetPassword))
-	instanceRouter.POST("/console", ginx.Adapt5(i.GetConsole))
+	router.POST("/run-instances", ginx.Adapt5(i.RunInstances))
+	router.POST("/describe-instances", ginx.Adapt5(i.DescribeInstances))
+	router.POST("/terminate-instances", ginx.Adapt5(i.TerminateInstances))
+	router.POST("/stop-instances", ginx.Adapt5(i.StopInstances))
+	router.POST("/start-instances", ginx.Adapt5(i.StartInstances))
+	router.POST("/reboot-instances", ginx.Adapt5(i.RebootInstances))
+	router.POST("/modify-instance-attribute", ginx.Adapt5(i.ModifyInstanceAttribute))
+	router.POST("/reset-instance-password", ginx.Adapt5(i.ResetPassword))
+	router.POST("/get-instance-console", ginx.Adapt5(i.GetConsole))
 }
 
 func (i *Instance) RunInstances(ctx *gin.Context, req *entity.RunInstanceRequest) (*entity.RunInstanceResponse, error) {

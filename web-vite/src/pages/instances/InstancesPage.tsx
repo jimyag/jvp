@@ -163,7 +163,7 @@ export default function InstancesPage() {
     if (!selectedNode) return;
     setLoading(true);
     try {
-      const response = await fetch("/api/instances/describe", {
+      const response = await fetch("/api/describe-instances", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ node_name: selectedNode }),
@@ -218,7 +218,7 @@ export default function InstancesPage() {
 
   const fetchKeypairs = async () => {
     try {
-      const response = await fetch("/api/keypairs/describe", {
+      const response = await fetch("/api/describe-keypairs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
@@ -262,7 +262,7 @@ export default function InstancesPage() {
       let finalKeypairIds = [...formData.keypair_ids];
       if (keypairInputMethod === "manual" && manualPublicKey.trim()) {
         try {
-          const importResponse = await fetch("/api/keypairs/import", {
+          const importResponse = await fetch("/api/import-keypair", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -336,7 +336,7 @@ export default function InstancesPage() {
         requestBody.user_data = userData;
       }
 
-      const response = await fetch("/api/instances/run", {
+      const response = await fetch("/api/run-instances", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody),
@@ -384,7 +384,7 @@ export default function InstancesPage() {
 
   const handleAction = async (instance: Instance, action: string) => {
     try {
-      const response = await fetch(`/api/instances/${action}`, {
+      const response = await fetch(`/api/${action}-instances`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -418,7 +418,7 @@ export default function InstancesPage() {
   const handleDeleteConfirm = async () => {
     if (!instanceToDelete) return;
     try {
-      const response = await fetch("/api/instances/terminate", {
+      const response = await fetch("/api/terminate-instances", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

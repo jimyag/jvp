@@ -35,7 +35,7 @@ export default function KeypairsPage() {
   const fetchKeypairs = async () => {
     setLoading(true);
     try {
-      const response = await fetch("/api/keypairs/describe", {
+      const response = await fetch("/api/describe-keypairs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
@@ -61,7 +61,7 @@ export default function KeypairsPage() {
   const handleCreateKeypair = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const response = await fetch("/api/keypairs/create", {
+      const response = await fetch("/api/create-keypair", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(createFormData),
@@ -86,7 +86,7 @@ export default function KeypairsPage() {
   const handleImportKeypair = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const response = await fetch("/api/keypairs/import", {
+      const response = await fetch("/api/import-keypair", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(importFormData),
@@ -127,7 +127,7 @@ export default function KeypairsPage() {
 
   const handleDeleteConfirm = async () => {
     try {
-      const response = await fetch("/api/keypairs/delete", {
+      const response = await fetch("/api/delete-keypair", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ keypair_id: keypairToDelete }),

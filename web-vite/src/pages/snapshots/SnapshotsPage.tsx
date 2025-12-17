@@ -110,7 +110,7 @@ export default function SnapshotsPage() {
       setSelectedNode(targetNode);
 
       // 获取该节点的实例
-      const instancesRes = await fetch("/api/instances/describe", {
+      const instancesRes = await fetch("/api/describe-instances", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ node_name: targetNode }),
@@ -187,7 +187,7 @@ export default function SnapshotsPage() {
     setSnapshots([]);
 
     try {
-      const res = await fetch("/api/instances/describe", {
+      const res = await fetch("/api/describe-instances", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ node_name: nodeName }),

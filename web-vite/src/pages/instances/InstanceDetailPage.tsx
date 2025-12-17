@@ -61,7 +61,7 @@ export default function InstanceDetailPage() {
   const fetchInstance = async () => {
     setLoading(true);
     try {
-      const response = await fetch("/api/instances/describe", {
+      const response = await fetch("/api/describe-instances", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -93,7 +93,7 @@ export default function InstanceDetailPage() {
 
   const handleAction = async (action: string) => {
     try {
-      const response = await fetch(`/api/instances/${action}`, {
+      const response = await fetch(`/api/${action}-instances`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -125,7 +125,7 @@ export default function InstanceDetailPage() {
 
   const handleDeleteConfirm = async () => {
     try {
-      const response = await fetch("/api/instances/terminate", {
+      const response = await fetch("/api/terminate-instances", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -151,7 +151,7 @@ export default function InstanceDetailPage() {
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const response = await fetch("/api/instances/reset-password", {
+      const response = await fetch("/api/reset-instance-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -192,7 +192,7 @@ export default function InstanceDetailPage() {
   const handleEditInstance = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const response = await fetch("/api/instances/modify-attribute", {
+      const response = await fetch("/api/modify-instance-attribute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

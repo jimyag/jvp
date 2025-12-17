@@ -43,7 +43,7 @@ export default function InstanceConsolePage() {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch("/api/instances/console", {
+      const response = await fetch("/api/get-instance-console", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -89,7 +89,7 @@ export default function InstanceConsolePage() {
     const host = window.location.host; // 包含端口号
     const endpoint = consoleType === "vnc" ? "vnc" : "serial";
 
-    return `${protocol}//${host}/api/console/${endpoint}/${nodeName}/${instanceId}`;
+    return `${protocol}//${host}/api/get-${endpoint}-console/${nodeName}/${instanceId}`;
   };
 
   const handleConsoleTypeChange = (type: ConsoleType) => {
