@@ -1,0 +1,2 @@
+# Ignore web-vite/public files in GitHub language statistics
+web-vite/public/** linguist-vendored
