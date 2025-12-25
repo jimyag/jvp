@@ -1,9 +1,10 @@
 import { X } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onOpen?: () => void;
   title: string;
   children: React.ReactNode;
   maxWidth?: "sm" | "md" | "lg" | "xl";
@@ -19,21 +20,29 @@ const maxWidthClasses = {
 export default function Modal({
   isOpen,
   onClose,
+  onOpen,
   title,
   children,
   maxWidth = "md",
 }: ModalProps) {
+  const prevIsOpenRef = useRef(isOpen);
+
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = "hidden";
+      // 只在从关闭状态变为打开状态时调用 onOpen
+      if (!prevIsOpenRef.current && onOpen) {
+        onOpen();
+      }
     } else {
       document.body.style.overflow = "unset";
     }
+    prevIsOpenRef.current = isOpen;
 
     return () => {
       document.body.style.overflow = "unset";
     };
-  }, [isOpen]);
+  }, [isOpen, onOpen]);
 
   if (!isOpen) return null;
 

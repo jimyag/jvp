@@ -215,7 +215,12 @@ export default function InstancesPage() {
       });
       if (response.ok) {
         const data = await response.json();
-        setStoragePools(data.pools || []);
+        const pools = data.pools || [];
+        setStoragePools(pools);
+        // 自动选择第一个 storage pool
+        if (pools.length > 0) {
+          setFormData(prev => ({ ...prev, pool_name: pools[0].name, template_id: "" }));
+        }
       }
     } catch (error) {
       console.error("Failed to fetch storage pools:", error);
@@ -232,7 +237,14 @@ export default function InstancesPage() {
       });
       if (response.ok) {
         const data = await response.json();
-        setTemplates(data.templates || []);
+        const templateList = data.templates || [];
+        setTemplates(templateList);
+        // 如果有 template，自动选择第一个
+        if (templateList.length > 0) {
+          setFormData(prev => ({ ...prev, template_id: templateList[0].id }));
+        } else {
+          setFormData(prev => ({ ...prev, template_id: "" }));
+        }
       }
     } catch (error) {
       console.error("Failed to fetch templates:", error);
@@ -697,6 +709,12 @@ export default function InstancesPage() {
           setIsCreateModalOpen(false);
           setCurrentStep(0);
         }}
+        onOpen={() => {
+          // 自动选择第一个 node
+          if (nodes.length > 0 && !formData.node_name) {
+            setFormData(prev => ({ ...prev, node_name: nodes[0].name, pool_name: "", template_id: "" }));
+          }
+        }}
         title="Create New Instance"
         maxWidth="xl"
       >
@@ -800,16 +818,37 @@ export default function InstancesPage() {
                   }
                   disabled={!formData.pool_name}
                 >
-                  <option value="">No Template (Empty Disk)</option>
+                  {templates.length === 0 && (
+                    <option value="">No Template (Empty Disk)</option>
+                  )}
                   {templates.map((template) => (
                     <option key={template.id} value={template.id}>
                       {template.name} ({template.size_gb}GB, {template.format})
                     </option>
                   ))}
                 </select>
-                <p className="text-xs text-gray-500 mt-1">
-                  Select a template to create instance from, or leave empty for blank disk
-                </p>
+                {formData.pool_name && templates.length === 0 && (
+                  <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                    <p className="text-sm text-amber-800">
+                      <strong>No templates found</strong> in this storage pool. You can:
+                    </p>
+                    <ul className="text-sm text-amber-700 mt-1 list-disc list-inside">
+                      <li>Select a different storage pool that contains templates</li>
+                      <li>
+                        <a href="/templates" className="text-amber-900 underline hover:text-amber-700">
+                          Create a new template
+                        </a>{" "}
+                        in this storage pool
+                      </li>
+                      <li>Continue without a template (creates an empty disk)</li>
+                    </ul>
+                  </div>
+                )}
+                {(!formData.pool_name || templates.length > 0) && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Select a template to create instance from, or leave empty for blank disk
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-4">
