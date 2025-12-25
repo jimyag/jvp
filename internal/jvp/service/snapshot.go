@@ -202,6 +202,8 @@ func (s *SnapshotService) DescribeSnapshot(ctx context.Context, req *entity.Desc
 }
 
 // DeleteSnapshot 删除快照
+// 注意：对于外部快照（external snapshot），libvirt 无法自动合并磁盘链，
+// 因此默认只删除快照元数据。快照的磁盘文件需要手动清理或使用 blockcommit/blockpull 操作。
 func (s *SnapshotService) DeleteSnapshot(ctx context.Context, req *entity.DeleteSnapshotRequest) error {
 	logger := zerolog.Ctx(ctx)
 	logger.Info().
@@ -222,7 +224,10 @@ func (s *SnapshotService) DeleteSnapshot(ctx context.Context, req *entity.Delete
 	if req.DeleteChildren {
 		flags |= libvirtlib.DomainSnapshotDeleteChildren
 	}
-	if req.MetadataOnly {
+
+	// 对于外部快照，强制使用 MetadataOnly，因为 libvirt 无法自动合并外部快照的磁盘链
+	// 如果用户明确设置了 MetadataOnly 或没有设置任何特殊选项，都使用 MetadataOnly
+	if req.MetadataOnly || !req.DisksOnly {
 		flags |= libvirtlib.DomainSnapshotDeleteMetadataOnly
 	}
 
@@ -372,35 +377,60 @@ func (s *SnapshotService) CloneFromSnapshot(ctx context.Context, req *entity.Clo
 	qemuClient := s.createQemuImgClient(client)
 
 	// 6. 处理快照磁盘 - 为新 VM 创建磁盘
+	// 关键点：快照磁盘（snap-xxx.qcow2）是 VM 当前使用的增量文件，
+	// 它的 backing file 才是快照时刻的状态。
+	// 所以我们需要获取 backing file 路径作为克隆源。
 	var newDiskPath string
 	for _, disk := range snap.Disks {
 		if disk.Source == nil || disk.Source.File == "" {
 			continue
 		}
 
-		srcDiskPath := disk.Source.File
+		snapshotDiskPath := disk.Source.File
 		diskFormat := "qcow2"
 		if disk.Driver != nil && disk.Driver.Type != "" {
 			diskFormat = disk.Driver.Type
+		}
+
+		// 获取 backing file 路径（这才是快照时刻的状态）
+		backingFile, err := qemuClient.GetBackingFile(ctx, snapshotDiskPath)
+		if err != nil {
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get backing file path", err)
+		}
+
+		logger.Info().
+			Str("snapshot_disk", snapshotDiskPath).
+			Str("backing_file", backingFile).
+			Msg("Found backing file info for snapshot disk")
+
+		// 如果快照磁盘没有 backing file，说明它本身就是完整的快照状态
+		// 这种情况应该直接使用 snapshotDiskPath
+		if backingFile == "" {
+			logger.Info().
+				Str("snapshot_disk", snapshotDiskPath).
+				Msg("Snapshot disk has no backing file, using snapshot disk directly as source")
+			backingFile = snapshotDiskPath
 		}
 
 		// 新磁盘路径
 		newDiskPath = filepath.Join(poolPath, fmt.Sprintf("%s.qcow2", newVMName))
 
 		logger.Info().
-			Str("src_disk", srcDiskPath).
+			Str("src_disk", backingFile).
 			Str("new_disk", newDiskPath).
 			Bool("flatten", req.Flatten).
-			Msg("Creating disk for cloned VM")
+			Msg("Creating disk for cloned VM from backing file (snapshot state)")
 
 		if req.Flatten {
 			// 合并增量链 - 使用 qemu-img convert
-			if err := qemuClient.Convert(ctx, diskFormat, "qcow2", srcDiskPath, newDiskPath); err != nil {
+			// backing file 是只读的，不需要 -U 参数
+			if err := qemuClient.Convert(ctx, diskFormat, "qcow2", backingFile, newDiskPath); err != nil {
 				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to convert/flatten disk", err)
 			}
 		} else {
 			// 保留增量链 - 使用 qemu-img create -b
-			if err := qemuClient.CreateFromBackingFile(ctx, "qcow2", diskFormat, srcDiskPath, newDiskPath); err != nil {
+			// 基于 backing file 创建新的增量文件
+			if err := qemuClient.CreateFromBackingFile(ctx, "qcow2", diskFormat, backingFile, newDiskPath); err != nil {
 				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to create disk from backing file", err)
 			}
 		}

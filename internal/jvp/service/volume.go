@@ -331,9 +331,18 @@ func (s *VolumeService) DeleteVolume(ctx context.Context, req *entity.DeleteVolu
 		return fmt.Errorf("get node storage: %w", err)
 	}
 
-	// 删除卷，尝试多种扩展名
+	// 首先尝试直接使用原始名称删除（可能已经包含扩展名）
+	err = nodeStorage.DeleteVolume(req.PoolName, req.VolumeID)
+	if err == nil {
+		logger.Info().
+			Str("volume_id", req.VolumeID).
+			Msg("Volume deleted successfully")
+		return nil
+	}
+
+	// 如果原始名称失败，尝试添加各种扩展名
 	extensions := []string{".qcow2", ".raw", ".img", ".iso"}
-	var lastErr error
+	var lastErr error = err
 	for _, ext := range extensions {
 		volumeName := req.VolumeID + ext
 		err = nodeStorage.DeleteVolume(req.PoolName, volumeName)

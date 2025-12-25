@@ -366,8 +366,26 @@ func (s *TemplateService) DeleteTemplate(ctx context.Context, req *entity.Delete
 		if err != nil {
 			return apierror.WrapError(apierror.ErrInternalError, "Failed to get node storage", err)
 		}
-		if err := client.DeleteVolume(template.PoolName, template.VolumeName); err != nil {
-			return apierror.WrapError(apierror.ErrInternalError, "Failed to delete backing volume", err)
+
+		// 获取存储池路径，构建完整的卷路径
+		poolInfo, err := client.GetStoragePool(template.PoolName)
+		if err != nil {
+			return apierror.WrapError(apierror.ErrInternalError, "Failed to get storage pool info", err)
+		}
+
+		// 模板卷通常在 _templates_ 目录下
+		volumePath := poolInfo.Path + "/" + TemplatesDirName + "/" + template.VolumeName
+
+		// 优先使用路径删除
+		if err := client.DeleteVolumeByPath(volumePath); err != nil {
+			// 如果路径删除失败，尝试按名称删除
+			if err2 := client.DeleteVolume(template.PoolName, template.VolumeName); err2 != nil {
+				zerolog.Ctx(ctx).Warn().
+					Err(err).
+					Str("volume_path", volumePath).
+					Str("volume_name", template.VolumeName).
+					Msg("Failed to delete template volume, continuing with metadata deletion")
+			}
 		}
 	}
 

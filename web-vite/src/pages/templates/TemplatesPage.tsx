@@ -589,6 +589,7 @@ export default function TemplatesPage() {
       await apiPost("/api/delete-template", {
         template_id: templateToDelete.id,
         node_name: templateToDelete.node_name,
+        pool_name: templateToDelete.pool_name,
         delete_volume: deleteVolume,
       });
       toast.success(`Template ${templateToDelete.name} deleted`);

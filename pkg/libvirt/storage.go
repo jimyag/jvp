@@ -587,6 +587,20 @@ func (c *Client) DeleteVolume(poolName, volumeName string) error {
 	return nil
 }
 
+// DeleteVolumeByPath 通过路径删除存储卷
+func (c *Client) DeleteVolumeByPath(volumePath string) error {
+	vol, err := c.conn.StorageVolLookupByPath(volumePath)
+	if err != nil {
+		return fmt.Errorf("lookup volume by path %s: %w", volumePath, err)
+	}
+
+	if err := c.conn.StorageVolDelete(vol, libvirt.StorageVolDeleteNormal); err != nil {
+		return fmt.Errorf("delete volume: %w", err)
+	}
+
+	return nil
+}
+
 // ResizeVolume 调整存储卷大小
 func (c *Client) ResizeVolume(poolName, volumeName string, newSizeGB uint64) error {
 	pool, err := c.conn.StoragePoolLookupByName(poolName)

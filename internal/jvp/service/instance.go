@@ -6,7 +6,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"path/filepath"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -690,10 +690,12 @@ func (s *InstanceService) TerminateInstances(ctx context.Context, req *entity.Te
 		}
 
 		// 删除 domain（会先停止运行中的实例）
+		// 使用 DomainUndefineSnapshotsMetadata 标志同时删除快照元数据
 		logger.Info().
 			Str("instanceID", instanceID).
 			Msg("Deleting domain from libvirt")
-		err = client.DeleteDomain(domain, libvirtlib.DomainUndefineFlagsValues(0))
+		undefineFlags := libvirtlib.DomainUndefineSnapshotsMetadata | libvirtlib.DomainUndefineNvram
+		err = client.DeleteDomain(domain, libvirtlib.DomainUndefineFlagsValues(undefineFlags))
 		if err != nil {
 			logger.Error().
 				Str("instanceID", instanceID).
@@ -749,49 +751,52 @@ func (s *InstanceService) TerminateInstances(ctx context.Context, req *entity.Te
 	return changes, nil
 }
 
-// deleteVolumesByDisks 根据磁盘列表删除对应的卷（按路径或名称匹配）
+// deleteVolumesByDisks 根据磁盘列表删除对应的卷（优先按路径删除）
 func (s *InstanceService) deleteVolumesByDisks(ctx context.Context, client libvirt.LibvirtClient, disks []libvirt.DomainDisk) error {
 	logger := zerolog.Ctx(ctx)
-
-	pools, err := client.ListStoragePools()
-	if err != nil {
-		return fmt.Errorf("list storage pools: %w", err)
-	}
 
 	for _, disk := range disks {
 		if disk.Source.File == "" {
 			continue
 		}
-		targetName := filepath.Base(disk.Source.File)
-		found := false
 
-		for _, pool := range pools {
-			volumes, err := client.ListVolumes(pool.Name)
-			if err != nil {
-				logger.Warn().
-					Err(err).
-					Str("pool", pool.Name).
-					Msg("Failed to list volumes when deleting instance disks")
-				continue
-			}
+		// 优先使用 libvirt 路径删除
+		if err := client.DeleteVolumeByPath(disk.Source.File); err != nil {
+			// 如果 libvirt 删除失败（可能不在存储池中），尝试直接删除文件
+			logger.Debug().
+				Err(err).
+				Str("path", disk.Source.File).
+				Msg("Failed to delete volume via libvirt, trying direct file deletion")
 
-			for _, vol := range volumes {
-				if vol.Name == targetName || vol.Path == disk.Source.File {
-					if err := client.DeleteVolume(pool.Name, vol.Name); err != nil {
-						return fmt.Errorf("delete volume %s in pool %s: %w", vol.Name, pool.Name, err)
-					}
+			if client.IsRemoteConnection() {
+				// 远程连接：通过 SSH 删除
+				if rmErr := client.ExecuteRemoteCommand(fmt.Sprintf("rm -f '%s'", disk.Source.File)); rmErr != nil {
+					logger.Warn().
+						Err(rmErr).
+						Str("path", disk.Source.File).
+						Msg("Failed to delete volume file remotely, skipping")
+				} else {
 					logger.Info().
-						Str("volume", vol.Name).
-						Str("pool", pool.Name).
-						Msg("Deleted instance volume")
-					found = true
-					break
+						Str("path", disk.Source.File).
+						Msg("Deleted instance volume file remotely")
+				}
+			} else {
+				// 本地连接：直接删除文件
+				if rmErr := os.Remove(disk.Source.File); rmErr != nil && !os.IsNotExist(rmErr) {
+					logger.Warn().
+						Err(rmErr).
+						Str("path", disk.Source.File).
+						Msg("Failed to delete volume file, skipping")
+				} else {
+					logger.Info().
+						Str("path", disk.Source.File).
+						Msg("Deleted instance volume file")
 				}
 			}
-
-			if found {
-				break
-			}
+		} else {
+			logger.Info().
+				Str("path", disk.Source.File).
+				Msg("Deleted instance volume")
 		}
 	}
 

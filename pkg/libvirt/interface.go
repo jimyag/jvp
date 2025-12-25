@@ -52,6 +52,7 @@ type LibvirtClient interface {
 	UploadFileToPool(poolName string, volumeName string, localFilePath string) (*VolumeInfo, error)
 	ResizeVolume(poolName, volumeName string, newSizeGB uint64) error
 	DeleteVolume(poolName, volumeName string) error
+	DeleteVolumeByPath(volumePath string) error
 
 	// QEMU Guest Agent 操作
 	QemuAgentCommand(domain libvirt.Domain, command string, timeout uint32, flags uint32) (string, error)

@@ -230,6 +230,11 @@ func (m *MockClient) DeleteVolume(poolName, volumeName string) error {
 	return args.Error(0)
 }
 
+func (m *MockClient) DeleteVolumeByPath(volumePath string) error {
+	args := m.Called(volumePath)
+	return args.Error(0)
+}
+
 func (m *MockClient) QemuAgentCommand(domain libvirt.Domain, command string, timeout uint32, flags uint32) (string, error) {
 	args := m.Called(domain, command, timeout, flags)
 	return args.String(0), args.Error(1)

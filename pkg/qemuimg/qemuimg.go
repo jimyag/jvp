@@ -169,7 +169,9 @@ func (c *Client) Info(ctx context.Context, imagePath string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second) // info 操作通常很快
 	defer cancel()
 
-	output, err := c.executeCommand(ctx, "info", imagePath)
+	// 使用 -U 参数允许读取正在被使用的镜像的元数据
+	// 这对于读取 backing file 等信息是安全的，因为只读取文件头
+	output, err := c.executeCommand(ctx, "info", "-U", imagePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to get image info for %s: %w, output: %s", imagePath, err, string(output))
 	}
@@ -310,6 +312,46 @@ func (c *Client) DeleteSnapshot(ctx context.Context, imagePath, snapshotName str
 	}
 
 	return nil
+}
+
+// GetBackingFile 获取镜像的 backing file 路径
+// 通过解析 qemu-img info 输出来获取 backing file
+//
+// 参数：
+//   - imagePath: 镜像文件路径
+//
+// 返回：
+//   - backing file 路径，如果没有 backing file 则返回空字符串
+//
+// 示例：
+//
+//	backingFile, err := client.GetBackingFile(ctx, "/path/to/snapshot.qcow2")
+func (c *Client) GetBackingFile(ctx context.Context, imagePath string) (string, error) {
+	info, err := c.Info(ctx, imagePath)
+	if err != nil {
+		return "", err
+	}
+
+	// 解析输出，查找 "backing file: xxx" 行
+	lines := strings.Split(info, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "backing file:") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				// backing file 路径可能包含额外信息，如 "(actual path: ...)"
+				backingPath := strings.TrimSpace(parts[1])
+				// 移除可能的 "(actual path: ...)" 后缀
+				if idx := strings.Index(backingPath, " ("); idx > 0 {
+					backingPath = backingPath[:idx]
+				}
+				return backingPath, nil
+			}
+		}
+	}
+
+	// 没有 backing file
+	return "", nil
 }
 
 // ListSnapshots 列出镜像的所有快照
