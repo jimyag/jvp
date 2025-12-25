@@ -12,6 +12,8 @@ import (
 type Client struct {
 	qemuImgPath string
 	timeout     time.Duration
+	// 远程执行相关
+	sshTarget string // SSH 目标，格式: user@host，为空表示本地执行
 }
 
 // New 创建新的 qemuimg client
@@ -32,6 +34,39 @@ func (c *Client) WithTimeout(timeout time.Duration) *Client {
 	return c
 }
 
+// WithSSHTarget 设置远程 SSH 目标，用于在远程主机上执行 qemu-img 命令
+// sshTarget 格式: user@host，为空表示本地执行
+func (c *Client) WithSSHTarget(sshTarget string) *Client {
+	c.sshTarget = sshTarget
+	return c
+}
+
+// IsRemote 检查是否为远程执行模式
+func (c *Client) IsRemote() bool {
+	return c.sshTarget != ""
+}
+
+// executeCommand 执行命令，支持本地和远程执行
+func (c *Client) executeCommand(ctx context.Context, args ...string) ([]byte, error) {
+	var cmd *exec.Cmd
+
+	if c.sshTarget != "" {
+		// 远程执行：通过 SSH
+		remoteCmd := c.qemuImgPath + " " + strings.Join(args, " ")
+		cmd = exec.CommandContext(ctx, "ssh",
+			"-o", "StrictHostKeyChecking=no",
+			"-o", "BatchMode=yes",
+			c.sshTarget,
+			remoteCmd,
+		)
+	} else {
+		// 本地执行
+		cmd = exec.CommandContext(ctx, c.qemuImgPath, args...)
+	}
+
+	return cmd.CombinedOutput()
+}
+
 // CreateFromBackingFile 从 backing file 创建新镜像
 // 这是创建增量镜像的常用方式，可以节省存储空间
 //
@@ -48,14 +83,12 @@ func (c *Client) CreateFromBackingFile(ctx context.Context, format, backingForma
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, c.qemuImgPath, "create",
+	output, err := c.executeCommand(ctx, "create",
 		"-f", format,
 		"-F", backingFormat,
 		"-b", backingFile,
 		outputFile,
 	)
-
-	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to create image from backing file %s: %w, output: %s", backingFile, err, string(output))
 	}
@@ -77,12 +110,10 @@ func (c *Client) Resize(ctx context.Context, imagePath string, sizeGB uint64) er
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, c.qemuImgPath, "resize",
+	output, err := c.executeCommand(ctx, "resize",
 		imagePath,
 		fmt.Sprintf("%dG", sizeGB),
 	)
-
-	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to resize image %s to %dG: %w, output: %s", imagePath, sizeGB, err, string(output))
 	}
@@ -109,14 +140,12 @@ func (c *Client) Convert(ctx context.Context, inputFormat, outputFormat, inputFi
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, c.qemuImgPath, "convert",
+	output, err := c.executeCommand(ctx, "convert",
 		"-f", inputFormat,
 		"-O", outputFormat,
 		inputFile,
 		outputFile,
 	)
-
-	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to convert image from %s to %s: %w, output: %s", inputFile, outputFile, err, string(output))
 	}
@@ -140,9 +169,7 @@ func (c *Client) Info(ctx context.Context, imagePath string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second) // info 操作通常很快
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, c.qemuImgPath, "info", imagePath)
-
-	output, err := cmd.CombinedOutput()
+	output, err := c.executeCommand(ctx, "info", imagePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to get image info for %s: %w, output: %s", imagePath, err, string(output))
 	}
@@ -199,12 +226,10 @@ func (c *Client) Check(ctx context.Context, imagePath, format string) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute) // check 操作可能需要较长时间
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, c.qemuImgPath, "check",
+	output, err := c.executeCommand(ctx, "check",
 		"-f", format,
 		imagePath,
 	)
-
-	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to check image %s: %w, output: %s", imagePath, err, string(output))
 	}
@@ -226,13 +251,11 @@ func (c *Client) CreateEmpty(ctx context.Context, format, outputFile string, siz
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, c.qemuImgPath, "create",
+	output, err := c.executeCommand(ctx, "create",
 		"-f", format,
 		outputFile,
 		fmt.Sprintf("%dG", sizeGB),
 	)
-
-	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to create empty image %s: %w, output: %s", outputFile, err, string(output))
 	}
@@ -254,12 +277,10 @@ func (c *Client) Snapshot(ctx context.Context, imagePath, snapshotName string) e
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, c.qemuImgPath, "snapshot",
+	output, err := c.executeCommand(ctx, "snapshot",
 		"-c", snapshotName,
 		imagePath,
 	)
-
-	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to create snapshot %s for %s: %w, output: %s", snapshotName, imagePath, err, string(output))
 	}
@@ -280,12 +301,10 @@ func (c *Client) DeleteSnapshot(ctx context.Context, imagePath, snapshotName str
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, c.qemuImgPath, "snapshot",
+	output, err := c.executeCommand(ctx, "snapshot",
 		"-d", snapshotName,
 		imagePath,
 	)
-
-	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to delete snapshot %s from %s: %w, output: %s", snapshotName, imagePath, err, string(output))
 	}
@@ -308,11 +327,9 @@ func (c *Client) ListSnapshots(ctx context.Context, imagePath string) ([]string,
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, c.qemuImgPath, "snapshot",
+	output, err := c.executeCommand(ctx, "snapshot",
 		"-l", imagePath,
 	)
-
-	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list snapshots for %s: %w, output: %s", imagePath, err, string(output))
 	}

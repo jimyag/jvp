@@ -15,6 +15,7 @@ import (
 	"github.com/jimyag/jvp/pkg/apierror"
 	"github.com/jimyag/jvp/pkg/idgen"
 	"github.com/jimyag/jvp/pkg/libvirt"
+	"github.com/jimyag/jvp/pkg/qemuimg"
 	"github.com/rs/zerolog"
 )
 
@@ -315,4 +316,184 @@ func sanitizeName(name string) string {
 	s = strings.ReplaceAll(s, "/", "-")
 	s = strings.ReplaceAll(s, "\\", "-")
 	return s
+}
+
+// CloneFromSnapshot 基于快照克隆创建新实例
+func (s *SnapshotService) CloneFromSnapshot(ctx context.Context, req *entity.CloneFromSnapshotRequest) (*entity.Instance, error) {
+	logger := zerolog.Ctx(ctx)
+	logger.Info().
+		Str("node_name", req.NodeName).
+		Str("source_vm", req.SourceVMName).
+		Str("snapshot_name", req.SnapshotName).
+		Str("new_vm_name", req.NewVMName).
+		Bool("flatten", req.Flatten).
+		Msg("Cloning instance from snapshot")
+
+	client, err := s.nodeService.GetNodeStorage(ctx, req.NodeName)
+	if err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get node connection", err)
+	}
+
+	// 1. 获取快照信息
+	snap, err := client.GetSnapshotXML(req.SourceVMName, req.SnapshotName)
+	if err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get snapshot info", err)
+	}
+
+	// 2. 获取源 VM 信息
+	sourceDomain, err := client.GetDomainByName(req.SourceVMName)
+	if err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get source VM", err)
+	}
+
+	sourceInfo, err := client.GetDomainInfo(sourceDomain.UUID)
+	if err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get source VM info", err)
+	}
+
+	// 3. 生成新 VM 名称
+	newVMName := req.NewVMName
+	if newVMName == "" {
+		id, genErr := s.idGen.GenerateID()
+		if genErr != nil {
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to generate VM name", genErr)
+		}
+		newVMName = fmt.Sprintf("%s-clone-%d", req.SourceVMName, id)
+	}
+
+	// 4. 获取存储池路径
+	poolInfo, err := client.GetStoragePool(req.PoolName)
+	if err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get storage pool info", err)
+	}
+	poolPath := poolInfo.Path
+
+	// 5. 准备 qemu-img 客户端
+	qemuClient := s.createQemuImgClient(client)
+
+	// 6. 处理快照磁盘 - 为新 VM 创建磁盘
+	var newDiskPath string
+	for _, disk := range snap.Disks {
+		if disk.Source == nil || disk.Source.File == "" {
+			continue
+		}
+
+		srcDiskPath := disk.Source.File
+		diskFormat := "qcow2"
+		if disk.Driver != nil && disk.Driver.Type != "" {
+			diskFormat = disk.Driver.Type
+		}
+
+		// 新磁盘路径
+		newDiskPath = filepath.Join(poolPath, fmt.Sprintf("%s.qcow2", newVMName))
+
+		logger.Info().
+			Str("src_disk", srcDiskPath).
+			Str("new_disk", newDiskPath).
+			Bool("flatten", req.Flatten).
+			Msg("Creating disk for cloned VM")
+
+		if req.Flatten {
+			// 合并增量链 - 使用 qemu-img convert
+			if err := qemuClient.Convert(ctx, diskFormat, "qcow2", srcDiskPath, newDiskPath); err != nil {
+				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to convert/flatten disk", err)
+			}
+		} else {
+			// 保留增量链 - 使用 qemu-img create -b
+			if err := qemuClient.CreateFromBackingFile(ctx, "qcow2", diskFormat, srcDiskPath, newDiskPath); err != nil {
+				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to create disk from backing file", err)
+			}
+		}
+
+		// 只处理第一个有效磁盘（主磁盘）
+		break
+	}
+
+	if newDiskPath == "" {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "No valid disk found in snapshot", nil)
+	}
+
+	// 7. 确定新 VM 配置 - 继承源 VM 或使用用户覆盖值
+	vcpus := uint16(sourceInfo.VCPUs)
+	if req.VCPUs > 0 {
+		vcpus = uint16(req.VCPUs)
+	}
+
+	memoryKB := sourceInfo.Memory
+	if req.MemoryMB > 0 {
+		memoryKB = uint64(req.MemoryMB) * 1024
+	}
+
+	networkType := req.NetworkType
+	networkSource := req.NetworkSource
+	if networkType == "" {
+		networkType = "bridge"
+	}
+	if networkSource == "" {
+		networkSource = "br0"
+	}
+
+	// 8. 创建新 VM
+	vmConfig := &libvirt.CreateVMConfig{
+		Name:          newVMName,
+		Memory:        memoryKB,
+		VCPUs:         vcpus,
+		DiskPath:      newDiskPath,
+		DiskBus:       "virtio",
+		NetworkType:   networkType,
+		NetworkSource: networkSource,
+		OSType:        "hvm",
+		Architecture:  "x86_64",
+		VNCSocket:     fmt.Sprintf("/var/lib/jvp/qemu/%s.vnc", newVMName),
+	}
+
+	domain, err := client.CreateDomain(vmConfig, req.StartAfterClone)
+	if err != nil {
+		// 清理已创建的磁盘
+		s.cleanupDisk(client, newDiskPath)
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to create cloned VM", err)
+	}
+
+	// 9. 获取新 VM 状态
+	state := "stopped"
+	if req.StartAfterClone {
+		state = "running"
+	}
+
+	logger.Info().
+		Str("new_vm", newVMName).
+		Str("state", state).
+		Msg("Successfully cloned instance from snapshot")
+
+	return &entity.Instance{
+		ID:         newVMName,
+		Name:       newVMName,
+		State:      state,
+		NodeName:   req.NodeName,
+		MemoryMB:   memoryKB / 1024,
+		VCPUs:      vcpus,
+		DomainUUID: fmt.Sprintf("%x", domain.UUID),
+		DomainName: domain.Name,
+	}, nil
+}
+
+// createQemuImgClient 创建 qemu-img 客户端，支持本地和远程
+func (s *SnapshotService) createQemuImgClient(client libvirt.LibvirtClient) *qemuimg.Client {
+	qemuClient := qemuimg.New("")
+	if client.IsRemoteConnection() {
+		sshTarget, err := client.GetSSHTarget()
+		if err == nil {
+			qemuClient = qemuClient.WithSSHTarget(sshTarget)
+		}
+	}
+	return qemuClient
+}
+
+// cleanupDisk 清理磁盘文件
+func (s *SnapshotService) cleanupDisk(client libvirt.LibvirtClient, diskPath string) {
+	if client.IsRemoteConnection() {
+		_ = client.ExecuteRemoteCommand(fmt.Sprintf("rm -f '%s'", diskPath))
+	} else {
+		_ = os.Remove(diskPath)
+	}
 }

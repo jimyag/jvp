@@ -17,6 +17,7 @@ type SnapshotServiceInterface interface {
 	DescribeSnapshot(ctx context.Context, req *entity.DescribeSnapshotRequest) (*entity.Snapshot, error)
 	DeleteSnapshot(ctx context.Context, req *entity.DeleteSnapshotRequest) error
 	RevertSnapshot(ctx context.Context, req *entity.RevertSnapshotRequest) error
+	CloneFromSnapshot(ctx context.Context, req *entity.CloneFromSnapshotRequest) (*entity.Instance, error)
 }
 
 type Snapshot struct {
@@ -35,6 +36,7 @@ func (s *Snapshot) RegisterRoutes(router *gin.RouterGroup) {
 	router.POST("/describe-snapshot", ginx.Adapt5(s.DescribeSnapshot))
 	router.POST("/delete-snapshot", ginx.Adapt5(s.DeleteSnapshot))
 	router.POST("/revert-snapshot", ginx.Adapt5(s.RevertSnapshot))
+	router.POST("/clone-from-snapshot", ginx.Adapt5(s.CloneFromSnapshot))
 }
 
 func (s *Snapshot) CreateSnapshot(ctx *gin.Context, req *entity.CreateSnapshotRequest) (*entity.CreateSnapshotResponse, error) {
@@ -132,5 +134,27 @@ func (s *Snapshot) RevertSnapshot(ctx *gin.Context, req *entity.RevertSnapshotRe
 
 	return &entity.RevertSnapshotResponse{
 		Message: "Snapshot reverted successfully",
+	}, nil
+}
+
+func (s *Snapshot) CloneFromSnapshot(ctx *gin.Context, req *entity.CloneFromSnapshotRequest) (*entity.CloneFromSnapshotResponse, error) {
+	logger := zerolog.Ctx(ctx)
+	logger.Info().
+		Str("node_name", req.NodeName).
+		Str("source_vm_name", req.SourceVMName).
+		Str("snapshot_name", req.SnapshotName).
+		Str("new_vm_name", req.NewVMName).
+		Bool("flatten", req.Flatten).
+		Msg("API: CloneFromSnapshot called")
+
+	instance, err := s.snapshotService.CloneFromSnapshot(ctx, req)
+	if err != nil {
+		logger.Error().Err(err).Msg("Failed to clone from snapshot")
+		return nil, err
+	}
+
+	return &entity.CloneFromSnapshotResponse{
+		Instance: instance,
+		Message:  "Instance cloned from snapshot successfully",
 	}, nil
 }
