@@ -1,119 +1,119 @@
 # JVP
 
-jimyag's virtualization platform. jimyag 的虚拟化平台
+jimyag's virtualization platform
 
-[English](README_EN.md) | 中文
+English | [中文](README_CN.md)
 
-## 简介
+## Introduction
 
-JVP 是一个基于 QEMU/KVM 和 libvirt 的虚拟化平台，提供完整的虚拟机生命周期管理功能。支持通过 RESTful API 和现代化的 Web 管理界面创建、管理和监控虚拟机实例。
+JVP is a virtualization platform based on QEMU/KVM and libvirt, providing complete virtual machine lifecycle management. It supports creating, managing, and monitoring virtual machine instances through RESTful API and a modern web management interface.
 
-![节点管理](docs/static/nodes.png)
+![Node Management](docs/static/nodes.png)
 
-![实例列表](docs/static/instance.png)
+![Instance List](docs/static/instance.png)
 
-![实例详情](docs/static/instance-detail.png)
+![Instance Details](docs/static/instance-detail.png)
 
-![VNC 控制台](docs/static/instance-vnc.png)
+![VNC Console](docs/static/instance-vnc.png)
 
-![串口控制台](docs/static/instance-console.png)
+![Serial Console](docs/static/instance-console.png)
 
-![存储池列表](docs/static/storage-pool.png)
+![Storage Pool List](docs/static/storage-pool.png)
 
-![存储池详情](docs/static/storage-pool-detail.png)
+![Storage Pool Details](docs/static/storage-pool-detail.png)
 
-![模板管理](docs/static/template.png)
+![Template Management](docs/static/template.png)
 
-![快照管理](docs/static/snapshot.png)
+![Snapshot Management](docs/static/snapshot.png)
 
-## 核心功能
+## Core Features
 
-### 实例管理（Instances）
+### Instance Management
 
-- **创建实例**：自定义 CPU、内存、磁盘，支持桥接或 NAT 网络
-  - 集成 cloud-init，支持用户数据与 SSH 公钥注入
-- **查询实例**：按节点/ID 查询，返回网卡、MAC、IP、多 IP 信息、开机自启动标记、启动时间
-- **生命周期管理**：启动、停止、重启、删除（可选同时删除卷）
-- **修改实例属性**：调整 CPU、内存、名称、自动启动
-- **密码重置**：基于 guest-agent 的异步重置（后台执行），保留 virt-customize 兜底
-- **远程控制台**：支持 VNC/Serial 控制台
+- **Create Instances**: Customize CPU, memory, and disk, support bridge or NAT networking
+  - Integrated cloud-init, supports user data and SSH public key injection
+- **Query Instances**: Query by node/ID, returns network interfaces, MAC, IP, multiple IPs, autostart flag, start time
+- **Lifecycle Management**: Start, stop, reboot, delete (optionally delete volumes)
+- **Modify Instance Properties**: Adjust CPU, memory, name, autostart
+- **Password Reset**: Asynchronous reset based on guest-agent (background execution), with virt-customize fallback
+- **Remote Console**: Support VNC/Serial console
 
-### 节点与存储
+### Nodes and Storage
 
-- **多节点管理**：支持同时管理多个 libvirt 节点（本地和远程），构建分布式虚拟化集群
-  - **本地节点**：自动创建 `local (qemu:///system)` 节点
-  - **远程节点**：通过 libvirt URI 添加远程节点（如 `qemu+ssh://user@host/system`）
-  - **节点类型**：支持 compute（计算）、storage（存储）、hybrid（混合）等类型
-  - **节点操作**：添加、删除、启用、禁用节点
-- **节点概要**：查看每个节点的 CPU/内存/NUMA/虚拟化能力等硬件信息
-- **存储池管理**：按节点管理存储池，列举/创建/启停/删除存储池，查看存储池使用情况
-- **存储卷管理**：按节点和存储池列举卷，创建卷，查看卷详情（容量、分配、格式），删除卷
+- **Multi-Node Management**: Support managing multiple libvirt nodes (local and remote) simultaneously, building distributed virtualization clusters
+  - **Local Node**: Automatically creates `local (qemu:///system)` node
+  - **Remote Nodes**: Add remote nodes via libvirt URI (e.g., `qemu+ssh://user@host/system`)
+  - **Node Types**: Support compute, storage, hybrid, and other node types
+  - **Node Operations**: Add, delete, enable, disable nodes
+- **Node Summary**: View hardware information for each node (CPU/memory/NUMA/virtualization capabilities, etc.)
+- **Storage Pool Management**: Manage storage pools by node, list/create/start/stop/delete storage pools, view storage pool usage
+- **Storage Volume Management**: List volumes by node and storage pool, create volumes, view volume details (capacity, allocation, format), delete volumes
 
-### 快照管理（Snapshots）
+### Snapshot Management
 
-- **创建快照**：为虚拟机创建快照，支持包含内存状态
-- **列举快照**：按节点和虚拟机查询快照列表
-- **快照详情**：查看快照的详细信息（创建时间、状态、磁盘信息等）
-- **回滚快照**：将虚拟机恢复到指定快照状态
-- **删除快照**：删除不再需要的快照，释放存储空间
-- **快照类型**：支持内部快照（qcow2）和外部快照（所有格式）
+- **Create Snapshots**: Create snapshots for virtual machines, support including memory state
+- **List Snapshots**: Query snapshot list by node and virtual machine
+- **Snapshot Details**: View detailed snapshot information (creation time, state, disk information, etc.)
+- **Revert Snapshots**: Restore virtual machine to specified snapshot state
+- **Delete Snapshots**: Delete snapshots that are no longer needed, free up storage space
+- **Snapshot Types**: Support internal snapshots (qcow2) and external snapshots (all formats)
 
-### 模板管理（Templates）
+### Template Management
 
-- **注册模板**：从 URL 下载云镜像或从本地文件导入
-- **列举模板**：查看所有可用的虚拟机模板
-- **模板详情**：查看模板的元数据（操作系统、大小、来源等）
-- **删除模板**：删除不再使用的模板
-- **模板类型**：支持云镜像模板（Ubuntu、Debian、Alpine 等）和快照导出的自定义模板
+- **Register Templates**: Download cloud images from URL or import from local files
+- **List Templates**: View all available virtual machine templates
+- **Template Details**: View template metadata (operating system, size, source, etc.)
+- **Delete Templates**: Delete templates that are no longer used
+- **Template Types**: Support cloud image templates (Ubuntu, Debian, Alpine, etc.) and custom templates exported from snapshots
 
-### 密钥对管理（KeyPairs）
+### Key Pair Management
 
-- **创建密钥对**：支持 RSA 和 ED25519 算法
-- **导入密钥对**：导入现有公钥
-- **查询密钥对**：支持按 ID、名称等条件查询
-- **删除密钥对**：删除不再使用的密钥对
-- **自动注入**：创建实例时自动注入 SSH 公钥
+- **Create Key Pairs**: Support RSA and ED25519 algorithms
+- **Import Key Pairs**: Import existing public keys
+- **Query Key Pairs**: Support querying by ID, name, etc.
+- **Delete Key Pairs**: Delete key pairs that are no longer used
+- **Auto Injection**: Automatically inject SSH public keys when creating instances
 
-### Web 管理界面
+### Web Management Interface
 
-- **现代化 UI**：基于 React + Vite + Tailwind CSS 构建的响应式 Web 界面
-- **实时监控**：查看实例状态、资源使用情况、网络信息等
-- **远程控制台**：集成 VNC 和 Serial 控制台，支持图形和文本界面访问
-- **统一管理**：通过 Web 界面管理所有资源（实例、节点、存储、模板、快照、密钥对）
+- **Modern UI**: Responsive web interface built with React + Vite + Tailwind CSS
+- **Real-time Monitoring**: View instance status, resource usage, network information, etc.
+- **Remote Console**: Integrated VNC and Serial console, support graphical and text interface access
+- **Unified Management**: Manage all resources (instances, nodes, storage, templates, snapshots, key pairs) through web interface
 
-## 环境要求
+## Requirements
 
-### 必需工具
+### Required Tools
 
-| 工具                           | 用途                                       |
-| ------------------------------ | ------------------------------------------ |
-| **libvirt**                    | 虚拟化管理核心（libvirtd 守护进程）        |
-| **virsh**                      | 执行 qemu-agent-command                    |
-| **qemu-img**                   | 磁盘镜像操作（创建、调整大小、转换、快照） |
-| **genisoimage** 或 **mkisofs** | 生成 cloud-init ISO                        |
-| **ssh**                        | 远程节点连接（VNC/串口代理、文件传输）     |
+| Tool                           | Purpose                                              |
+| ------------------------------ | ---------------------------------------------------- |
+| **libvirt**                    | Virtualization management core (libvirtd daemon)     |
+| **virsh**                      | Execute qemu-agent-command                           |
+| **qemu-img**                   | Disk image operations (create, resize, convert, snapshot) |
+| **genisoimage** or **mkisofs** | Generate cloud-init ISO                              |
+| **ssh**                        | Remote node connection (VNC/serial proxy, file transfer) |
 
-### 可选工具
+### Optional Tools
 
-| 工具               | 用途                                         |
-| ------------------ | -------------------------------------------- |
-| **wget**           | 下载模板镜像（优先使用）                     |
-| **curl**           | 下载模板镜像（wget 不可用时回退）            |
-| **ip**             | 查询 ARP 邻居表获取 VM IP（优先使用）        |
-| **arp**            | 查询 ARP 表获取 VM IP（ip 命令不可用时回退） |
-| **virt-customize** | 重置虚拟机密码（兜底方案）                   |
-| **socat**          | 远程节点 VNC/串口转发（远程节点上需要）      |
+| Tool               | Purpose                                                |
+| ------------------ | ------------------------------------------------------ |
+| **wget**           | Download template images (preferred)                   |
+| **curl**           | Download template images (fallback when wget unavailable) |
+| **ip**             | Query ARP neighbor table for VM IP (preferred)         |
+| **arp**            | Query ARP table for VM IP (fallback when ip unavailable) |
+| **virt-customize** | Reset VM password (fallback method)                    |
+| **socat**          | VNC/serial forwarding for remote nodes (required on remote host) |
 
-### 远程节点额外要求
+### Additional Requirements for Remote Nodes
 
-如果使用远程 libvirt 节点（如 `qemu+ssh://user@host/system`），远程主机需要：
+If using remote libvirt nodes (e.g., `qemu+ssh://user@host/system`), the remote host needs:
 
-- **ssh** 服务
-- **socat**（VNC/串口控制台）
-- **genisoimage** 或 **mkisofs**（cloud-init ISO 生成）
-- **find**, **cat**, **mkdir**, **rm**（基础 shell 命令）
+- **ssh** service
+- **socat** (for VNC/serial console)
+- **genisoimage** or **mkisofs** (for cloud-init ISO generation)
+- **find**, **cat**, **mkdir**, **rm** (basic shell commands)
 
-### 安装命令
+### Installation Commands
 
 **Debian/Ubuntu:**
 
@@ -127,32 +127,32 @@ apt install libvirt-daemon-system qemu-utils genisoimage wget curl openssh-clien
 dnf install libvirt qemu-img genisoimage wget curl openssh-clients libguestfs-tools socat
 ```
 
-## 如何使用
+## How to Use
 
-### 方式一：Docker 部署（推荐）
+### Option 1: Docker Deployment (Recommended)
 
-Docker 部署会在容器内运行 libvirtd，完全接管宿主机的虚拟化环境。
+Docker deployment runs libvirtd inside the container, completely taking over the host's virtualization environment.
 
-**1. 停止宿主机的 libvirt 服务**
+**1. Stop host libvirt services**
 
 ```bash
 sudo systemctl stop libvirtd libvirtd.socket virtlogd virtlogd.socket
 sudo systemctl disable libvirtd libvirtd.socket virtlogd virtlogd.socket
 ```
 
-**2. 创建数据目录**
+**2. Create data directory**
 
 ```bash
 sudo mkdir -p /var/lib/jvp
 ```
 
-**3. 启动容器**
+**3. Start the container**
 
 ```bash
-# 使用 docker-compose
+# Using docker-compose
 docker compose up -d
 
-# 或直接使用 docker run
+# Or using docker run directly
 docker run -d \
   --name jvp \
   --hostname jvp \
@@ -174,28 +174,28 @@ docker run -d \
   ghcr.io/jimyag/jvp:latest
 ```
 
-**4. 访问 Web 界面**
+**4. Access the Web interface**
 
 ```
-http://<服务器IP>:7777
+http://<server-ip>:7777
 ```
 
-### 方式二：二进制文件部署
+### Option 2: Binary Deployment
 
-**1. 下载二进制文件**
+**1. Download the binary**
 
-从 [GitHub Releases](https://github.com/jimyag/jvp/releases) 下载适合您系统的二进制文件。
+Download the binary for your system from [GitHub Releases](https://github.com/jimyag/jvp/releases).
 
 ```bash
-# 创建目录
+# Create directory
 sudo mkdir -p /opt/jvp
 
-# 下载并解压（以 linux amd64 为例）
+# Download and extract (example for linux amd64)
 wget https://github.com/jimyag/jvp/releases/latest/download/jvp_linux_amd64.tar.gz
 tar -xzf jvp_linux_amd64.tar.gz -C /opt/jvp
 ```
 
-**2. 创建 systemd 服务**
+**2. Create systemd service**
 
 ```bash
 sudo tee /etc/systemd/system/jvp.service > /dev/null <<EOF
@@ -216,7 +216,7 @@ WantedBy=multi-user.target
 EOF
 ```
 
-**3. 启动服务**
+**3. Start the service**
 
 ```bash
 sudo systemctl daemon-reload
@@ -224,74 +224,74 @@ sudo systemctl enable jvp
 sudo systemctl start jvp
 ```
 
-**4. 访问 Web 界面**
+**4. Access the Web interface**
 
 ```
-http://<服务器IP>:7777
+http://<server-ip>:7777
 ```
 
-### 方式三：本地构建运行
+### Option 3: Build and Run Locally
 
-**1. 构建项目**
+**1. Build the project**
 
 ```bash
-# 构建包含前端的完整二进制文件
+# Build complete binary file including frontend
 task build
 ```
 
-**2. 运行服务**
+**2. Run the service**
 
 ```bash
-# 运行 JVP 服务（默认端口 7777）
+# Run JVP service (default port 7777)
 ./bin/jvp
 ```
 
-**3. 访问 Web 界面**
+**3. Access the Web interface**
 
-构建完成后，前端已嵌入到二进制文件中。启动服务后访问：
+After building, the frontend is embedded in the binary file. After starting the service, access:
 
 ```
 http://localhost:7777
 ```
 
-### 本地调试（Docker）
+### Local Debugging (Docker)
 
 ```bash
-# 构建本地调试镜像
+# Build local debug image
 task debug-image
 
-# 修改 docker-compose.yml 中 image 为 jvp:local 后启动
+# Modify image in docker-compose.yml to jvp:local, then start
 docker compose up -d
 ```
 
-## 未来计划
+## Future Plans
 
-JVP 正在持续开发中，以下功能计划在未来版本中支持：
+JVP is under continuous development. The following features are planned for future releases:
 
-### 用户体验增强
-- **国际化（i18n）**：支持多语言切换（中文、英文等）
-- **深色/浅色主题切换**：支持主题切换和系统主题自动检测
-- **用户引导**：首次使用引导、功能提示、快速开始向导
+### User Experience Enhancements
+- **Internationalization (i18n)**: Support for multiple languages (Chinese, English, etc.)
+- **Dark/Light Theme Toggle**: Theme switching with automatic system theme detection
+- **User Onboarding**: First-time user guide, feature tooltips, quick start wizard
 
-### 网络功能增强
-- **多种网络配置**：桥接、NAT、虚拟网络、直通网络、VLAN、网络 QoS 等
-- **网络隔离**：支持网络隔离和多网卡绑定
+### Network Feature Enhancements
+- **Multiple Network Configurations**: Bridge, NAT, virtual networks, passthrough networks, VLAN, network QoS, etc.
+- **Network Isolation**: Support for network isolation and multi-NIC bonding
 
-### 设备直通虚拟化
-- **PCIe 设备直通**：GPU、网卡、NVMe 等 PCIe 设备直通
-- **USB 设备直通**：USB 设备直通和热插拔支持
-- **磁盘直通**：物理磁盘、分区、LVM 逻辑卷直通
+### Device Passthrough Virtualization
+- **PCIe Device Passthrough**: GPU, network cards, NVMe, and other PCIe device passthrough
+- **USB Device Passthrough**: USB device passthrough and hot-plug support
+- **Disk Passthrough**: Physical disk, partition, and LVM logical volume passthrough
 
-### Windows 虚拟机支持
-- **Windows 安装支持**：Windows ISO 镜像、VirtIO 驱动集成
-- **Windows 优化配置**：CPU 模式优化、时钟同步、性能优化
-- **Windows 工具集成**：QEMU Guest Agent、VirtIO 驱动自动安装
+### Windows Virtual Machine Support
+- **Windows Installation Support**: Windows ISO images, VirtIO driver integration
+- **Windows Optimization**: CPU mode optimization, clock synchronization, performance tuning
+- **Windows Tools Integration**: QEMU Guest Agent, automatic VirtIO driver installation
 
-更多详细信息请参考 [实现计划](docs/implement/implementation-plan.md)。
+For more details, please refer to the [Implementation Plan](docs/implement/implementation-plan.md).
 
-## 相关资料
+## Related Resources
 
 - <https://www.voidking.com/dev-libvirt-create-vm/>
 - <https://sq.sf.163.com/blog/article/172808502565068800>
 - <https://shihai1991.github.io/openstack/2024/02/20/%E9%80%9A%E8%BF%87libvirt%E5%88%9B%E5%BB%BA%E8%99%9A%E6%8B%9F%E6%9C%BA/>
-- <https://www.baeldung.com/linux/qemu-uefi-boot> 启动 qemu 的 UEFI 引导
+- <https://www.baeldung.com/linux/qemu-uefi-boot> Boot qemu with UEFI
