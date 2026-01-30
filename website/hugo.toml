@@ -1,0 +1,43 @@
+baseURL = 'https://jvp.jimyag.com/'
+languageCode = 'en-us'
+title = 'JVP - Virtualization Platform'
+theme = 'hugo-book'
+
+# 多语言配置
+defaultContentLanguage = 'en'
+defaultContentLanguageInSubdir = false
+
+[languages]
+  [languages.en]
+    languageName = 'English'
+    contentDir = 'content.en'
+    weight = 1
+  [languages.zh]
+    languageName = '中文'
+    contentDir = 'content.zh'
+    weight = 2
+
+# 菜单配置
+[[menu.after]]
+  name = 'GitHub'
+  url = 'https://github.com/jimyag/jvp'
+  weight = 10
+
+[params]
+  # 文档根目录
+  BookSection = 'docs'
+  # 目录深度
+  BookToC = true
+  # 页面底部显示编辑链接
+  BookRepo = 'https://github.com/jimyag/jvp'
+  BookEditLink = '{{ .Site.Params.BookRepo }}/edit/main/website/{{ .Path }}'
+  # 启用搜索
+  BookSearch = true
+  # 显示最后修改时间
+  BookDateFormat = 'January 2, 2006'
+
+[markup]
+  [markup.highlight]
+    style = 'github'
+  [markup.goldmark.renderer]
+    unsafe = true
