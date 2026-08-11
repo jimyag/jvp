@@ -70,9 +70,34 @@ const PRESET_CLOUD_IMAGES = [
     os: { name: "Ubuntu", version: "26.04", arch: "x86_64" },
   },
   {
+    name: "Ubuntu 24.04 LTS (Noble)",
+    url: "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img",
+    os: { name: "Ubuntu", version: "24.04", arch: "x86_64" },
+  },
+  {
+    name: "Ubuntu 22.04 LTS (Jammy)",
+    url: "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img",
+    os: { name: "Ubuntu", version: "22.04", arch: "x86_64" },
+  },
+  {
+    name: "Ubuntu 20.04 LTS (Focal)",
+    url: "https://cloud-images.ubuntu.com/focal/current/focal-server-cloudimg-amd64.img",
+    os: { name: "Ubuntu", version: "20.04", arch: "x86_64" },
+  },
+  {
     name: "Debian 13 (Trixie)",
     url: "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-generic-amd64.qcow2",
     os: { name: "Debian", version: "13", arch: "x86_64" },
+  },
+  {
+    name: "Debian 12 (Bookworm)",
+    url: "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2",
+    os: { name: "Debian", version: "12", arch: "x86_64" },
+  },
+  {
+    name: "Debian 11 (Bullseye)",
+    url: "https://cloud.debian.org/images/cloud/bullseye/latest/debian-11-generic-amd64.qcow2",
+    os: { name: "Debian", version: "11", arch: "x86_64" },
   },
   {
     name: "CentOS Stream 10",
