@@ -90,7 +90,9 @@ export default function SerialConsole({
 
         // 连接 WebSocket
         ws = new WebSocket(wsUrl);
+        ws.binaryType = "arraybuffer";
         wsRef.current = ws;
+        const decoder = new TextDecoder();
 
         ws.onopen = () => {
           console.log("Serial console WebSocket connected");
@@ -101,7 +103,17 @@ export default function SerialConsole({
 
         ws.onmessage = (event) => {
           if (term) {
-            term.write(event.data);
+            if (event.data instanceof ArrayBuffer) {
+              term.write(decoder.decode(event.data, { stream: true }));
+            } else if (event.data instanceof Blob) {
+              event.data.arrayBuffer().then((buffer) => {
+                if (term) {
+                  term.write(decoder.decode(buffer, { stream: true }));
+                }
+              });
+            } else {
+              term.write(event.data);
+            }
           }
         };
 
@@ -189,4 +201,3 @@ export default function SerialConsole({
     </div>
   );
 }
-

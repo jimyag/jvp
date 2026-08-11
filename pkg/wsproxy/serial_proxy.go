@@ -100,10 +100,9 @@ func (p *SerialProxy) forwardPTYToWS() {
 		}
 
 		if n > 0 {
-			// 发送文本数据到 WebSocket
 			p.mu.Lock()
 			if !p.closed {
-				err = p.wsConn.WriteMessage(websocket.TextMessage, buffer[:n])
+				err = p.wsConn.WriteMessage(websocket.BinaryMessage, buffer[:n])
 				if err != nil {
 					p.mu.Unlock()
 					return
