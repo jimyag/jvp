@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -43,6 +45,12 @@ type RegisterTemplateResult struct {
 	Template     *entity.Template
 	DownloadTask *DownloadTask
 	IsAsync      bool // 是否是异步下载
+}
+
+type imageInfo struct {
+	Format      string `json:"format"`
+	VirtualSize uint64 `json:"virtual-size"`
+	ActualSize  uint64 `json:"actual-size"`
 }
 
 // RegisterTemplate 基于现有卷注册模板
@@ -188,7 +196,7 @@ func (s *TemplateService) registerTemplateFromVolume(ctx context.Context, req *e
 		Path:        volumeInfo.Path,
 		Format:      volumeInfo.Format,
 		SizeBytes:   volumeInfo.CapacityB,
-		SizeGB:      float64(volumeInfo.CapacityB) / (1024 * 1024 * 1024),
+		SizeGB:      sizeGB(volumeInfo.CapacityB),
 		Source:      cloneTemplateSource(req.Source),
 		OS:          req.OS,
 		Features:    req.Features,
@@ -238,6 +246,7 @@ func (s *TemplateService) ListTemplates(ctx context.Context, req *entity.ListTem
 		if err != nil {
 			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to list templates", err)
 		}
+		s.refreshTemplateStorageInfo(ctx, nodeName, templates)
 		return templates, nil
 	}
 
@@ -274,6 +283,9 @@ func (s *TemplateService) DescribeTemplate(ctx context.Context, req *entity.Desc
 		}
 		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to load template metadata", err)
 	}
+	templates := []entity.Template{*template}
+	s.refreshTemplateStorageInfo(ctx, nodeName, templates)
+	*template = templates[0]
 	return template, nil
 }
 
@@ -443,14 +455,26 @@ func (s *TemplateService) lookupVolume(client libvirt.LibvirtClient, poolName, v
 		}
 
 		if fileExists {
-			// 检测镜像实际格式
 			format := detectImageFormat(filePath, candidate, client.IsRemoteConnection())
+			capacityB := uint64(fileSize)
+			allocationB := uint64(fileSize)
+			if image, err := inspectImage(filePath, client.IsRemoteConnection()); err == nil {
+				if image.Format != "" {
+					format = image.Format
+				}
+				if image.VirtualSize > 0 {
+					capacityB = image.VirtualSize
+				}
+				if image.ActualSize > 0 {
+					allocationB = image.ActualSize
+				}
+			}
 
 			return &libvirt.VolumeInfo{
 				Name:        candidate,
 				Path:        filePath,
-				CapacityB:   uint64(fileSize),
-				AllocationB: uint64(fileSize),
+				CapacityB:   capacityB,
+				AllocationB: allocationB,
 				Format:      format,
 			}, nil
 		}
@@ -542,6 +566,94 @@ func detectFormatWithQemuImg(filePath string) (string, error) {
 	}
 
 	return "", fmt.Errorf("failed to parse format from qemu-img info output")
+}
+
+func inspectImage(filePath string, isRemote bool) (*imageInfo, error) {
+	if isRemote {
+		return nil, fmt.Errorf("remote image inspection is not supported")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "qemu-img", "info", "-U", "--output=json", filePath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("qemu-img info failed: %w", err)
+	}
+
+	var info imageInfo
+	if err := json.Unmarshal(output, &info); err != nil {
+		return nil, fmt.Errorf("failed to parse qemu-img info output: %w", err)
+	}
+	return &info, nil
+}
+
+func sizeGB(sizeBytes uint64) float64 {
+	if sizeBytes == 0 {
+		return 0
+	}
+	return math.Ceil(float64(sizeBytes) / (1024 * 1024 * 1024))
+}
+
+func (s *TemplateService) refreshTemplateStorageInfo(ctx context.Context, nodeName string, templates []entity.Template) {
+	if len(templates) == 0 {
+		return
+	}
+
+	client, err := s.getNodeClient(ctx, nodeName)
+	if err != nil {
+		zerolog.Ctx(ctx).Warn().
+			Err(err).
+			Str("node_name", nodeName).
+			Msg("Failed to get node storage while refreshing template storage info")
+		return
+	}
+
+	for i := range templates {
+		template := &templates[i]
+		volumeInfo, err := s.lookupVolume(client, template.PoolName, template.VolumeName)
+		if err != nil {
+			zerolog.Ctx(ctx).Warn().
+				Err(err).
+				Str("template_id", template.ID).
+				Str("node_name", nodeName).
+				Str("pool_name", template.PoolName).
+				Str("volume_name", template.VolumeName).
+				Msg("Failed to refresh template storage info")
+			continue
+		}
+
+		changed := false
+		if template.Path != volumeInfo.Path {
+			template.Path = volumeInfo.Path
+			changed = true
+		}
+		if template.Format != volumeInfo.Format {
+			template.Format = volumeInfo.Format
+			changed = true
+		}
+		if template.SizeBytes != volumeInfo.CapacityB {
+			template.SizeBytes = volumeInfo.CapacityB
+			changed = true
+		}
+		newSizeGB := sizeGB(volumeInfo.CapacityB)
+		if template.SizeGB != newSizeGB {
+			template.SizeGB = newSizeGB
+			changed = true
+		}
+		if !changed {
+			continue
+		}
+
+		template.UpdatedAt = time.Now().UTC()
+		if err := s.store.Save(ctx, template); err != nil {
+			zerolog.Ctx(ctx).Warn().
+				Err(err).
+				Str("template_id", template.ID).
+				Msg("Failed to persist refreshed template storage info")
+		}
+	}
 }
 
 func cloneTags(tags []string) []string {
