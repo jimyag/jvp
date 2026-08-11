@@ -43,6 +43,7 @@ echo "=== Cleaning up stale files ==="
 rm -f /var/run/libvirt/libvirt-sock*
 rm -f /var/run/libvirt/virtlogd-sock
 rm -f /var/run/libvirt/virtlockd-sock
+rm -f /var/run/libvirt/*/autostarted
 rm -f /var/run/libvirtd.pid
 rm -f /var/run/virtlogd.pid
 
