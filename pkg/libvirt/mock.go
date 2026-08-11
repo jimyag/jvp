@@ -78,6 +78,11 @@ func (m *MockClient) CreateDomain(config *CreateVMConfig, autoStart bool) (libvi
 	return args.Get(0).(libvirt.Domain), args.Error(1)
 }
 
+func (m *MockClient) EnsureDomainVNC(domain libvirt.Domain) error {
+	args := m.Called(domain)
+	return args.Error(0)
+}
+
 func (m *MockClient) StartDomain(domain libvirt.Domain) error {
 	args := m.Called(domain)
 	return args.Error(0)

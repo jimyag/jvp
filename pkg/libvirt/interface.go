@@ -20,6 +20,7 @@ type LibvirtClient interface {
 	GetDomainByName(name string) (libvirt.Domain, error)
 	GetDomainState(domain libvirt.Domain) (uint8, uint32, error)
 	CreateDomain(config *CreateVMConfig, autoStart bool) (libvirt.Domain, error)
+	EnsureDomainVNC(domain libvirt.Domain) error
 	StartDomain(domain libvirt.Domain) error
 	StopDomain(domain libvirt.Domain) error
 	RebootDomain(domain libvirt.Domain) error

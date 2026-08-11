@@ -506,6 +506,10 @@ func (c *Client) DefineDomain(config *CreateVMConfig) (libvirt.Domain, error) {
 
 // StartDomain 启动已定义的域
 func (c *Client) StartDomain(domain libvirt.Domain) error {
+	if err := c.EnsureDomainVNC(domain); err != nil {
+		log.Warn().Err(err).Str("domain", domain.Name).Msg("Failed to ensure VNC configuration")
+	}
+
 	// 启动前确保 VNC socket 目录存在
 	if err := c.ensureVNCSocketDir(domain); err != nil {
 		log.Warn().Err(err).Str("domain", domain.Name).Msg("Failed to ensure VNC socket directory")
@@ -516,6 +520,102 @@ func (c *Client) StartDomain(domain libvirt.Domain) error {
 		return fmt.Errorf("failed to start domain %s: %v", domain.Name, err)
 	}
 	return nil
+}
+
+// EnsureDomainVNC ensures the persistent domain XML has a VNC Unix socket.
+// Existing TCP VNC configurations are converted and domains without VNC get one
+// added. The change applies on the next domain start.
+func (c *Client) EnsureDomainVNC(domain libvirt.Domain) error {
+	socketPath := "/var/lib/jvp/qemu/" + domain.Name + ".vnc"
+	xmlDesc, err := c.conn.DomainGetXMLDesc(domain, libvirt.DomainXMLInactive)
+	if err != nil {
+		return fmt.Errorf("get inactive domain XML: %w", err)
+	}
+
+	updatedXML, changed := ensureVNCSocketInDomainXML(xmlDesc, socketPath)
+	if !changed {
+		return c.ensureVNCSocketDir(domain)
+	}
+
+	vncDir := filepath.Dir(socketPath)
+	if c.IsRemoteConnection() {
+		if err := c.ExecuteRemoteCommand(fmt.Sprintf("mkdir -p '%s' && chmod 755 '%s'", vncDir, vncDir)); err != nil {
+			return fmt.Errorf("create VNC socket directory on remote: %w", err)
+		}
+		_ = c.ExecuteRemoteCommand(fmt.Sprintf("chown libvirt-qemu:kvm '%s' 2>/dev/null || chown qemu:qemu '%s' 2>/dev/null || true", vncDir, vncDir))
+	} else {
+		if err := os.MkdirAll(vncDir, 0o755); err != nil {
+			return fmt.Errorf("create VNC socket directory: %w", err)
+		}
+		if err := c.fixVNCDirOwnership(vncDir); err != nil {
+			log.Warn().Err(err).Str("dir", vncDir).Msg("Failed to fix VNC directory ownership")
+		}
+	}
+
+	if _, err := c.conn.DomainDefineXML(updatedXML); err != nil {
+		return fmt.Errorf("define domain with VNC socket: %w", err)
+	}
+	return nil
+}
+
+func ensureVNCSocketInDomainXML(xmlDesc, socketPath string) (string, bool) {
+	vncStart := findGraphicsStart(xmlDesc, "vnc")
+	if vncStart == -1 {
+		insertAt := strings.LastIndex(xmlDesc, "</devices>")
+		if insertAt == -1 {
+			return xmlDesc, false
+		}
+		graphicsXML := fmt.Sprintf("    <graphics type='vnc' socket='%s'/>\n", socketPath)
+		return xmlDesc[:insertAt] + graphicsXML + xmlDesc[insertAt:], true
+	}
+
+	vncEnd := graphicsEnd(xmlDesc, vncStart)
+	if vncEnd == -1 {
+		return xmlDesc, false
+	}
+
+	replacement := fmt.Sprintf("<graphics type='vnc' socket='%s'/>", socketPath)
+	if xmlDesc[vncStart:vncEnd] == replacement {
+		return xmlDesc, false
+	}
+	return xmlDesc[:vncStart] + replacement + xmlDesc[vncEnd:], true
+}
+
+func findGraphicsStart(xmlDesc, graphicsType string) int {
+	searchFrom := 0
+	for {
+		idx := strings.Index(xmlDesc[searchFrom:], "<graphics")
+		if idx == -1 {
+			return -1
+		}
+		idx += searchFrom
+		tagEnd := strings.Index(xmlDesc[idx:], ">")
+		if tagEnd == -1 {
+			return -1
+		}
+		startTag := xmlDesc[idx : idx+tagEnd+1]
+		if strings.Contains(startTag, "type='"+graphicsType+"'") || strings.Contains(startTag, "type=\""+graphicsType+"\"") {
+			return idx
+		}
+		searchFrom = idx + len("<graphics")
+	}
+}
+
+func graphicsEnd(xmlDesc string, start int) int {
+	tagEndRel := strings.Index(xmlDesc[start:], ">")
+	if tagEndRel == -1 {
+		return -1
+	}
+	tagEnd := start + tagEndRel + 1
+	startTag := xmlDesc[start:tagEnd]
+	if strings.HasSuffix(strings.TrimSpace(startTag), "/>") {
+		return tagEnd
+	}
+	closeRel := strings.Index(xmlDesc[tagEnd:], "</graphics>")
+	if closeRel == -1 {
+		return -1
+	}
+	return tagEnd + closeRel + len("</graphics>")
 }
 
 // ensureVNCSocketDir 确保 VNC socket 目录存在
