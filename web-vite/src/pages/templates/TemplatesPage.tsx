@@ -65,29 +65,24 @@ interface StoragePoolItem {
 // 预设的常用 Cloud Image URL
 const PRESET_CLOUD_IMAGES = [
   {
-    name: "Ubuntu 24.04 LTS (Noble)",
-    url: "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img",
-    os: { name: "Ubuntu", version: "24.04", arch: "x86_64" },
+    name: "Ubuntu 26.04 LTS",
+    url: "https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64.img",
+    os: { name: "Ubuntu", version: "26.04", arch: "x86_64" },
   },
   {
-    name: "Ubuntu 22.04 LTS (Jammy)",
-    url: "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img",
-    os: { name: "Ubuntu", version: "22.04", arch: "x86_64" },
+    name: "Debian 13 (Trixie)",
+    url: "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-generic-amd64.qcow2",
+    os: { name: "Debian", version: "13", arch: "x86_64" },
   },
   {
-    name: "Debian 12 (Bookworm)",
-    url: "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2",
-    os: { name: "Debian", version: "12", arch: "x86_64" },
+    name: "CentOS Stream 10",
+    url: "https://cloud.centos.org/centos/10-stream/x86_64/images/CentOS-Stream-GenericCloud-10-latest.x86_64.qcow2",
+    os: { name: "CentOS Stream", version: "10", arch: "x86_64" },
   },
   {
-    name: "CentOS Stream 9",
-    url: "https://cloud.centos.org/centos/9-stream/x86_64/images/CentOS-Stream-GenericCloud-9-latest.x86_64.qcow2",
-    os: { name: "CentOS Stream", version: "9", arch: "x86_64" },
-  },
-  {
-    name: "Rocky Linux 9",
-    url: "https://download.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud.latest.x86_64.qcow2",
-    os: { name: "Rocky Linux", version: "9", arch: "x86_64" },
+    name: "Rocky Linux 10",
+    url: "https://dl.rockylinux.org/vault/rocky/10.0/images/x86_64/Rocky-10-GenericCloud-Base.latest.x86_64.qcow2",
+    os: { name: "Rocky Linux", version: "10", arch: "x86_64" },
   },
 ];
 
@@ -1138,4 +1133,3 @@ export default function TemplatesPage() {
     </>
   );
 }
-
