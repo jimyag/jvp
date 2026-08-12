@@ -1,12 +1,10 @@
-import { useState, useEffect, lazy, Suspense } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import Header from "@/components/Header";
 import { useToast } from "@/components/ToastContainer";
 import { Monitor, Terminal as TerminalIcon, ArrowLeft, AlertCircle } from "lucide-react";
-
-// 动态导入避免 SSR 问题
-const VNCConsole = lazy(() => import("@/components/VNCConsole"));
-const SerialConsole = lazy(() => import("@/components/SerialConsole"));
+import VNCConsole from "@/components/VNCConsole";
+import SerialConsole from "@/components/SerialConsole";
 
 type ConsoleType = "vnc" | "serial";
 
@@ -208,41 +206,37 @@ export default function InstanceConsolePage() {
           </div>
         ) : consoleInfo && getWebSocketURL() ? (
           consoleType === "vnc" ? (
-            <Suspense fallback={<div className="flex items-center justify-center h-full bg-gray-50"><p className="text-gray-500">Loading VNC Console...</p></div>}>
-              <VNCConsole
-                wsUrl={getWebSocketURL()}
-                onConnect={() => {
-                  setConnected(true);
-                  toast.success("VNC console connected");
-                }}
-                onDisconnect={() => {
-                  setConnected(false);
-                  toast.info("VNC console disconnected");
-                }}
-                onError={(err) => {
-                  setError(err);
-                  toast.error(err);
-                }}
-              />
-            </Suspense>
+            <VNCConsole
+              wsUrl={getWebSocketURL()}
+              onConnect={() => {
+                setConnected(true);
+                toast.success("VNC console connected");
+              }}
+              onDisconnect={() => {
+                setConnected(false);
+                toast.info("VNC console disconnected");
+              }}
+              onError={(err) => {
+                setError(err);
+                toast.error(err);
+              }}
+            />
           ) : (
-            <Suspense fallback={<div className="flex items-center justify-center h-full bg-gray-50"><p className="text-gray-500">Loading Serial Console...</p></div>}>
-              <SerialConsole
-                wsUrl={getWebSocketURL()}
-                onConnect={() => {
-                  setConnected(true);
-                  toast.success("Serial console connected");
-                }}
-                onDisconnect={() => {
-                  setConnected(false);
-                  toast.info("Serial console disconnected");
-                }}
-                onError={(err) => {
-                  setError(err);
-                  toast.error(err);
-                }}
-              />
-            </Suspense>
+            <SerialConsole
+              wsUrl={getWebSocketURL()}
+              onConnect={() => {
+                setConnected(true);
+                toast.success("Serial console connected");
+              }}
+              onDisconnect={() => {
+                setConnected(false);
+                toast.info("Serial console disconnected");
+              }}
+              onError={(err) => {
+                setError(err);
+                toast.error(err);
+              }}
+            />
           )
         ) : (
           <div className="flex items-center justify-center h-full bg-gray-50">
@@ -264,4 +258,3 @@ export default function InstanceConsolePage() {
     </>
   );
 }
-

@@ -22,6 +22,7 @@ type LibvirtClient interface {
 	CreateDomain(config *CreateVMConfig, autoStart bool) (libvirt.Domain, error)
 	EnsureDomainVNC(domain libvirt.Domain) error
 	StartDomain(domain libvirt.Domain) error
+	SendKey(domain libvirt.Domain, codeset uint32, keycodes []uint32) error
 	StopDomain(domain libvirt.Domain) error
 	RebootDomain(domain libvirt.Domain) error
 	DestroyDomain(domain libvirt.Domain) error

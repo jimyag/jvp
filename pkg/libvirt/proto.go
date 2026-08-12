@@ -62,8 +62,10 @@ type DomainVCPU struct {
 
 // DomainOS represents operating system configuration
 type DomainOS struct {
-	Type DomainOSType `xml:"type"`
-	Boot DomainBoot   `xml:"boot"`
+	Type   DomainOSType  `xml:"type"`
+	Loader *DomainLoader `xml:"loader,omitempty"`
+	NVRAM  *DomainNVRAM  `xml:"nvram,omitempty"`
+	Boot   *DomainBoot   `xml:"boot,omitempty"`
 }
 
 // DomainOSType represents OS type details
@@ -76,6 +78,19 @@ type DomainOSType struct {
 // DomainBoot represents boot configuration
 type DomainBoot struct {
 	Dev string `xml:"dev,attr"`
+}
+
+// DomainLoader represents UEFI loader configuration.
+type DomainLoader struct {
+	Readonly string `xml:"readonly,attr,omitempty"`
+	Type     string `xml:"type,attr,omitempty"`
+	Value    string `xml:",chardata"`
+}
+
+// DomainNVRAM represents per-domain UEFI variable storage.
+type DomainNVRAM struct {
+	Template string `xml:"template,attr,omitempty"`
+	Value    string `xml:",chardata"`
 }
 
 // DomainDevices represents all devices in the domain
@@ -283,6 +298,7 @@ type DomainFeatures struct {
 	HyperV   *DomainHyperV         `xml:"hyperv,omitempty"`   // Hyper-V enlightenments for Windows guests
 	KVM      *DomainKVM            `xml:"kvm,omitempty"`      // KVM specific features
 	VMPort   *DomainFeatureState   `xml:"vmport,omitempty"`   // VMWare IO port emulation
+	SMM      *DomainFeatureState   `xml:"smm,omitempty"`      // System Management Mode, required by Secure Boot firmware
 }
 
 // DomainFeatureEnabled represents a simple enabled feature

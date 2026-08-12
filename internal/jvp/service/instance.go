@@ -118,6 +118,7 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 
 	var diskPath string
 	var templateID string
+	var diskVolumeName string
 	var windowsInstallISOPath string
 	var windowsDriverISOPath string
 	osType := strings.ToLower(strings.TrimSpace(req.OSType))
@@ -152,7 +153,7 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 		}
 
 		// 创建磁盘卷名称
-		diskVolumeName := instanceName + ".qcow2"
+		diskVolumeName = instanceName + ".qcow2"
 
 		// 使用 backingStore 创建增量磁盘
 		logger.Info().
@@ -208,7 +209,7 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 		}
 
 		// 没有模板，创建空白磁盘
-		diskVolumeName := instanceName + ".qcow2"
+		diskVolumeName = instanceName + ".qcow2"
 
 		volumeInfo, err := client.CreateVolume(req.PoolName, diskVolumeName, sizeGB, "qcow2")
 		if err != nil {
@@ -339,18 +340,29 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 	}
 
 	if isWindows {
-		vmConfig.BootDevice = "cdrom"
+		vmConfig.DisableOSBoot = true
+		vmConfig.MachineType = "q35"
+		vmConfig.DiskBus = "sata"
+		vmConfig.CPUMode = "host-passthrough"
+		vmConfig.CPUSockets = 1
+		vmConfig.CPUCores = int(vcpus)
+		vmConfig.CPUThreads = 1
+		vmConfig.LoaderPath = "/usr/share/OVMF/OVMF_CODE_4M.ms.fd"
+		vmConfig.NVRAMTemplate = "/usr/share/OVMF/OVMF_VARS_4M.ms.fd"
+		vmConfig.NVRAMPath = "/var/lib/libvirt/qemu/nvram/" + instanceName + "_VARS.fd"
+		vmConfig.TPM = true
+		vmConfig.SMM = true
 		vmConfig.CDROMs = append(vmConfig.CDROMs, libvirt.CDROMConfig{
 			Path:   windowsInstallISOPath,
-			Device: "hda",
-			Bus:    "ide",
+			Device: "sdb",
+			Bus:    "sata",
 			Boot:   true,
 		})
 		if windowsDriverISOPath != "" {
 			vmConfig.CDROMs = append(vmConfig.CDROMs, libvirt.CDROMConfig{
 				Path:   windowsDriverISOPath,
-				Device: "hdb",
-				Bus:    "ide",
+				Device: "sdc",
+				Bus:    "sata",
 			})
 		}
 	}
@@ -369,6 +381,15 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 
 	domain, err := client.CreateDomain(vmConfig, true)
 	if err != nil {
+		if diskVolumeName != "" {
+			if cleanupErr := client.DeleteVolume(req.PoolName, diskVolumeName); cleanupErr != nil {
+				logger.Warn().
+					Err(cleanupErr).
+					Str("pool_name", req.PoolName).
+					Str("volume_name", diskVolumeName).
+					Msg("Failed to clean up disk volume after domain creation failure")
+			}
+		}
 		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to create domain", err)
 	}
 
@@ -378,6 +399,9 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 			Err(err).
 			Str("name", instanceName).
 			Msg("Failed to start domain, it might already be running")
+	}
+	if isWindows {
+		go s.sendWindowsInstallerBootKey(client, domain, instanceName, logger.With().Logger())
 	}
 
 	logger.Info().
@@ -397,6 +421,47 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 		DomainUUID: formatDomainUUID(domain.UUID),
 		DomainName: instanceName,
 	}, nil
+}
+
+func (s *InstanceService) sendWindowsInstallerBootKey(client libvirt.LibvirtClient, domain libvirtlib.Domain, instanceName string, logger zerolog.Logger) {
+	spaceKey := []uint32{0x39}
+	for _, delay := range []time.Duration{2 * time.Second, 4 * time.Second} {
+		time.Sleep(delay)
+		if err := client.SendKey(domain, uint32(libvirtlib.KeycodeSetXt), spaceKey); err != nil {
+			logger.Warn().
+				Err(err).
+				Str("name", instanceName).
+				Msg("Failed to send Windows installer boot key")
+			return
+		}
+	}
+	logger.Debug().
+		Str("name", instanceName).
+		Msg("Sent Windows installer boot key")
+}
+
+func (s *InstanceService) shouldSendWindowsInstallerBootKey(client libvirt.LibvirtClient, domainName string, logger zerolog.Logger) bool {
+	disks, err := client.GetDomainDisks(domainName)
+	if err != nil {
+		logger.Debug().
+			Err(err).
+			Str("name", domainName).
+			Msg("Failed to inspect domain disks for Windows installer boot key")
+		return false
+	}
+
+	for _, disk := range disks {
+		if disk.Device != "cdrom" || disk.Boot == nil || disk.Boot.Order != 1 {
+			continue
+		}
+
+		source := strings.ToLower(disk.Source.File)
+		if strings.Contains(source, "windows") || strings.Contains(source, "win11") || strings.Contains(source, "win10") {
+			return true
+		}
+	}
+
+	return false
 }
 
 // formatDomainUUID 格式化 Domain UUID
@@ -1118,6 +1183,19 @@ func (s *InstanceService) deleteVolumesByDisks(ctx context.Context, client libvi
 		if disk.Source.File == "" {
 			continue
 		}
+		if disk.Device != "disk" {
+			logger.Debug().
+				Str("path", disk.Source.File).
+				Str("device", disk.Device).
+				Msg("Skipping non-disk device during volume deletion")
+			continue
+		}
+		if strings.Contains(disk.Source.File, "/_templates_/") {
+			logger.Warn().
+				Str("path", disk.Source.File).
+				Msg("Skipping template volume during instance volume deletion")
+			continue
+		}
 
 		// 优先使用 libvirt 路径删除
 		if err := client.DeleteVolumeByPath(disk.Source.File); err != nil {
@@ -1346,6 +1424,9 @@ func (s *InstanceService) StartInstances(ctx context.Context, req *entity.StartI
 		logger.Info().
 			Str("instanceID", instanceID).
 			Msg("Domain start command sent successfully")
+		if s.shouldSendWindowsInstallerBootKey(client, instanceID, logger.With().Logger()) {
+			go s.sendWindowsInstallerBootKey(client, domain, instanceID, logger.With().Logger())
+		}
 
 		// 状态已在 libvirt 中更新，不需要额外操作
 		changes = append(changes, entity.InstanceStateChange{
@@ -1453,6 +1534,9 @@ func (s *InstanceService) RebootInstances(ctx context.Context, req *entity.Reboo
 		logger.Info().
 			Str("instanceID", instanceID).
 			Msg("Domain reboot command sent successfully")
+		if s.shouldSendWindowsInstallerBootKey(client, instanceID, logger.With().Logger()) {
+			go s.sendWindowsInstallerBootKey(client, domain, instanceID, logger.With().Logger())
+		}
 
 		// 状态已在 libvirt 中更新，不需要额外操作
 		changes = append(changes, entity.InstanceStateChange{

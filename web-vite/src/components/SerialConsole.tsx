@@ -1,4 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 
 interface SerialConsoleProps {
@@ -35,11 +38,6 @@ export default function SerialConsole({
       if (!terminalRef.current || !isMounted) return;
 
       try {
-        // 动态导入 xterm 以避免 SSR 问题
-        const { Terminal } = await import("@xterm/xterm");
-        const { FitAddon } = await import("@xterm/addon-fit");
-        const { WebLinksAddon } = await import("@xterm/addon-web-links");
-
         // 再次检查 DOM 元素和挂载状态
         if (!terminalRef.current || !isMounted) return;
 

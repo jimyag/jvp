@@ -88,6 +88,11 @@ func (m *MockClient) StartDomain(domain libvirt.Domain) error {
 	return args.Error(0)
 }
 
+func (m *MockClient) SendKey(domain libvirt.Domain, codeset uint32, keycodes []uint32) error {
+	args := m.Called(domain, codeset, keycodes)
+	return args.Error(0)
+}
+
 func (m *MockClient) StopDomain(domain libvirt.Domain) error {
 	args := m.Called(domain)
 	return args.Error(0)

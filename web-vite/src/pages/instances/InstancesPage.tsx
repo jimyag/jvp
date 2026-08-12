@@ -88,6 +88,10 @@ function templateText(template: Template) {
   return `${template.name} ${template.volume_name || ""} ${template.os?.name || ""} ${template.os?.version || ""} ${template.format || ""}`.toLowerCase();
 }
 
+function apiErrorMessage(error: any) {
+  return error?.message || error?.errors?.[0]?.message || error?.error || "Unknown error";
+}
+
 function isLikelyWindowsInstallISO(template: Template) {
   const text = templateText(template);
   return text.includes("windows") || text.includes("winserver") || text.includes("server 20");
@@ -392,7 +396,7 @@ export default function InstancesPage() {
             toast.success("Public key imported successfully!");
           } else {
             const error = await importResponse.json();
-            toast.error(`Failed to import public key: ${error.message || "Unknown error"}`);
+            toast.error(`Failed to import public key: ${apiErrorMessage(error)}`);
             return;
           }
         } catch (error) {
@@ -499,7 +503,7 @@ export default function InstancesPage() {
         toast.success("Instance created successfully!");
       } else {
         const error = await response.json();
-        toast.error(`Failed to create instance: ${error.message || "Unknown error"}`);
+        toast.error(`Failed to create instance: ${apiErrorMessage(error)}`);
       }
     } catch (error) {
       console.error("Failed to create instance:", error);
@@ -526,7 +530,7 @@ export default function InstancesPage() {
         }, 2000);
       } else {
         const error = await response.json();
-        toast.error(`Failed to ${action} instance: ${error.message || "Unknown error"}`);
+        toast.error(`Failed to ${action} instance: ${apiErrorMessage(error)}`);
       }
     } catch (error) {
       console.error(`Failed to ${action} instance:`, error);
@@ -558,7 +562,7 @@ export default function InstancesPage() {
         toast.success("Instance terminated successfully!");
       } else {
         const error = await response.json();
-        toast.error(`Failed to terminate instance: ${error.message || "Unknown error"}`);
+        toast.error(`Failed to terminate instance: ${apiErrorMessage(error)}`);
       }
     } catch (error) {
       console.error("Failed to delete instance:", error);

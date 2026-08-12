@@ -32,6 +32,12 @@
             max-height: 100%;
             object-fit: contain;
         }
+        #screen.mouse-captured canvas {
+            cursor: none;
+        }
+        #screen.mouse-captured {
+            cursor: none;
+        }
         #status {
             position: absolute;
             top: 10px;
@@ -42,6 +48,7 @@
             border-radius: 5px;
             font-size: 14px;
             z-index: 1000;
+            pointer-events: none;
         }
         .connecting {
             color: #fbbf24;
@@ -84,6 +91,151 @@
                 rfb.scaleViewport = true;
                 rfb.resizeSession = false; // 不调整远程分辨率
                 rfb.clipViewport = false;  // 不裁剪，完整显示
+                rfb.showDotCursor = true;
+
+                let capturedMouse = null;
+                let ignoreInitialPointerMove = false;
+
+                const getCanvas = () => rfb._canvas;
+                const getDisplay = () => rfb._display;
+                const isPointerLocked = () => document.pointerLockElement === screen;
+                const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+
+                const buttonMask = (buttons) => {
+                    const buttonMaskMap = {
+                        0: 1 << 0,
+                        1: 1 << 2,
+                        2: 1 << 1,
+                        3: 1 << 7,
+                        4: 1 << 8,
+                    };
+                    let mask = 0;
+                    for (let i = 0; i < 5; i++) {
+                        if (buttons & (1 << i)) {
+                            mask |= buttonMaskMap[i];
+                        }
+                    }
+                    return mask;
+                };
+
+                const sendPointer = () => {
+                    if (!capturedMouse || !rfb._sock) return;
+                    RFB.messages.pointerEvent(
+                        rfb._sock,
+                        Math.round(capturedMouse.x),
+                        Math.round(capturedMouse.y),
+                        capturedMouse.mask
+                    );
+                };
+
+                const updateCapturedPositionFromEvent = (event) => {
+                    const canvas = getCanvas();
+                    const display = getDisplay();
+                    if (!canvas || !display) return null;
+
+                    const bounds = canvas.getBoundingClientRect();
+                    const localX = clamp(event.clientX - bounds.left, 0, Math.max(bounds.width - 1, 0));
+                    const localY = clamp(event.clientY - bounds.top, 0, Math.max(bounds.height - 1, 0));
+                    const scaleX = display.width / Math.max(bounds.width, 1);
+                    const scaleY = display.height / Math.max(bounds.height, 1);
+                    capturedMouse = {
+                        x: clamp(localX * scaleX, 0, Math.max(display.width - 1, 0)),
+                        y: clamp(localY * scaleY, 0, Math.max(display.height - 1, 0)),
+                        mask: buttonMask(event.buttons),
+                    };
+                    return capturedMouse;
+                };
+
+                const requestMouseCapture = (event) => {
+                    if (isPointerLocked()) return;
+
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                    updateCapturedPositionFromEvent(event);
+                    const lockRequest = screen.requestPointerLock?.();
+                    if (lockRequest?.catch) {
+                        lockRequest.catch((error) => {
+                            console.warn('Pointer lock request failed:', error);
+                        });
+                    }
+                };
+
+                const handlePointerLockChange = () => {
+                    const locked = isPointerLocked();
+                    screen.classList.toggle('mouse-captured', locked);
+                    status.textContent = locked ? 'Mouse captured' : 'Click console to capture mouse';
+                    status.className = 'connected';
+                    status.style.display = 'block';
+                    ignoreInitialPointerMove = locked;
+                    if (!locked) {
+                        capturedMouse = null;
+                        ignoreInitialPointerMove = false;
+                    }
+                };
+
+                const handleCapturedMouseMove = (event) => {
+                    if (!isPointerLocked() || !capturedMouse) return;
+
+                    const display = getDisplay();
+                    if (!display) return;
+
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+
+                    if (ignoreInitialPointerMove) {
+                        ignoreInitialPointerMove = false;
+                        if (Math.abs(event.movementX) > 100 || Math.abs(event.movementY) > 100) {
+                            return;
+                        }
+                    }
+
+                    const canvas = getCanvas();
+                    const bounds = canvas?.getBoundingClientRect();
+                    const scaleX = display.width / Math.max(bounds?.width || 1, 1);
+                    const scaleY = display.height / Math.max(bounds?.height || 1, 1);
+                    capturedMouse.x = clamp(
+                        capturedMouse.x + event.movementX * scaleX,
+                        0,
+                        Math.max(display.width - 1, 0)
+                    );
+                    capturedMouse.y = clamp(
+                        capturedMouse.y + event.movementY * scaleY,
+                        0,
+                        Math.max(display.height - 1, 0)
+                    );
+                    sendPointer();
+                };
+
+                const handleCapturedMouseButton = (event) => {
+                    if (!isPointerLocked() || !capturedMouse) return;
+
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                    capturedMouse.mask = buttonMask(event.buttons);
+                    sendPointer();
+                };
+
+                const handleCapturedWheel = (event) => {
+                    if (!isPointerLocked() || !capturedMouse) return;
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                };
+
+                const handlePointerLockError = () => {
+                    status.textContent = 'Click inside the console to capture the mouse';
+                    status.className = 'connected';
+                    status.style.display = 'block';
+                };
+
+                const installMouseCapture = () => {
+                    document.addEventListener('mousedown', requestMouseCapture, true);
+                    document.addEventListener('pointerlockchange', handlePointerLockChange);
+                    document.addEventListener('pointerlockerror', handlePointerLockError);
+                    document.addEventListener('mousemove', handleCapturedMouseMove, true);
+                    document.addEventListener('mousedown', handleCapturedMouseButton, true);
+                    document.addEventListener('mouseup', handleCapturedMouseButton, true);
+                    document.addEventListener('wheel', handleCapturedWheel, true);
+                };
 
                 // 更新缩放的函数
                 const updateScale = () => {
@@ -99,14 +251,12 @@
                 // 连接事件
                 rfb.addEventListener('connect', () => {
                     console.log('VNC connected');
-                    status.textContent = 'Connected';
+                    status.textContent = 'Click console to capture mouse';
                     status.className = 'connected';
+                    status.style.display = 'block';
+                    installMouseCapture();
                     // 连接后立即更新缩放
                     setTimeout(updateScale, 100);
-                    // 3秒后隐藏状态
-                    setTimeout(() => {
-                        status.style.display = 'none';
-                    }, 3000);
                 });
 
                 // 断开连接事件

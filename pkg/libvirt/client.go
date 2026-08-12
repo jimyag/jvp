@@ -61,9 +61,19 @@ type CreateVMConfig struct {
 	OSType            string              // 操作系统类型：hvm, linux, exe（默认：hvm）
 	Architecture      string              // CPU 架构：x86_64, aarch64, i686 等（默认：x86_64）
 	MachineType       string              // 机器类型（可选，如：pc-q35-6.2）
+	CPUMode           string              // CPU 模式：host-passthrough, host-model（可选）
+	CPUSockets        int                 // CPU socket 数（可选）
+	CPUCores          int                 // 每 socket core 数（可选）
+	CPUThreads        int                 // 每 core thread 数（可选）
+	LoaderPath        string              // UEFI loader 路径（可选）
+	NVRAMPath         string              // UEFI NVRAM 路径（可选）
+	NVRAMTemplate     string              // UEFI NVRAM 模板路径（可选）
+	TPM               bool                // 是否添加 TPM 2.0 设备
+	SMM               bool                // 是否开启 System Management Mode（Secure Boot 固件需要）
 	ISOPath           string              // ISO 路径（可选，用于操作系统安装）
 	CDROMs            []CDROMConfig       // 额外 CD-ROM 设备（可选）
 	BootDevice        string              // 启动设备：hd, cdrom（默认：hd）
+	DisableOSBoot     bool                // 是否省略 OS 级 boot，改用设备级 boot order
 	VNCSocket         string              // VNC Unix socket 路径（可选，默认：/var/lib/jvp/qemu/{name}.vnc）
 	Autostart         bool                // 是否开机自动启动（默认：false）
 	QemuGuestAgent    bool                // 是否添加 QEMU Guest Agent 通道
@@ -533,6 +543,17 @@ func (c *Client) StartDomain(domain libvirt.Domain) error {
 	return nil
 }
 
+// SendKey sends keycodes to a running domain.
+func (c *Client) SendKey(domain libvirt.Domain, codeset uint32, keycodes []uint32) error {
+	if len(keycodes) == 0 {
+		return nil
+	}
+	if err := c.conn.DomainSendKey(domain, codeset, 0, keycodes, 0); err != nil {
+		return fmt.Errorf("failed to send key to domain %s: %w", domain.Name, err)
+	}
+	return nil
+}
+
 // EnsureDomainVNC ensures the persistent domain XML has a VNC Unix socket.
 // Existing TCP VNC configurations are converted and domains without VNC get one
 // added. The change applies on the next domain start.
@@ -913,7 +934,7 @@ func (c *Client) setDefaultVMConfig(config *CreateVMConfig) {
 		config.OSType = "hvm"
 	}
 
-	if config.BootDevice == "" {
+	if config.BootDevice == "" && !config.DisableOSBoot {
 		config.BootDevice = "hd"
 	}
 
@@ -949,9 +970,9 @@ func (c *Client) buildDomainXML(config *CreateVMConfig) (*DomainXML, error) {
 				Machine: config.MachineType,
 				Value:   config.OSType,
 			},
-			Boot: DomainBoot{
-				Dev: config.BootDevice,
-			},
+			Loader: c.buildLoader(config),
+			NVRAM:  c.buildNVRAM(config),
+			Boot:   c.buildOSBoot(config),
 		},
 		Features: &DomainFeatures{
 			ACPI: &DomainFeatureEnabled{},
@@ -965,8 +986,57 @@ func (c *Client) buildDomainXML(config *CreateVMConfig) (*DomainXML, error) {
 		OnCrash:    "destroy",
 		Devices:    c.buildDevices(config),
 	}
+	if config.CPUMode != "" || config.CPUSockets > 0 || config.CPUCores > 0 || config.CPUThreads > 0 {
+		domain.CPU = c.buildCPU(config)
+	}
+	if config.SMM {
+		domain.Features.SMM = &DomainFeatureState{State: "on"}
+	}
 
 	return domain, nil
+}
+
+func (c *Client) buildOSBoot(config *CreateVMConfig) *DomainBoot {
+	if config.BootDevice == "" {
+		return nil
+	}
+	return &DomainBoot{Dev: config.BootDevice}
+}
+
+func (c *Client) buildLoader(config *CreateVMConfig) *DomainLoader {
+	if config.LoaderPath == "" {
+		return nil
+	}
+	return &DomainLoader{
+		Readonly: "yes",
+		Type:     "pflash",
+		Value:    config.LoaderPath,
+	}
+}
+
+func (c *Client) buildNVRAM(config *CreateVMConfig) *DomainNVRAM {
+	if config.NVRAMPath == "" {
+		return nil
+	}
+	return &DomainNVRAM{
+		Template: config.NVRAMTemplate,
+		Value:    config.NVRAMPath,
+	}
+}
+
+func (c *Client) buildCPU(config *CreateVMConfig) *DomainCPU {
+	cpu := &DomainCPU{
+		Mode:  config.CPUMode,
+		Check: "none",
+	}
+	if config.CPUSockets > 0 || config.CPUCores > 0 || config.CPUThreads > 0 {
+		cpu.Topology = &DomainTopology{
+			Sockets: config.CPUSockets,
+			Cores:   config.CPUCores,
+			Threads: config.CPUThreads,
+		}
+	}
+	return cpu
 }
 
 // buildDevices 构建设备配置
@@ -992,6 +1062,11 @@ func (c *Client) buildDevices(config *CreateVMConfig) DomainDevices {
 		netSource = DomainInterfaceSource{
 			Bridge: config.NetworkSource,
 		}
+	}
+	pciRootModel := "pci-root"
+	isQ35 := strings.Contains(config.MachineType, "q35")
+	if isQ35 {
+		pciRootModel = "pcie-root"
 	}
 
 	devices := DomainDevices{
@@ -1036,7 +1111,7 @@ func (c *Client) buildDevices(config *CreateVMConfig) DomainDevices {
 			{
 				Type:  "pci",
 				Index: 0,
-				Model: "pci-root",
+				Model: pciRootModel,
 			},
 		},
 		Videos: []DomainVideo{
@@ -1072,6 +1147,12 @@ func (c *Client) buildDevices(config *CreateVMConfig) DomainDevices {
 			},
 		},
 	}
+	if isQ35 {
+		devices.Controllers = append(devices.Controllers, DomainController{
+			Type:  "sata",
+			Index: 0,
+		})
+	}
 
 	if config.QemuGuestAgent {
 		devices.Channels = append(devices.Channels, DomainChannel{
@@ -1081,6 +1162,15 @@ func (c *Client) buildDevices(config *CreateVMConfig) DomainDevices {
 				Name: "org.qemu.guest_agent.0",
 			},
 		})
+	}
+	if config.TPM {
+		devices.TPM = &DomainTPM{
+			Model: "tpm-crb",
+			Backend: &DomainTPMBackend{
+				Type:    "emulator",
+				Version: "2.0",
+			},
+		}
 	}
 
 	return devices
@@ -1116,6 +1206,10 @@ func (c *Client) fixVNCDirOwnership(dirPath string) error {
 
 // buildDisks 构建磁盘配置
 func (c *Client) buildDisks(config *CreateVMConfig) []DomainDisk {
+	diskTarget := "vda"
+	if config.DiskBus != "virtio" {
+		diskTarget = "sda"
+	}
 	disks := []DomainDisk{
 		{
 			Type:   "file",
@@ -1128,7 +1222,7 @@ func (c *Client) buildDisks(config *CreateVMConfig) []DomainDisk {
 				File: config.DiskPath,
 			},
 			Target: DomainDiskTarget{
-				Dev: "vda",
+				Dev: diskTarget,
 				Bus: config.DiskBus,
 			},
 		},
@@ -1176,7 +1270,7 @@ func (c *Client) buildDisks(config *CreateVMConfig) []DomainDisk {
 	}
 
 	usedTargets := map[string]struct{}{
-		"vda": {},
+		diskTarget: {},
 	}
 	for _, disk := range disks {
 		if disk.Target.Dev != "" {
@@ -1222,7 +1316,7 @@ func (c *Client) buildDisks(config *CreateVMConfig) []DomainDisk {
 				Bus: bus,
 			},
 		}
-		if cdrom.Boot {
+		if cdrom.Boot && config.BootDevice == "" {
 			disk.Boot = &DomainBootOrder{Order: 1}
 		}
 		disks = append(disks, disk)

@@ -18,6 +18,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     qemu-system-x86 \
     qemu-utils \
     ovmf \
+    swtpm \
+    swtpm-tools \
     # cloud-init ISO 生成
     genisoimage \
     # 网络工具
