@@ -64,6 +64,7 @@ type CreateVMConfig struct {
 	ISOPath           string              // ISO 路径（可选，用于操作系统安装）
 	VNCSocket         string              // VNC Unix socket 路径（可选，默认：/var/lib/jvp/qemu/{name}.vnc）
 	Autostart         bool                // 是否开机自动启动（默认：false）
+	QemuGuestAgent    bool                // 是否添加 QEMU Guest Agent 通道
 	CloudInit         *cloudinit.Config   // cloud-init 配置（可选）
 	CloudInitUserData *cloudinit.UserData // cloud-init 用户数据（可选）
 	cloudInitISOPath  string              // cloud-init ISO 路径（内部使用）
@@ -1058,6 +1059,16 @@ func (c *Client) buildDevices(config *CreateVMConfig) DomainDevices {
 		},
 	}
 
+	if config.QemuGuestAgent {
+		devices.Channels = append(devices.Channels, DomainChannel{
+			Type: "unix",
+			Target: &DomainChannelTarget{
+				Type: "virtio",
+				Name: "org.qemu.guest_agent.0",
+			},
+		})
+	}
+
 	return devices
 }
 
@@ -1163,7 +1174,8 @@ func (c *Client) QemuAgentCommand(domain libvirt.Domain, command string, timeout
 	}
 
 	// 使用 virsh 命令执行 qemu-agent-command
-	cmd := exec.Command("virsh", "qemu-agent-command", domainName, command)
+	args := []string{"-c", c.uri, "qemu-agent-command", domainName, command}
+	cmd := exec.Command("virsh", args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("qemu agent command failed: %w, output: %s", err, string(output))

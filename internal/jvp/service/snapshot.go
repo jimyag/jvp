@@ -465,16 +465,17 @@ func (s *SnapshotService) CloneFromSnapshot(ctx context.Context, req *entity.Clo
 
 	// 8. 创建新 VM
 	vmConfig := &libvirt.CreateVMConfig{
-		Name:          newVMName,
-		Memory:        memoryKB,
-		VCPUs:         vcpus,
-		DiskPath:      newDiskPath,
-		DiskBus:       "virtio",
-		NetworkType:   networkType,
-		NetworkSource: networkSource,
-		OSType:        "hvm",
-		Architecture:  "x86_64",
-		VNCSocket:     fmt.Sprintf("/var/lib/jvp/qemu/%s.vnc", newVMName),
+		Name:           newVMName,
+		Memory:         memoryKB,
+		VCPUs:          vcpus,
+		DiskPath:       newDiskPath,
+		DiskBus:        "virtio",
+		NetworkType:    networkType,
+		NetworkSource:  networkSource,
+		OSType:         "hvm",
+		Architecture:   "x86_64",
+		VNCSocket:      fmt.Sprintf("/var/lib/jvp/qemu/%s.vnc", newVMName),
+		QemuGuestAgent: true,
 	}
 
 	domain, err := client.CreateDomain(vmConfig, req.StartAfterClone)

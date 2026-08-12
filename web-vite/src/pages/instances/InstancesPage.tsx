@@ -552,7 +552,7 @@ export default function InstancesPage() {
       label: "IP",
       render: (_: unknown, row: Instance) => {
         const ifaceIPs = row.interfaces?.flatMap((i) => i.ips || []) || [];
-        const ips = [row.ip_address, ...ifaceIPs].filter(Boolean) as string[];
+        const ips = Array.from(new Set([row.ip_address, ...ifaceIPs].filter(Boolean) as string[]));
         return (
           <div className="flex flex-col text-xs font-mono">
             {(ips.length > 0 ? ips : ["N/A"]).map((ip) => (
@@ -1283,4 +1283,3 @@ export default function InstancesPage() {
     </>
   );
 }
-

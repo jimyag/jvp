@@ -5,7 +5,9 @@ package service
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"net/netip"
 	"os"
 	"sort"
 	"strings"
@@ -167,11 +169,19 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 
 	// 处理 cloud-init 配置
 	var cloudInitISOPath string
-	if req.UserData != nil || len(req.KeyPairIDs) > 0 {
+	if req.UserData != nil || len(req.KeyPairIDs) > 0 || req.TemplateID != "" {
 		cloudInitConfig, userData, err := s.convertUserDataToCloudInit(ctx, instanceName, req.UserData)
 		if err != nil {
 			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to convert user data", err)
 		}
+
+		if cloudInitConfig == nil && userData == nil {
+			cloudInitConfig = &cloudinit.Config{
+				Hostname: instanceName,
+			}
+		}
+
+		ensureQemuGuestAgentCloudInit(cloudInitConfig, userData)
 
 		// 添加 SSH 密钥
 		if len(req.KeyPairIDs) > 0 && cloudInitConfig != nil {
@@ -255,12 +265,13 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 
 	// 创建 Domain
 	vmConfig := &libvirt.CreateVMConfig{
-		Name:          instanceName,
-		Memory:        memoryMB * 1024, // 转换为 KB
-		VCPUs:         vcpus,
-		DiskPath:      diskPath,
-		NetworkType:   networkType,
-		NetworkSource: networkSource,
+		Name:           instanceName,
+		Memory:         memoryMB * 1024, // 转换为 KB
+		VCPUs:          vcpus,
+		DiskPath:       diskPath,
+		NetworkType:    networkType,
+		NetworkSource:  networkSource,
+		QemuGuestAgent: true,
 	}
 
 	// 如果有 cloud-init ISO，添加到配置
@@ -479,6 +490,7 @@ func (s *InstanceService) DescribeInstances(ctx context.Context, req *entity.Des
 			state = 5 // Unknown
 		}
 
+		interfaces := convertInterfaces(client, domain, domainInfo.NetworkInfo)
 		instance := entity.Instance{
 			ID:         domain.Name, // 使用 domain name 作为 ID
 			Name:       domain.Name,
@@ -490,7 +502,8 @@ func (s *InstanceService) DescribeInstances(ctx context.Context, req *entity.Des
 			MemoryMB:   domainInfo.Memory / 1024, // 转换为 MB
 			CreatedAt:  "",                       // libvirt 不提供创建时间
 			Autostart:  domainInfo.Autostart,
-			Interfaces: convertInterfaces(client, domainInfo.NetworkInfo),
+			IPAddress:  primaryIPFromInterfaces(interfaces),
+			Interfaces: interfaces,
 			StartedAt:  formatStartTime(domainInfo.StartTime),
 			Disks:      convertDisks(client, domain.Name),
 		}
@@ -554,10 +567,10 @@ func convertDomainState(state uint8) string {
 	}
 }
 
-func convertInterfaces(client libvirt.LibvirtClient, ifaces []libvirt.NetworkInterface) []entity.InstanceInterface {
+func convertInterfaces(client libvirt.LibvirtClient, domain libvirtlib.Domain, ifaces []libvirt.NetworkInterface) []entity.InstanceInterface {
 	result := make([]entity.InstanceInterface, 0, len(ifaces))
 	for _, iface := range ifaces {
-		ips, _ := libvirt.ResolveIPsByMAC(client, iface.MAC)
+		ips := resolveInterfaceIPs(client, domain, iface.MAC)
 		result = append(result, entity.InstanceInterface{
 			Name:   iface.Name,
 			Type:   iface.Type,
@@ -567,6 +580,141 @@ func convertInterfaces(client libvirt.LibvirtClient, ifaces []libvirt.NetworkInt
 		})
 	}
 	return result
+}
+
+func resolveInterfaceIPs(client libvirt.LibvirtClient, domain libvirtlib.Domain, mac string) []string {
+	var ips []string
+	if qgaIPs, err := resolveIPsByGuestAgent(client, domain, mac); err == nil {
+		ips = append(ips, qgaIPs...)
+	}
+
+	if fallbackIPs, err := libvirt.ResolveIPsByMAC(client, mac); err == nil {
+		ips = append(ips, fallbackIPs...)
+	}
+
+	return normalizeInstanceIPs(ips)
+}
+
+func resolveIPsByGuestAgent(client libvirt.LibvirtClient, domain libvirtlib.Domain, mac string) ([]string, error) {
+	if domain.Name == "" || mac == "" {
+		return nil, nil
+	}
+
+	const command = `{"execute":"guest-network-get-interfaces"}`
+	output, err := client.QemuAgentCommand(domain, command, 5, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	var response struct {
+		Return []struct {
+			HardwareAddress string `json:"hardware-address"`
+			IPAddresses     []struct {
+				IPAddress string `json:"ip-address"`
+			} `json:"ip-addresses"`
+		} `json:"return"`
+	}
+	if err := json.Unmarshal([]byte(output), &response); err != nil {
+		return nil, err
+	}
+
+	mac = strings.ToLower(mac)
+	var ips []string
+	for _, iface := range response.Return {
+		if strings.ToLower(iface.HardwareAddress) != mac {
+			continue
+		}
+		for _, addr := range iface.IPAddresses {
+			ips = append(ips, addr.IPAddress)
+		}
+	}
+
+	return ips, nil
+}
+
+func normalizeInstanceIPs(ips []string) []string {
+	seen := make(map[string]struct{}, len(ips))
+	var publicOrPrivate []string
+	var linkLocal []string
+
+	for _, ip := range ips {
+		addr, err := netip.ParseAddr(strings.TrimSpace(ip))
+		if err != nil || addr.IsLoopback() || addr.IsUnspecified() {
+			continue
+		}
+
+		normalized := addr.String()
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+
+		if addr.IsLinkLocalUnicast() {
+			linkLocal = append(linkLocal, normalized)
+			continue
+		}
+		publicOrPrivate = append(publicOrPrivate, normalized)
+	}
+
+	sort.SliceStable(publicOrPrivate, func(i, j int) bool {
+		left, right := netip.MustParseAddr(publicOrPrivate[i]), netip.MustParseAddr(publicOrPrivate[j])
+		if left.Is4() != right.Is4() {
+			return left.Is4()
+		}
+		return publicOrPrivate[i] < publicOrPrivate[j]
+	})
+	sort.Strings(linkLocal)
+
+	if len(publicOrPrivate) > 0 {
+		return publicOrPrivate
+	}
+	return linkLocal
+}
+
+func primaryIPFromInterfaces(ifaces []entity.InstanceInterface) string {
+	for _, iface := range ifaces {
+		for _, ip := range iface.IPs {
+			addr, err := netip.ParseAddr(ip)
+			if err == nil && addr.Is4() {
+				return ip
+			}
+		}
+	}
+	for _, iface := range ifaces {
+		if len(iface.IPs) > 0 {
+			return iface.IPs[0]
+		}
+	}
+	return ""
+}
+
+func ensureQemuGuestAgentCloudInit(config *cloudinit.Config, userData *cloudinit.UserData) {
+	const packageName = "qemu-guest-agent"
+	commands := []string{
+		"if command -v systemctl >/dev/null 2>&1; then systemctl enable --now qemu-guest-agent || systemctl enable --now qemu-ga || true; elif command -v rc-update >/dev/null 2>&1; then rc-update add qemu-guest-agent default || true; rc-service qemu-guest-agent start || true; fi",
+	}
+
+	if config != nil {
+		config.Packages = appendUniqueString(config.Packages, packageName)
+		for _, command := range commands {
+			config.Commands = appendUniqueString(config.Commands, command)
+		}
+	}
+	if userData != nil {
+		userData.Packages = appendUniqueString(userData.Packages, packageName)
+		for _, command := range commands {
+			userData.RunCmd = appendUniqueString(userData.RunCmd, command)
+		}
+	}
+}
+
+func appendUniqueString(values []string, value string) []string {
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
 }
 
 func formatStartTime(t *time.Time) string {
@@ -620,6 +768,7 @@ func (s *InstanceService) GetInstance(ctx context.Context, nodeName, instanceID 
 		state = 5 // Unknown
 	}
 
+	interfaces := convertInterfaces(client, domain, domainInfo.NetworkInfo)
 	instance := &entity.Instance{
 		ID:         domain.Name,
 		Name:       domain.Name,
@@ -631,7 +780,8 @@ func (s *InstanceService) GetInstance(ctx context.Context, nodeName, instanceID 
 		MemoryMB:   domainInfo.Memory / 1024,
 		CreatedAt:  time.Now().Format(time.RFC3339),
 		Autostart:  domainInfo.Autostart,
-		Interfaces: convertInterfaces(client, domainInfo.NetworkInfo),
+		IPAddress:  primaryIPFromInterfaces(interfaces),
+		Interfaces: interfaces,
 		StartedAt:  formatStartTime(domainInfo.StartTime),
 		Disks:      convertDisks(client, domain.Name),
 	}

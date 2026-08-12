@@ -14,6 +14,7 @@ type Instance struct {
 	StartedAt  string              `json:"started_at,omitempty"`  // 启动时间
 	DomainUUID string              `json:"domain_uuid"`           // Libvirt Domain UUID
 	DomainName string              `json:"domain_name"`           // Libvirt Domain 名称
+	IPAddress  string              `json:"ip_address,omitempty"`  // 首选实例 IP 地址
 	Autostart  bool                `json:"autostart"`             // 是否开机自启动
 	Interfaces []InstanceInterface `json:"interfaces,omitempty"`  // 网络接口信息
 	Disks      []InstanceDisk      `json:"disks,omitempty"`       // 磁盘信息

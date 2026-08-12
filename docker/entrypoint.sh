@@ -104,6 +104,16 @@ fi
 
 virsh pool-autostart default 2>/dev/null || true
 
+# 容器重建时 libvirtd 偶尔会创建 autostarted 标记但没有实际拉起域。
+# 这里按 libvirt 的 autostart 配置做一次兜底，确保已启用自启动的 VM 跟随容器启动。
+echo ""
+echo "=== Starting autostart domains ==="
+while IFS= read -r domain_name; do
+    [ -z "$domain_name" ] && continue
+    echo "Starting autostart domain: $domain_name"
+    virsh start "$domain_name" || echo "[WARN] Failed to start autostart domain: $domain_name"
+done < <(virsh list --autostart --inactive --name 2>/dev/null || true)
+
 # 显示状态（允许失败，仅用于日志）
 echo ""
 echo "=== Network status ==="
