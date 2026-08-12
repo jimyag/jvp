@@ -118,9 +118,19 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 
 	var diskPath string
 	var templateID string
+	var windowsInstallISOPath string
+	var windowsDriverISOPath string
+	osType := strings.ToLower(strings.TrimSpace(req.OSType))
+	if osType == "" {
+		osType = "linux"
+	}
+	isWindows := osType == "windows"
+	if isWindows && sizeGB == 20 && req.SizeGB == 0 {
+		sizeGB = 64
+	}
 
 	// 如果指定了模板，获取模板信息并创建增量磁盘
-	if req.TemplateID != "" {
+	if req.TemplateID != "" && !isWindows {
 		// 获取模板信息
 		template, err := s.templateService.DescribeTemplate(ctx, &entity.DescribeTemplateRequest{
 			NodeName:   req.NodeName,
@@ -169,6 +179,34 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 			Str("disk_path", diskPath).
 			Msg("Disk volume created")
 	} else {
+		if isWindows {
+			if req.TemplateID == "" {
+				return nil, apierror.NewErrorWithStatus("InvalidParameter", "template_id is required for Windows install ISO", 400)
+			}
+			installerTemplate, err := s.templateService.DescribeTemplate(ctx, &entity.DescribeTemplateRequest{
+				NodeName:   req.NodeName,
+				PoolName:   req.PoolName,
+				TemplateID: req.TemplateID,
+			})
+			if err != nil {
+				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get Windows install ISO template", err)
+			}
+			templateID = installerTemplate.ID
+			windowsInstallISOPath = installerTemplate.Path
+
+			if req.DriverISOID != "" {
+				driverTemplate, err := s.templateService.DescribeTemplate(ctx, &entity.DescribeTemplateRequest{
+					NodeName:   req.NodeName,
+					PoolName:   req.PoolName,
+					TemplateID: req.DriverISOID,
+				})
+				if err != nil {
+					return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get Windows driver ISO template", err)
+				}
+				windowsDriverISOPath = driverTemplate.Path
+			}
+		}
+
 		// 没有模板，创建空白磁盘
 		diskVolumeName := instanceName + ".qcow2"
 
@@ -181,7 +219,7 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 
 	// 处理 cloud-init 配置
 	var cloudInitISOPath string
-	if req.UserData != nil || len(req.KeyPairIDs) > 0 || req.TemplateID != "" {
+	if !isWindows && (req.UserData != nil || len(req.KeyPairIDs) > 0 || req.TemplateID != "") {
 		cloudInitConfig, userData, err := s.convertUserDataToCloudInit(ctx, instanceName, req.UserData)
 		if err != nil {
 			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to convert user data", err)
@@ -298,6 +336,23 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 		NetworkType:    networkType,
 		NetworkSource:  networkSource,
 		QemuGuestAgent: true,
+	}
+
+	if isWindows {
+		vmConfig.BootDevice = "cdrom"
+		vmConfig.CDROMs = append(vmConfig.CDROMs, libvirt.CDROMConfig{
+			Path:   windowsInstallISOPath,
+			Device: "hda",
+			Bus:    "ide",
+			Boot:   true,
+		})
+		if windowsDriverISOPath != "" {
+			vmConfig.CDROMs = append(vmConfig.CDROMs, libvirt.CDROMConfig{
+				Path:   windowsDriverISOPath,
+				Device: "hdb",
+				Bus:    "ide",
+			})
+		}
 	}
 
 	// 如果有 cloud-init ISO，添加到配置

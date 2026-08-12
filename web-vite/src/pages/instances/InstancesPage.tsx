@@ -41,8 +41,14 @@ interface StoragePool {
 interface Template {
   id: string;
   name: string;
+  volume_name?: string;
   format: string;
   size_gb: number;
+  os?: {
+    name?: string;
+    version?: string;
+    arch?: string;
+  };
 }
 
 interface KeyPair {
@@ -71,6 +77,25 @@ interface HostBridge {
 interface NetworkSources {
   libvirt_networks: LibvirtNetwork[];
   host_bridges: HostBridge[];
+}
+
+const createInstanceSteps = {
+  linux: ["Basic", "User & System", "Advanced"],
+  windows: ["Basic"],
+};
+
+function templateText(template: Template) {
+  return `${template.name} ${template.volume_name || ""} ${template.os?.name || ""} ${template.os?.version || ""} ${template.format || ""}`.toLowerCase();
+}
+
+function isLikelyWindowsInstallISO(template: Template) {
+  const text = templateText(template);
+  return text.includes("windows") || text.includes("winserver") || text.includes("server 20");
+}
+
+function isLikelyDriverISO(template: Template) {
+  const text = templateText(template);
+  return text.includes("virtio") || text.includes("driver") || text.includes("guest-tools") || text.includes("guest tools");
 }
 
 export default function InstancesPage() {
@@ -110,6 +135,8 @@ export default function InstancesPage() {
     node_name: "",
     pool_name: "",
     template_id: "",
+    os_type: "linux",
+    driver_iso_template_id: "",
     size_gb: 20,
     memory_mb: 2048,
     vcpus: 2,
@@ -127,6 +154,12 @@ export default function InstancesPage() {
     user_groups: "sudo",
     user_shell: "/bin/bash",
   });
+  const isWindowsMode = formData.os_type === "windows";
+  const steps = isWindowsMode ? createInstanceSteps.windows : createInstanceSteps.linux;
+  const maxStep = steps.length - 1;
+  const visibleTemplates = isWindowsMode ? templates.filter(isLikelyWindowsInstallISO) : templates;
+  const fallbackWindowsTemplates = isWindowsMode && visibleTemplates.length === 0 ? templates : visibleTemplates;
+  const driverISOTemplates = templates.filter((template) => template.id !== formData.template_id && isLikelyDriverISO(template));
 
   const filteredInstances = useMemo(() => {
     let filtered = instances;
@@ -338,11 +371,11 @@ export default function InstancesPage() {
   }, [formData.node_name, formData.pool_name]);
 
   const handleCreateInstance = async () => {
-    if (currentStep < 2) return;
+    if (currentStep < maxStep) return;
 
     try {
       let finalKeypairIds = [...formData.keypair_ids];
-      if (keypairInputMethod === "manual" && manualPublicKey.trim()) {
+      if (!isWindowsMode && keypairInputMethod === "manual" && manualPublicKey.trim()) {
         try {
           const importResponse = await fetch("/api/import-keypair", {
             method: "POST",
@@ -372,15 +405,17 @@ export default function InstancesPage() {
       const userData: any = {};
       const structuredUserData: any = {};
 
-      if (formData.hostname) {
+      if (!isWindowsMode && formData.hostname) {
         structuredUserData.hostname = formData.hostname;
       }
-      if (formData.timezone) {
+      if (!isWindowsMode && formData.timezone) {
         structuredUserData.timezone = formData.timezone;
       }
-      structuredUserData.disable_root = formData.disable_root;
+      if (!isWindowsMode) {
+        structuredUserData.disable_root = formData.disable_root;
+      }
 
-      if (formData.username) {
+      if (!isWindowsMode && formData.username) {
         structuredUserData.users = [{
           name: formData.username,
           plain_text_passwd: formData.user_password || undefined,
@@ -390,10 +425,10 @@ export default function InstancesPage() {
         }];
       }
 
-      if (formData.packages.length > 0) {
+      if (!isWindowsMode && formData.packages.length > 0) {
         structuredUserData.packages = formData.packages;
       }
-      if (formData.run_cmd.length > 0) {
+      if (!isWindowsMode && formData.run_cmd.length > 0) {
         structuredUserData.run_cmd = formData.run_cmd;
       }
 
@@ -411,10 +446,12 @@ export default function InstancesPage() {
         vcpus: formData.vcpus,
         network_type: formData.network_type,
         network_source: formData.network_source,
-        keypair_ids: finalKeypairIds.length > 0 ? finalKeypairIds : undefined,
+        os_type: formData.os_type,
+        driver_iso_template_id: isWindowsMode ? formData.driver_iso_template_id || undefined : undefined,
+        keypair_ids: !isWindowsMode && finalKeypairIds.length > 0 ? finalKeypairIds : undefined,
       };
 
-      if (hasUserData) {
+      if (!isWindowsMode && hasUserData) {
         requestBody.user_data = userData;
       }
 
@@ -438,6 +475,8 @@ export default function InstancesPage() {
           node_name: "",
           pool_name: "",
           template_id: "",
+          os_type: "linux",
+          driver_iso_template_id: "",
           size_gb: 20,
           memory_mb: 2048,
           vcpus: 2,
@@ -736,7 +775,7 @@ export default function InstancesPage() {
           onSubmit={(e) => e.preventDefault()}
           onKeyDown={(e) => {
             // 阻止 Enter 键在非最后一步时提交表单
-            if (e.key === "Enter" && currentStep < 2) {
+            if (e.key === "Enter" && currentStep < maxStep) {
               e.preventDefault();
             }
           }}
@@ -744,7 +783,7 @@ export default function InstancesPage() {
         >
           {/* Step indicator */}
           <div className="flex items-center justify-between border-b pb-4">
-            {["Basic", "User & System", "Advanced"].map((step, index) => (
+            {steps.map((step, index) => (
               <div key={step} className="flex items-center">
                 <button
                   type="button"
@@ -765,7 +804,7 @@ export default function InstancesPage() {
                 >
                   {step}
                 </span>
-                {index < 2 && (
+                {index < maxStep && (
                   <div
                     className={`w-12 h-0.5 mx-2 ${
                       currentStep > index ? "bg-accent" : "bg-gray-300"
@@ -781,6 +820,44 @@ export default function InstancesPage() {
             <div className="space-y-4">
               <h3 className="font-semibold text-gray-900">Basic Configuration</h3>
 
+              <div>
+                <label className="label">Operating System</label>
+                <div className="inline-flex rounded-md border border-gray-200 overflow-hidden">
+                  <button
+                    type="button"
+                    className={`px-4 py-2 text-sm ${!isWindowsMode ? "bg-accent text-white" : "bg-white text-gray-700 hover:bg-gray-50"}`}
+                    onClick={() => {
+                      setCurrentStep(0);
+                      setFormData({
+                        ...formData,
+                        os_type: "linux",
+                        driver_iso_template_id: "",
+                        size_gb: formData.size_gb === 64 ? 20 : formData.size_gb,
+                      });
+                    }}
+                  >
+                    Linux
+                  </button>
+                  <button
+                    type="button"
+                    className={`px-4 py-2 text-sm border-l border-gray-200 ${isWindowsMode ? "bg-accent text-white" : "bg-white text-gray-700 hover:bg-gray-50"}`}
+                    onClick={() => {
+                      setCurrentStep(0);
+                      setFormData({
+                        ...formData,
+                        os_type: "windows",
+                        template_id: "",
+                        driver_iso_template_id: "",
+                        size_gb: formData.size_gb < 64 ? 64 : formData.size_gb,
+                        memory_mb: formData.memory_mb < 4096 ? 4096 : formData.memory_mb,
+                      });
+                    }}
+                  >
+                    Windows
+                  </button>
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="label">Node *</label>
@@ -788,7 +865,7 @@ export default function InstancesPage() {
                     className="input"
                     value={formData.node_name}
                     onChange={(e) =>
-                      setFormData({ ...formData, node_name: e.target.value, pool_name: "", template_id: "" })
+                      setFormData({ ...formData, node_name: e.target.value, pool_name: "", template_id: "", driver_iso_template_id: "" })
                     }
                     required
                   >
@@ -807,7 +884,7 @@ export default function InstancesPage() {
                     className="input"
                     value={formData.pool_name}
                     onChange={(e) =>
-                      setFormData({ ...formData, pool_name: e.target.value, template_id: "" })
+                      setFormData({ ...formData, pool_name: e.target.value, template_id: "", driver_iso_template_id: "" })
                     }
                     required
                     disabled={!formData.node_name}
@@ -823,7 +900,7 @@ export default function InstancesPage() {
               </div>
 
               <div>
-                <label className="label">Template</label>
+                <label className="label">{isWindowsMode ? "Windows Installer ISO *" : "Template"}</label>
                 <select
                   className="input"
                   value={formData.template_id}
@@ -831,17 +908,18 @@ export default function InstancesPage() {
                     setFormData({ ...formData, template_id: e.target.value })
                   }
                   disabled={!formData.pool_name}
+                  required={isWindowsMode}
                 >
-                  {templates.length === 0 && (
-                    <option value="">No Template (Empty Disk)</option>
-                  )}
-                  {templates.map((template) => (
+                  <option value="">
+                    {isWindowsMode ? "Select Windows installer ISO" : "No Template (Empty Disk)"}
+                  </option>
+                  {fallbackWindowsTemplates.map((template) => (
                     <option key={template.id} value={template.id}>
                       {template.name} ({template.size_gb}GB, {template.format})
                     </option>
                   ))}
                 </select>
-                {formData.pool_name && templates.length === 0 && (
+                {formData.pool_name && !isWindowsMode && templates.length === 0 && (
                   <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
                     <p className="text-sm text-amber-800">
                       <strong>No templates found</strong> in this storage pool. You can:
@@ -858,7 +936,40 @@ export default function InstancesPage() {
                     </ul>
                   </div>
                 )}
-                {(!formData.pool_name || templates.length > 0) && (
+                {isWindowsMode && formData.pool_name && templates.length === 0 && (
+                  <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                    <p className="text-sm text-amber-800">
+                      Register a Windows ISO as a template in this pool first.
+                    </p>
+                  </div>
+                )}
+                {isWindowsMode && templates.length > 0 && visibleTemplates.length === 0 && (
+                  <p className="text-xs text-amber-700 mt-1">
+                    No obvious Windows ISO was detected by name, so all templates are shown.
+                  </p>
+                )}
+                {isWindowsMode && (
+                  <div className="mt-3">
+                    <label className="label">VirtIO Driver ISO</label>
+                    <select
+                      className="input"
+                      value={formData.driver_iso_template_id}
+                      onChange={(e) => setFormData({ ...formData, driver_iso_template_id: e.target.value })}
+                      disabled={!formData.pool_name}
+                    >
+                      <option value="">No driver ISO</option>
+                      {driverISOTemplates.map((template) => (
+                        <option key={template.id} value={template.id}>
+                          {template.name} ({template.size_gb}GB, {template.format})
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Use a VirtIO driver ISO when installing Windows onto a virtio disk or using virtio networking.
+                    </p>
+                  </div>
+                )}
+                {(!isWindowsMode && (!formData.pool_name || templates.length > 0)) && (
                   <p className="text-xs text-gray-500 mt-1">
                     Select a template to create instance from, or leave empty for blank disk
                   </p>
@@ -914,6 +1025,14 @@ export default function InstancesPage() {
                 />
               </div>
 
+              {isWindowsMode && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <p className="text-sm text-blue-800">
+                    Windows mode creates a blank system disk, boots from the selected installer ISO, and attaches the optional driver ISO.
+                  </p>
+                </div>
+              )}
+
               <div>
                 <label className="label">Network</label>
                 <select
@@ -964,6 +1083,7 @@ export default function InstancesPage() {
                 </p>
               </div>
 
+              {!isWindowsMode && (
               <div>
                 <label className="label">Key Pairs</label>
                 <div className="flex gap-4 mb-3">
@@ -1051,6 +1171,7 @@ export default function InstancesPage() {
                   />
                 )}
               </div>
+              )}
             </div>
           )}
 
@@ -1254,17 +1375,22 @@ export default function InstancesPage() {
                 Cancel
               </button>
 
-              {currentStep < 2 ? (
+              {currentStep < maxStep ? (
                 <button
                   type="button"
                   onClick={() => setCurrentStep(currentStep + 1)}
                   className="btn-primary"
-                  disabled={currentStep === 0 && (!formData.node_name || !formData.pool_name)}
+                  disabled={currentStep === 0 && (!formData.node_name || !formData.pool_name || (isWindowsMode && !formData.template_id))}
                 >
                   Next
                 </button>
               ) : (
-                <button type="button" onClick={handleCreateInstance} className="btn-primary">
+                <button
+                  type="button"
+                  onClick={handleCreateInstance}
+                  className="btn-primary"
+                  disabled={!formData.node_name || !formData.pool_name || (isWindowsMode && !formData.template_id)}
+                >
                   Create Instance
                 </button>
               )}

@@ -62,12 +62,22 @@ type CreateVMConfig struct {
 	Architecture      string              // CPU 架构：x86_64, aarch64, i686 等（默认：x86_64）
 	MachineType       string              // 机器类型（可选，如：pc-q35-6.2）
 	ISOPath           string              // ISO 路径（可选，用于操作系统安装）
+	CDROMs            []CDROMConfig       // 额外 CD-ROM 设备（可选）
+	BootDevice        string              // 启动设备：hd, cdrom（默认：hd）
 	VNCSocket         string              // VNC Unix socket 路径（可选，默认：/var/lib/jvp/qemu/{name}.vnc）
 	Autostart         bool                // 是否开机自动启动（默认：false）
 	QemuGuestAgent    bool                // 是否添加 QEMU Guest Agent 通道
 	CloudInit         *cloudinit.Config   // cloud-init 配置（可选）
 	CloudInitUserData *cloudinit.UserData // cloud-init 用户数据（可选）
 	cloudInitISOPath  string              // cloud-init ISO 路径（内部使用）
+}
+
+// CDROMConfig 描述要挂载到虚拟机的 CD-ROM 介质
+type CDROMConfig struct {
+	Path   string // ISO 文件路径
+	Device string // 目标设备名，如 hda、hdb
+	Bus    string // 总线类型，默认 ide
+	Boot   bool   // 是否作为启动介质
 }
 
 func New() (*Client, error) {
@@ -903,6 +913,10 @@ func (c *Client) setDefaultVMConfig(config *CreateVMConfig) {
 		config.OSType = "hvm"
 	}
 
+	if config.BootDevice == "" {
+		config.BootDevice = "hd"
+	}
+
 	if config.Architecture == "" {
 		config.Architecture = "x86_64"
 	}
@@ -936,7 +950,7 @@ func (c *Client) buildDomainXML(config *CreateVMConfig) (*DomainXML, error) {
 				Value:   config.OSType,
 			},
 			Boot: DomainBoot{
-				Dev: "hd",
+				Dev: config.BootDevice,
 			},
 		},
 		Features: &DomainFeatures{
@@ -1120,7 +1134,7 @@ func (c *Client) buildDisks(config *CreateVMConfig) []DomainDisk {
 		},
 	}
 
-	// 如果提供了 ISO 路径，添加 CDROM 设备
+	// 如果提供了 ISO 路径，添加 CDROM 设备。该字段历史上用于 cloud-init，不改变其启动顺序。
 	if config.ISOPath != "" {
 		disks = append(disks, DomainDisk{
 			Type:   "file",
@@ -1159,6 +1173,59 @@ func (c *Client) buildDisks(config *CreateVMConfig) []DomainDisk {
 				Bus: "ide",
 			},
 		})
+	}
+
+	usedTargets := map[string]struct{}{
+		"vda": {},
+	}
+	for _, disk := range disks {
+		if disk.Target.Dev != "" {
+			usedTargets[disk.Target.Dev] = struct{}{}
+		}
+	}
+	nextCDROMTarget := func() string {
+		for _, target := range []string{"hda", "hdb", "hdc", "hdd", "sda", "sdb", "sdc", "sdd"} {
+			if _, ok := usedTargets[target]; !ok {
+				usedTargets[target] = struct{}{}
+				return target
+			}
+		}
+		return fmt.Sprintf("sd%c", 'a'+len(usedTargets))
+	}
+
+	for _, cdrom := range config.CDROMs {
+		if cdrom.Path == "" {
+			continue
+		}
+		device := cdrom.Device
+		if device == "" {
+			device = nextCDROMTarget()
+		} else {
+			usedTargets[device] = struct{}{}
+		}
+		bus := cdrom.Bus
+		if bus == "" {
+			bus = "ide"
+		}
+		disk := DomainDisk{
+			Type:   "file",
+			Device: "cdrom",
+			Driver: DomainDiskDriver{
+				Name: "qemu",
+				Type: "raw",
+			},
+			Source: DomainDiskSource{
+				File: cdrom.Path,
+			},
+			Target: DomainDiskTarget{
+				Dev: device,
+				Bus: bus,
+			},
+		}
+		if cdrom.Boot {
+			disk.Boot = &DomainBootOrder{Order: 1}
+		}
+		disks = append(disks, disk)
 	}
 
 	return disks

@@ -480,9 +480,9 @@ StoragePoolService → VolumeService
 #### 6.4 Windows 虚拟机支持
 
 ##### 6.4.1 Windows 安装支持
-- [ ] Windows ISO 镜像支持
-- [ ] Windows 安装引导配置
-- [ ] VirtIO 驱动集成
+- [x] Windows ISO 镜像支持（2026-08-12：通过 Template 注册 ISO，并在创建实例时作为安装介质使用）
+- [x] Windows 安装引导配置（2026-08-12：Windows 模式创建空系统盘并从安装 ISO 启动）
+- [x] VirtIO 驱动集成（2026-08-12：创建 Windows 实例时可选挂载 VirtIO Driver ISO）
 - [ ] Windows 激活支持（可选）
 
 ##### 6.4.2 Windows 优化配置
@@ -500,9 +500,9 @@ StoragePoolService → VolumeService
 
 技术实现：
 - Windows 模板元数据标记
-- Windows 特定的 cloud-init 配置
+- Windows 安装路径不复用 Linux cloud-init，避免影响 Linux 创建流程
 - VirtIO ISO 自动挂载
-- Windows 特定的设备配置
+- Windows 特定的设备配置（已支持额外 CD-ROM 与 cdrom boot，后续补充 unattend 自动安装）
 
 ##### 6.4.4 Windows 性能优化
 - [ ] CPU 拓扑优化

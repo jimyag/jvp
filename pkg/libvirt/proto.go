@@ -109,6 +109,7 @@ type DomainDisk struct {
 	Driver      DomainDiskDriver `xml:"driver"`
 	Source      DomainDiskSource `xml:"source"`
 	Target      DomainDiskTarget `xml:"target"`
+	Boot        *DomainBootOrder `xml:"boot,omitempty"`
 	CapacityB   uint64           `xml:"-"` // filled via StorageVolGetInfo
 	AllocationB uint64           `xml:"-"` // filled via StorageVolGetInfo
 }
