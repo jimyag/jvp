@@ -25,6 +25,7 @@ type InstanceDisk struct {
 	Target      string `json:"target"`
 	Path        string `json:"path"`
 	Format      string `json:"format"`
+	Device      string `json:"device,omitempty"`
 	CapacityB   uint64 `json:"capacity_b,omitempty"`
 	AllocationB uint64 `json:"allocation_b,omitempty"`
 }
@@ -191,6 +192,18 @@ type ModifyInstanceAttributeRequest struct {
 
 // ModifyInstanceAttributeResponse 修改实例属性响应
 type ModifyInstanceAttributeResponse struct {
+	Instance *Instance `json:"instance"`
+}
+
+// EjectInstanceMediaRequest 弹出实例上的可移除介质
+type EjectInstanceMediaRequest struct {
+	NodeName   string `json:"node_name" binding:"required"`
+	InstanceID string `json:"instance_id" binding:"required"`
+	Target     string `json:"target" binding:"required"`
+}
+
+// EjectInstanceMediaResponse 弹出介质响应
+type EjectInstanceMediaResponse struct {
 	Instance *Instance `json:"instance"`
 }
 

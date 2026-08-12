@@ -19,6 +19,7 @@ type InstanceServiceInterface interface {
 	StartInstances(ctx context.Context, req *entity.StartInstancesRequest) ([]entity.InstanceStateChange, error)
 	RebootInstances(ctx context.Context, req *entity.RebootInstancesRequest) ([]entity.InstanceStateChange, error)
 	ModifyInstanceAttribute(ctx context.Context, req *entity.ModifyInstanceAttributeRequest) (*entity.Instance, error)
+	EjectInstanceMedia(ctx context.Context, req *entity.EjectInstanceMediaRequest) (*entity.Instance, error)
 	ResetPassword(ctx context.Context, req *entity.ResetPasswordRequest) (*entity.ResetPasswordResponse, error)
 	GetConsoleInfo(ctx context.Context, req *entity.GetConsoleRequest) (*entity.GetConsoleResponse, error)
 }
@@ -41,6 +42,7 @@ func (i *Instance) RegisterRoutes(router *gin.RouterGroup) {
 	router.POST("/start-instances", ginx.Adapt5(i.StartInstances))
 	router.POST("/reboot-instances", ginx.Adapt5(i.RebootInstances))
 	router.POST("/modify-instance-attribute", ginx.Adapt5(i.ModifyInstanceAttribute))
+	router.POST("/eject-instance-media", ginx.Adapt5(i.EjectInstanceMedia))
 	router.POST("/reset-instance-password", ginx.Adapt5(i.ResetPassword))
 	router.POST("/get-instance-console", ginx.Adapt5(i.GetConsole))
 }
@@ -205,6 +207,33 @@ func (i *Instance) ModifyInstanceAttribute(ctx *gin.Context, req *entity.ModifyI
 		Msg("Instance attribute modified successfully")
 
 	return &entity.ModifyInstanceAttributeResponse{
+		Instance: instance,
+	}, nil
+}
+
+func (i *Instance) EjectInstanceMedia(ctx *gin.Context, req *entity.EjectInstanceMediaRequest) (*entity.EjectInstanceMediaResponse, error) {
+	logger := zerolog.Ctx(ctx)
+	logger.Info().
+		Str("instanceID", req.InstanceID).
+		Str("target", req.Target).
+		Msg("EjectInstanceMedia called")
+
+	instance, err := i.instanceService.EjectInstanceMedia(ctx, req)
+	if err != nil {
+		logger.Error().
+			Err(err).
+			Str("instanceID", req.InstanceID).
+			Str("target", req.Target).
+			Msg("Failed to eject instance media")
+		return nil, err
+	}
+
+	logger.Info().
+		Str("instanceID", req.InstanceID).
+		Str("target", req.Target).
+		Msg("Instance media ejected successfully")
+
+	return &entity.EjectInstanceMediaResponse{
 		Instance: instance,
 	}, nil
 }

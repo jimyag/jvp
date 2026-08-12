@@ -5,7 +5,7 @@ import StatusBadge from "@/components/StatusBadge";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import Table from "@/components/Table";
 import { useToast } from "@/components/ToastContainer";
-import { Play, Square, RefreshCw, Trash2, ArrowLeft, Key, Edit, Monitor, Info, Cpu, HardDrive, Settings, Network, Camera, History, Copy } from "lucide-react";
+import { Play, Square, RefreshCw, Trash2, ArrowLeft, Key, Edit, Monitor, Info, Cpu, HardDrive, Settings, Network, Camera, History, Copy, Disc3 } from "lucide-react";
 import Modal from "@/components/Modal";
 
 interface Instance {
@@ -26,8 +26,17 @@ interface Instance {
   domain_uuid?: string;
   domain_name?: string;
   interfaces?: InstanceInterface[];
-  disks?: { target?: string; path?: string; format?: string; capacity_b?: number; allocation_b?: number }[];
+  disks?: InstanceDisk[];
 }
+
+type InstanceDisk = {
+  target?: string;
+  path?: string;
+  format?: string;
+  device?: string;
+  capacity_b?: number;
+  allocation_b?: number;
+};
 
 type InstanceInterface = {
   name: string;
@@ -61,6 +70,7 @@ export default function InstanceDetailPage() {
   const [isResetPasswordModalOpen, setIsResetPasswordModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [ejectingTarget, setEjectingTarget] = useState<string | null>(null);
   const [deleteVolumes, setDeleteVolumes] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [username, setUsername] = useState("root");
@@ -331,6 +341,42 @@ export default function InstanceDetailPage() {
     }
   };
 
+  const handleEjectMedia = async (disk: InstanceDisk) => {
+    if (!nodeName || !instanceId || !disk.target) return;
+    if (!window.confirm(`Eject media from ${disk.target}?`)) return;
+
+    setEjectingTarget(disk.target);
+    try {
+      const response = await fetch("/api/eject-instance-media", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          node_name: nodeName,
+          instance_id: instanceId,
+          target: disk.target,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.instance) {
+          setInstance(data.instance);
+        } else {
+          fetchInstance();
+        }
+        toast.success(`Media ejected from ${disk.target}`);
+      } else {
+        const error = await response.json();
+        toast.error(`Failed to eject media: ${error.message || "Unknown error"}`);
+      }
+    } catch (error) {
+      console.error("Failed to eject media:", error);
+      toast.error("Failed to eject media");
+    } finally {
+      setEjectingTarget(null);
+    }
+  };
+
   const handleDeleteClick = () => {
     setDeleteVolumes(false);
     setIsDeleteDialogOpen(true);
@@ -435,6 +481,15 @@ export default function InstanceDetailPage() {
 
   const disksColumns = [
     { key: "target", label: "Target" },
+    {
+      key: "device",
+      label: "Device",
+      render: (value: unknown) => (
+        <span className="uppercase text-xs font-semibold tracking-wide text-gray-600">
+          {String(value || "disk")}
+        </span>
+      ),
+    },
     { key: "path", label: "Path" },
     { key: "format", label: "Format" },
     {
@@ -457,6 +512,27 @@ export default function InstanceDetailPage() {
             {alloc > 0 ? `${(alloc / 1024 / 1024 / 1024).toFixed(2)} GB` : "-"}
             {pct ? ` (${pct}%)` : ""}
           </span>
+        );
+      },
+    },
+    {
+      key: "actions",
+      label: "Actions",
+      render: (_value: unknown, row: InstanceDisk) => {
+        const canEject = row.device === "cdrom" && Boolean(row.path);
+        if (!canEject) {
+          return <span className="text-xs text-gray-400">-</span>;
+        }
+        return (
+          <button
+            type="button"
+            onClick={() => handleEjectMedia(row)}
+            disabled={ejectingTarget === row.target}
+            className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-amber-700 border border-amber-300 rounded hover:bg-amber-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Disc3 className="w-3 h-3" />
+            <span>{ejectingTarget === row.target ? "Ejecting..." : "Eject"}</span>
+          </button>
         );
       },
     },

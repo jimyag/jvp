@@ -158,6 +158,63 @@ func (c *Client) DetachDiskFromDomain(domainName, device string) error {
 	return nil
 }
 
+// EjectMediaFromDomain ejects removable media from a CD-ROM device.
+func (c *Client) EjectMediaFromDomain(domainName, device string) error {
+	domain, err := c.conn.DomainLookupByName(domainName)
+	if err != nil {
+		return fmt.Errorf("lookup domain: %w", err)
+	}
+
+	disks, err := c.GetDomainDisks(domainName)
+	if err != nil {
+		return fmt.Errorf("get domain disks: %w", err)
+	}
+
+	var cdrom *DomainDisk
+	for i := range disks {
+		if disks[i].Target.Dev == device {
+			cdrom = &disks[i]
+			break
+		}
+	}
+	if cdrom == nil {
+		return fmt.Errorf("device %s not found in domain", device)
+	}
+	if cdrom.Device != "cdrom" {
+		return fmt.Errorf("device %s is not a cdrom", device)
+	}
+
+	bus := cdrom.Target.Bus
+	if bus == "" {
+		bus = "sata"
+	}
+	driverType := cdrom.Driver.Type
+	if driverType == "" {
+		driverType = "raw"
+	}
+
+	deviceXML := fmt.Sprintf(`<disk type="file" device="cdrom">
+  <driver name="qemu" type="%s"/>
+  <target dev="%s" bus="%s"/>
+  <readonly/>
+</disk>`, driverType, device, bus)
+
+	flags := libvirt.DomainDeviceModifyConfig
+	state, _, err := c.conn.DomainGetState(domain, 0)
+	if err != nil {
+		return fmt.Errorf("get domain state: %w", err)
+	}
+	if libvirt.DomainState(state) == libvirt.DomainRunning {
+		flags |= libvirt.DomainDeviceModifyLive
+	}
+
+	if err := c.conn.DomainUpdateDeviceFlags(domain, deviceXML, flags); err != nil {
+		return fmt.Errorf("eject media from domain: %w", err)
+	}
+
+	return nil
+}
+
 // GetDomainDisks 获取 domain 的所有磁盘设备
 func (c *Client) GetDomainDisks(domainName string) ([]DomainDisk, error) {
 	// 查找 domain

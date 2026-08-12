@@ -34,6 +34,7 @@ type LibvirtClient interface {
 	// Domain 磁盘操作
 	AttachDiskToDomain(domainName, volumePath, device string) error
 	DetachDiskFromDomain(domainName, device string) error
+	EjectMediaFromDomain(domainName, device string) error
 	GetDomainDisks(domainName string) ([]DomainDisk, error)
 
 	// Storage Pool 操作

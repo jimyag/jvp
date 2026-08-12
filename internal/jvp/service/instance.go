@@ -1008,11 +1008,54 @@ func convertDisks(client libvirt.LibvirtClient, domainName string) []entity.Inst
 			Target:      d.Target.Dev,
 			Path:        d.Source.File,
 			Format:      d.Driver.Type,
+			Device:      d.Device,
 			CapacityB:   d.CapacityB,
 			AllocationB: d.AllocationB,
 		})
 	}
 	return result
+}
+
+// EjectInstanceMedia ejects removable media from an instance CD-ROM device.
+func (s *InstanceService) EjectInstanceMedia(ctx context.Context, req *entity.EjectInstanceMediaRequest) (*entity.Instance, error) {
+	if req == nil {
+		return nil, apierror.NewErrorWithStatus("InvalidParameter", "request body is required", 400)
+	}
+	target := strings.TrimSpace(req.Target)
+	if target == "" {
+		return nil, apierror.NewErrorWithStatus("InvalidParameter", "target is required", 400)
+	}
+
+	client, err := s.nodeProvider.GetNodeStorage(ctx, req.NodeName)
+	if err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get node connection", err)
+	}
+
+	disks, err := client.GetDomainDisks(req.InstanceID)
+	if err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get domain disks", err)
+	}
+
+	found := false
+	for _, disk := range disks {
+		if disk.Target.Dev != target {
+			continue
+		}
+		found = true
+		if disk.Device != "cdrom" {
+			return nil, apierror.NewErrorWithStatus("InvalidParameter", "only CD-ROM media can be ejected", 400)
+		}
+		break
+	}
+	if !found {
+		return nil, apierror.NewErrorWithStatus("ResourceNotFound", "disk target not found", 404)
+	}
+
+	if err := client.EjectMediaFromDomain(req.InstanceID, target); err != nil {
+		return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to eject media", err)
+	}
+
+	return s.GetInstance(ctx, req.NodeName, req.InstanceID)
 }
 
 // GetInstance 获取单个实例信息

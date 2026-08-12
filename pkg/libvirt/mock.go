@@ -134,6 +134,11 @@ func (m *MockClient) DetachDiskFromDomain(domainName, device string) error {
 	return args.Error(0)
 }
 
+func (m *MockClient) EjectMediaFromDomain(domainName, device string) error {
+	args := m.Called(domainName, device)
+	return args.Error(0)
+}
+
 func (m *MockClient) GetDomainDisks(domainName string) ([]DomainDisk, error) {
 	args := m.Called(domainName)
 	if args.Get(0) == nil {
