@@ -83,6 +83,7 @@ export default function InstancesPage() {
   const [keypairs, setKeypairs] = useState<KeyPair[]>([]);
   const [networkSources, setNetworkSources] = useState<NetworkSources | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [deleteVolumes, setDeleteVolumes] = useState(false);
@@ -182,9 +183,13 @@ export default function InstancesPage() {
     updateURL(nodeName);
   }, [updateURL]);
 
-  const fetchInstances = async () => {
+  const fetchInstances = async ({ showLoading = false }: { showLoading?: boolean } = {}) => {
     if (!selectedNode) return;
-    setLoading(true);
+    if (showLoading) {
+      setLoading(true);
+    } else {
+      setRefreshing(true);
+    }
     try {
       const response = await fetch("/api/describe-instances", {
         method: "POST",
@@ -201,7 +206,11 @@ export default function InstancesPage() {
       console.error("Failed to fetch instances:", error);
       toast.error("Failed to load instances. Please check if backend is running.");
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      } else {
+        setRefreshing(false);
+      }
     }
   };
 
@@ -311,7 +320,7 @@ export default function InstancesPage() {
 
   useEffect(() => {
     if (selectedNode) {
-      fetchInstances();
+      fetchInstances({ showLoading: true });
     }
   }, [selectedNode]);
 
@@ -416,10 +425,14 @@ export default function InstancesPage() {
       });
 
       if (response.ok) {
+        const createdNodeName = formData.node_name;
         setIsCreateModalOpen(false);
         setCurrentStep(0);
-        setSelectedNode(formData.node_name);
-        fetchInstances();
+        if (createdNodeName === selectedNode) {
+          fetchInstances();
+        } else {
+          setSelectedNode(createdNodeName);
+        }
         fetchKeypairs();
         setFormData({
           node_name: "",
@@ -660,7 +673,8 @@ export default function InstancesPage() {
             Create Instance
           </button>
         }
-        onRefresh={fetchInstances}
+        onRefresh={() => fetchInstances()}
+        refreshLoading={refreshing}
       />
 
       {/* Node selector */}

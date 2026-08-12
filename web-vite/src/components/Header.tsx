@@ -4,10 +4,11 @@ interface HeaderProps {
   title: React.ReactNode;
   description?: string;
   action?: React.ReactNode;
-  onRefresh?: () => void;
+  onRefresh?: () => void | Promise<void>;
+  refreshLoading?: boolean;
 }
 
-export default function Header({ title, description, action, onRefresh }: HeaderProps) {
+export default function Header({ title, description, action, onRefresh, refreshLoading = false }: HeaderProps) {
   return (
     <div className="mb-8">
       <div className="flex items-start justify-between">
@@ -21,10 +22,11 @@ export default function Header({ title, description, action, onRefresh }: Header
           {onRefresh && (
             <button
               onClick={onRefresh}
-              className="btn-secondary"
+              disabled={refreshLoading}
+              className="btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
               title="Refresh"
             >
-              <RefreshCw size={16} />
+              <RefreshCw size={16} className={refreshLoading ? "animate-spin" : ""} />
             </button>
           )}
           {action}
