@@ -70,7 +70,17 @@ func parseIpNeigh(out []byte, mac string) []string {
 	ips := []string{}
 	for _, line := range lines {
 		fields := strings.Fields(string(line))
-		if len(fields) >= 5 && strings.ToLower(fields[4]) == mac {
+		matched := false
+		for i, field := range fields {
+			if field == "lladdr" && i+1 < len(fields) && strings.ToLower(fields[i+1]) == mac {
+				matched = true
+				break
+			}
+		}
+		if !matched && len(fields) >= 5 && strings.ToLower(fields[4]) == mac {
+			matched = true
+		}
+		if matched {
 			ips = append(ips, fields[0])
 		}
 	}

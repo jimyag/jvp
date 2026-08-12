@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/netip"
 	"os"
+	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -181,8 +182,6 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 			}
 		}
 
-		ensureQemuGuestAgentCloudInit(cloudInitConfig, userData)
-
 		// 添加 SSH 密钥
 		if len(req.KeyPairIDs) > 0 && cloudInitConfig != nil {
 			for _, keyPairID := range req.KeyPairIDs {
@@ -210,6 +209,22 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 				}
 			}
 		}
+
+		// 设置网络配置
+		networkType := req.NetworkType
+		if networkType == "" {
+			networkType = "bridge"
+		}
+		networkSource := req.NetworkSource
+		if networkSource == "" {
+			networkSource = "br0"
+		}
+
+		hostBridgeIP := ""
+		if networkType == "bridge" {
+			hostBridgeIP = lookupBridgeIPv4(client, networkSource)
+		}
+		ensureQemuGuestAgentCloudInit(cloudInitConfig, userData, hostBridgeIP)
 
 		// 生成 cloud-init ISO
 		if cloudInitConfig != nil || userData != nil {
@@ -688,24 +703,72 @@ func primaryIPFromInterfaces(ifaces []entity.InstanceInterface) string {
 	return ""
 }
 
-func ensureQemuGuestAgentCloudInit(config *cloudinit.Config, userData *cloudinit.UserData) {
-	const packageName = "qemu-guest-agent"
+func ensureQemuGuestAgentCloudInit(config *cloudinit.Config, userData *cloudinit.UserData, hostBridgeIP string) {
 	commands := []string{
-		"if command -v systemctl >/dev/null 2>&1; then systemctl enable --now qemu-guest-agent || systemctl enable --now qemu-ga || true; elif command -v rc-update >/dev/null 2>&1; then rc-update add qemu-guest-agent default || true; rc-service qemu-guest-agent start || true; fi",
+		"( if ! command -v qemu-ga >/dev/null 2>&1 && ! command -v qemu-guest-agent >/dev/null 2>&1; then if command -v apt-get >/dev/null 2>&1; then export DEBIAN_FRONTEND=noninteractive; timeout 600 apt-get update -o Acquire::Retries=3 -o Acquire::Languages=none -o Acquire::IndexTargets::deb-src::Sources::DefaultEnabled=false && timeout 300 apt-get install -y --no-install-recommends qemu-guest-agent; elif command -v dnf >/dev/null 2>&1; then timeout 300 dnf install -y qemu-guest-agent; elif command -v yum >/dev/null 2>&1; then timeout 300 yum install -y qemu-guest-agent; elif command -v zypper >/dev/null 2>&1; then timeout 300 zypper --non-interactive install qemu-guest-agent; elif command -v apk >/dev/null 2>&1; then timeout 300 apk add --no-cache qemu-guest-agent; elif command -v pacman >/dev/null 2>&1; then timeout 300 pacman -Sy --noconfirm qemu-guest-agent; fi; fi; if command -v systemctl >/dev/null 2>&1; then systemctl enable --now qemu-guest-agent || systemctl enable --now qemu-ga || true; elif command -v rc-update >/dev/null 2>&1; then rc-update add qemu-guest-agent default || true; rc-service qemu-guest-agent start || true; fi ) >/var/log/jvp-qga-bootstrap.log 2>&1 &",
+	}
+	if hostBridgeIP != "" {
+		commands = append([]string{fmt.Sprintf("ping -c 1 -W 1 %s >/dev/null 2>&1 || true", hostBridgeIP)}, commands...)
 	}
 
 	if config != nil {
-		config.Packages = appendUniqueString(config.Packages, packageName)
 		for _, command := range commands {
 			config.Commands = appendUniqueString(config.Commands, command)
 		}
 	}
 	if userData != nil {
-		userData.Packages = appendUniqueString(userData.Packages, packageName)
 		for _, command := range commands {
 			userData.RunCmd = appendUniqueString(userData.RunCmd, command)
 		}
 	}
+}
+
+func lookupBridgeIPv4(client libvirt.LibvirtClient, bridgeName string) string {
+	if bridgeName == "" {
+		return ""
+	}
+	if client.IsRemoteConnection() {
+		const outputPath = "/tmp/.jvp_bridge_ipv4"
+		command := fmt.Sprintf("ip -4 -o addr show dev %s scope global | awk '{print $4}' | head -n1 > %s", shellQuote(bridgeName), outputPath)
+		if err := client.ExecuteRemoteCommand(command); err != nil {
+			return ""
+		}
+		data, err := client.ReadRemoteFile(outputPath)
+		if err != nil {
+			return ""
+		}
+		return firstIPv4FromCIDROutput(string(data))
+	}
+
+	out, err := exec.Command("ip", "-4", "-o", "addr", "show", "dev", bridgeName, "scope", "global").Output()
+	if err != nil {
+		return ""
+	}
+	return firstIPv4FromAddrShow(string(out))
+}
+
+func firstIPv4FromAddrShow(output string) string {
+	for _, field := range strings.Fields(output) {
+		if ip := firstIPv4FromCIDROutput(field); ip != "" {
+			return ip
+		}
+	}
+	return ""
+}
+
+func firstIPv4FromCIDROutput(output string) string {
+	for _, field := range strings.Fields(output) {
+		prefix, err := netip.ParsePrefix(field)
+		if err != nil || !prefix.Addr().Is4() || prefix.Addr().IsLoopback() {
+			continue
+		}
+		return prefix.Addr().String()
+	}
+	return ""
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func appendUniqueString(values []string, value string) []string {
