@@ -100,6 +100,9 @@
                 const getDisplay = () => rfb._display;
                 const isPointerLocked = () => document.pointerLockElement === screen;
                 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+                const focusConsole = () => {
+                    rfb.focus({ preventScroll: true });
+                };
 
                 const buttonMask = (buttons) => {
                     const buttonMaskMap = {
@@ -152,6 +155,7 @@
                     event.preventDefault();
                     event.stopImmediatePropagation();
                     updateCapturedPositionFromEvent(event);
+                    focusConsole();
                     const lockRequest = screen.requestPointerLock?.();
                     if (lockRequest?.catch) {
                         lockRequest.catch((error) => {
@@ -167,6 +171,9 @@
                     status.className = 'connected';
                     status.style.display = 'block';
                     ignoreInitialPointerMove = locked;
+                    if (locked) {
+                        focusConsole();
+                    }
                     if (!locked) {
                         capturedMouse = null;
                         ignoreInitialPointerMove = false;
