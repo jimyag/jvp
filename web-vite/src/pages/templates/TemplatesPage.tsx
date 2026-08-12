@@ -62,54 +62,99 @@ interface StoragePoolItem {
   name: string;
 }
 
-// 预设的常用 Cloud Image URL
-const PRESET_CLOUD_IMAGES = [
+// 预设的常用镜像/ISO URL
+const PRESET_DOWNLOADS = [
   {
     name: "Ubuntu 26.04 LTS",
+    category: "Linux Cloud Images",
     url: "https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64.img",
     os: { name: "Ubuntu", version: "26.04", arch: "x86_64" },
+    features: { cloudInit: true, virtio: true, qga: false },
   },
   {
     name: "Ubuntu 24.04 LTS (Noble)",
+    category: "Linux Cloud Images",
     url: "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img",
     os: { name: "Ubuntu", version: "24.04", arch: "x86_64" },
+    features: { cloudInit: true, virtio: true, qga: false },
   },
   {
     name: "Ubuntu 22.04 LTS (Jammy)",
+    category: "Linux Cloud Images",
     url: "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img",
     os: { name: "Ubuntu", version: "22.04", arch: "x86_64" },
+    features: { cloudInit: true, virtio: true, qga: false },
   },
   {
     name: "Ubuntu 20.04 LTS (Focal)",
+    category: "Linux Cloud Images",
     url: "https://cloud-images.ubuntu.com/focal/current/focal-server-cloudimg-amd64.img",
     os: { name: "Ubuntu", version: "20.04", arch: "x86_64" },
+    features: { cloudInit: true, virtio: true, qga: false },
   },
   {
     name: "Debian 13 (Trixie)",
+    category: "Linux Cloud Images",
     url: "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-generic-amd64.qcow2",
     os: { name: "Debian", version: "13", arch: "x86_64" },
+    features: { cloudInit: true, virtio: true, qga: false },
   },
   {
     name: "Debian 12 (Bookworm)",
+    category: "Linux Cloud Images",
     url: "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2",
     os: { name: "Debian", version: "12", arch: "x86_64" },
+    features: { cloudInit: true, virtio: true, qga: false },
   },
   {
     name: "Debian 11 (Bullseye)",
+    category: "Linux Cloud Images",
     url: "https://cloud.debian.org/images/cloud/bullseye/latest/debian-11-generic-amd64.qcow2",
     os: { name: "Debian", version: "11", arch: "x86_64" },
+    features: { cloudInit: true, virtio: true, qga: false },
   },
   {
     name: "CentOS Stream 10",
+    category: "Linux Cloud Images",
     url: "https://cloud.centos.org/centos/10-stream/x86_64/images/CentOS-Stream-GenericCloud-10-latest.x86_64.qcow2",
     os: { name: "CentOS Stream", version: "10", arch: "x86_64" },
+    features: { cloudInit: true, virtio: true, qga: false },
   },
   {
     name: "Rocky Linux 10",
+    category: "Linux Cloud Images",
     url: "https://dl.rockylinux.org/vault/rocky/10.0/images/x86_64/Rocky-10-GenericCloud-Base.latest.x86_64.qcow2",
     os: { name: "Rocky Linux", version: "10", arch: "x86_64" },
+    features: { cloudInit: true, virtio: true, qga: false },
+  },
+  {
+    name: "Windows 11 25H2 x64 (includes Pro)",
+    category: "Windows Installation Media",
+    url: "",
+    fileName: "Win11_25H2_English_x64.iso",
+    os: { name: "Windows", version: "11 25H2", arch: "x86_64" },
+    tags: "windows,installer,iso",
+    description:
+      "Microsoft Windows 11 multi-edition x64 installer ISO. Paste the temporary ISO URL generated from the official Microsoft download page.",
+    helpUrl: "https://www.microsoft.com/software-download/windows11",
+    helpText: "Open Microsoft Windows 11 ISO download page",
+    features: { cloudInit: false, virtio: true, qga: false },
+  },
+  {
+    name: "VirtIO Windows Drivers (stable)",
+    category: "Windows Driver Media",
+    url: "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso",
+    fileName: "virtio-win.iso",
+    os: { name: "Windows VirtIO Drivers", version: "stable", arch: "x86_64" },
+    tags: "windows,virtio,driver,iso",
+    description: "Stable virtio-win driver ISO for Windows guests on KVM/QEMU.",
+    helpUrl: "https://github.com/virtio-win/virtio-win-pkg-scripts/blob/master/README.md",
+    helpText: "View virtio-win download notes",
+    features: { cloudInit: false, virtio: true, qga: false },
   },
 ];
+
+const PRESET_DOWNLOAD_CATEGORIES = Array.from(new Set(PRESET_DOWNLOADS.map((img) => img.category)));
 
 const initialRegisterForm = {
   nodeName: "",
@@ -536,7 +581,7 @@ export default function TemplatesPage() {
       registerForm.sourceType === "cloud_image" &&
       !registerForm.cloudUrl.trim()
     ) {
-      toast.error("Download URL is required for cloud images");
+      toast.error("Download URL is required for image or ISO downloads");
       return;
     }
 
@@ -891,14 +936,14 @@ export default function TemplatesPage() {
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="existing_volume">Existing Volume</option>
-                    <option value="cloud_image">Cloud Image (URL)</option>
+                    <option value="cloud_image">Image/ISO (URL)</option>
                   </select>
                 </div>
                 {registerForm.sourceType === "cloud_image" && (
                   <>
                     <div className="md:col-span-2">
                       <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Select Cloud Image
+                        Select Preset Image or ISO
                       </label>
                       <select
                         value={registerForm.presetImage}
@@ -911,7 +956,7 @@ export default function TemplatesPage() {
                               cloudUrl: "",
                             });
                           } else if (selected) {
-                            const preset = PRESET_CLOUD_IMAGES.find((img) => img.url === selected);
+                            const preset = PRESET_DOWNLOADS.find((img) => img.name === selected);
                             if (preset) {
                               // 从 URL 提取文件名作为默认 volume name
                               const urlParts = preset.url.split("/");
@@ -920,11 +965,16 @@ export default function TemplatesPage() {
                                 ...registerForm,
                                 presetImage: selected,
                                 cloudUrl: preset.url,
-                                volumeName: registerForm.volumeName || fileName,
+                                volumeName: registerForm.volumeName || preset.fileName || fileName,
                                 name: registerForm.name || preset.name,
+                                description: registerForm.description || preset.description || "",
+                                tags: registerForm.tags || preset.tags || "",
                                 osName: preset.os.name,
                                 osVersion: preset.os.version,
                                 osArch: preset.os.arch,
+                                cloudInit: preset.features.cloudInit,
+                                virtio: preset.features.virtio,
+                                qga: preset.features.qga,
                               });
                             }
                           } else {
@@ -938,13 +988,36 @@ export default function TemplatesPage() {
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
                       >
                         <option value="">-- Select a preset image --</option>
-                        {PRESET_CLOUD_IMAGES.map((img) => (
-                          <option key={img.url} value={img.url}>
-                            {img.name}
-                          </option>
+                        {PRESET_DOWNLOAD_CATEGORIES.map((category) => (
+                          <optgroup key={category} label={category}>
+                            {PRESET_DOWNLOADS.filter((img) => img.category === category).map((img) => (
+                              <option key={img.name} value={img.name}>
+                                {img.name}
+                              </option>
+                            ))}
+                          </optgroup>
                         ))}
                         <option value="custom">Custom URL...</option>
                       </select>
+                      {(() => {
+                        const selectedPreset = PRESET_DOWNLOADS.find((img) => img.name === registerForm.presetImage);
+                        if (!selectedPreset?.helpUrl) return null;
+                        return (
+                          <p className="text-xs text-gray-500 mt-1">
+                            <a
+                              href={selectedPreset.helpUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-blue-600 hover:text-blue-800 underline"
+                            >
+                              {selectedPreset.helpText || "Open download page"}
+                            </a>
+                            {selectedPreset.url
+                              ? " for upstream download details."
+                              : " and paste the generated ISO URL below."}
+                          </p>
+                        );
+                      })()}
                     </div>
                     <div className="md:col-span-2">
                       <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -962,12 +1035,18 @@ export default function TemplatesPage() {
                         }
                         placeholder="https://cloud-images.example.com/image.qcow2"
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 font-mono text-sm"
-                        readOnly={registerForm.presetImage !== "" && registerForm.presetImage !== "custom"}
+                        readOnly={
+                          registerForm.presetImage !== "" &&
+                          registerForm.presetImage !== "custom" &&
+                          Boolean(PRESET_DOWNLOADS.find((img) => img.name === registerForm.presetImage)?.url)
+                        }
                       />
                       <p className="text-xs text-gray-500 mt-1">
-                        {registerForm.presetImage && registerForm.presetImage !== "custom"
+                        {registerForm.presetImage &&
+                        registerForm.presetImage !== "custom" &&
+                        PRESET_DOWNLOADS.find((img) => img.name === registerForm.presetImage)?.url
                           ? "URL auto-filled from selected preset. Select 'Custom URL...' to enter manually."
-                          : "Enter the download URL for this cloud image."}
+                          : "Enter the direct download URL for this image or ISO."}
                       </p>
                     </div>
                   </>
