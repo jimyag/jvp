@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	libvirtlib "github.com/digitalocean/go-libvirt"
@@ -33,6 +34,14 @@ type InstanceService struct {
 	virtCustomizeClient virtcustomize.VirtCustomizeClient
 	idGen               *idgen.Generator
 	asyncRun            func(func())
+	ipCache             map[string]interfaceIPCacheEntry
+	ipRefreshInFlight   map[string]struct{}
+	ipCacheMu           sync.Mutex
+}
+
+type interfaceIPCacheEntry struct {
+	IPs       []string
+	UpdatedAt time.Time
 }
 
 // NodeStorageProvider 定义节点存储获取接口，便于测试替换
@@ -58,6 +67,8 @@ func NewInstanceService(
 		asyncRun: func(f func()) {
 			go f()
 		},
+		ipCache:           make(map[string]interfaceIPCacheEntry),
+		ipRefreshInFlight: make(map[string]struct{}),
 	}, nil
 }
 
@@ -505,11 +516,12 @@ func (s *InstanceService) DescribeInstances(ctx context.Context, req *entity.Des
 			state = 5 // Unknown
 		}
 
-		interfaces := convertInterfaces(client, domain, domainInfo.NetworkInfo)
+		instanceState := convertDomainState(state)
+		interfaces := s.convertInterfaces(ctx, client, req.NodeName, domain, domainInfo.NetworkInfo, instanceState)
 		instance := entity.Instance{
 			ID:         domain.Name, // 使用 domain name 作为 ID
 			Name:       domain.Name,
-			State:      convertDomainState(state),
+			State:      instanceState,
 			NodeName:   req.NodeName,
 			DomainUUID: formatDomainUUID(domain.UUID),
 			DomainName: domain.Name,
@@ -582,10 +594,21 @@ func convertDomainState(state uint8) string {
 	}
 }
 
-func convertInterfaces(client libvirt.LibvirtClient, domain libvirtlib.Domain, ifaces []libvirt.NetworkInterface) []entity.InstanceInterface {
+func (s *InstanceService) convertInterfaces(
+	ctx context.Context,
+	client libvirt.LibvirtClient,
+	nodeName string,
+	domain libvirtlib.Domain,
+	ifaces []libvirt.NetworkInterface,
+	instanceState string,
+) []entity.InstanceInterface {
 	result := make([]entity.InstanceInterface, 0, len(ifaces))
 	for _, iface := range ifaces {
-		ips := resolveInterfaceIPs(client, domain, iface.MAC, iface.Source)
+		key := interfaceIPCacheKey(nodeName, domain.Name, iface.MAC, iface.Source)
+		ips, refreshDue := s.cachedInterfaceIPs(key)
+		if instanceState == "running" && refreshDue {
+			s.refreshInterfaceIPsAsync(ctx, client, domain, iface.MAC, iface.Source, key)
+		}
 		result = append(result, entity.InstanceInterface{
 			Name:   iface.Name,
 			Type:   iface.Type,
@@ -595,6 +618,68 @@ func convertInterfaces(client libvirt.LibvirtClient, domain libvirtlib.Domain, i
 		})
 	}
 	return result
+}
+
+func interfaceIPCacheKey(nodeName, domainName, mac, source string) string {
+	return strings.Join([]string{nodeName, domainName, strings.ToLower(mac), source}, "|")
+}
+
+func (s *InstanceService) cachedInterfaceIPs(key string) ([]string, bool) {
+	const refreshAfter = 30 * time.Second
+
+	s.ipCacheMu.Lock()
+	defer s.ipCacheMu.Unlock()
+
+	entry, ok := s.ipCache[key]
+	if !ok {
+		return nil, true
+	}
+
+	ips := append([]string(nil), entry.IPs...)
+	return ips, time.Since(entry.UpdatedAt) > refreshAfter
+}
+
+func (s *InstanceService) refreshInterfaceIPsAsync(
+	ctx context.Context,
+	client libvirt.LibvirtClient,
+	domain libvirtlib.Domain,
+	mac string,
+	source string,
+	key string,
+) {
+	s.ipCacheMu.Lock()
+	if _, ok := s.ipRefreshInFlight[key]; ok {
+		s.ipCacheMu.Unlock()
+		return
+	}
+	s.ipRefreshInFlight[key] = struct{}{}
+	s.ipCacheMu.Unlock()
+
+	logger := zerolog.Ctx(ctx).With().
+		Str("domain", domain.Name).
+		Str("mac", mac).
+		Str("source", source).
+		Logger()
+
+	s.asyncRun(func() {
+		defer func() {
+			s.ipCacheMu.Lock()
+			delete(s.ipRefreshInFlight, key)
+			s.ipCacheMu.Unlock()
+		}()
+
+		ips := resolveInterfaceIPs(client, domain, mac, source)
+		s.ipCacheMu.Lock()
+		s.ipCache[key] = interfaceIPCacheEntry{
+			IPs:       append([]string(nil), ips...),
+			UpdatedAt: time.Now(),
+		}
+		s.ipCacheMu.Unlock()
+
+		logger.Debug().
+			Strs("ips", ips).
+			Msg("Refreshed instance interface IP cache")
+	})
 }
 
 func resolveInterfaceIPs(client libvirt.LibvirtClient, domain libvirtlib.Domain, mac string, source string) []string {
@@ -836,11 +921,12 @@ func (s *InstanceService) GetInstance(ctx context.Context, nodeName, instanceID 
 		state = 5 // Unknown
 	}
 
-	interfaces := convertInterfaces(client, domain, domainInfo.NetworkInfo)
+	instanceState := convertDomainState(state)
+	interfaces := s.convertInterfaces(ctx, client, nodeName, domain, domainInfo.NetworkInfo, instanceState)
 	instance := &entity.Instance{
 		ID:         domain.Name,
 		Name:       domain.Name,
-		State:      convertDomainState(state),
+		State:      instanceState,
 		NodeName:   nodeName,
 		DomainUUID: formatDomainUUID(domain.UUID),
 		DomainName: domain.Name,
