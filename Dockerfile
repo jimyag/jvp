@@ -26,6 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     iproute2 \
     bridge-utils \
     net-tools \
+    arp-scan \
     # SSH 客户端（远程节点连接）
     openssh-client \
     # 下载工具

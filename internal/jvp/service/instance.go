@@ -585,7 +585,7 @@ func convertDomainState(state uint8) string {
 func convertInterfaces(client libvirt.LibvirtClient, domain libvirtlib.Domain, ifaces []libvirt.NetworkInterface) []entity.InstanceInterface {
 	result := make([]entity.InstanceInterface, 0, len(ifaces))
 	for _, iface := range ifaces {
-		ips := resolveInterfaceIPs(client, domain, iface.MAC)
+		ips := resolveInterfaceIPs(client, domain, iface.MAC, iface.Source)
 		result = append(result, entity.InstanceInterface{
 			Name:   iface.Name,
 			Type:   iface.Type,
@@ -597,13 +597,13 @@ func convertInterfaces(client libvirt.LibvirtClient, domain libvirtlib.Domain, i
 	return result
 }
 
-func resolveInterfaceIPs(client libvirt.LibvirtClient, domain libvirtlib.Domain, mac string) []string {
+func resolveInterfaceIPs(client libvirt.LibvirtClient, domain libvirtlib.Domain, mac string, source string) []string {
 	var ips []string
 	if qgaIPs, err := resolveIPsByGuestAgent(client, domain, mac); err == nil {
 		ips = append(ips, qgaIPs...)
 	}
 
-	if fallbackIPs, err := libvirt.ResolveIPsByMAC(client, mac); err == nil {
+	if fallbackIPs, err := libvirt.ResolveIPsByMACOnInterface(client, mac, source); err == nil {
 		ips = append(ips, fallbackIPs...)
 	}
 
