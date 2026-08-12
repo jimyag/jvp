@@ -42,6 +42,7 @@ export default function SnapshotsPage() {
   const [selectedNode, setSelectedNode] = useState("");
   const [selectedVM, setSelectedVM] = useState("");
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -172,7 +173,7 @@ export default function SnapshotsPage() {
       }
 
       setSelectedVM(targetVM);
-      fetchSnapshots(targetNode, targetVM);
+      fetchSnapshots(targetNode, targetVM, { showLoading: true });
       updateURL(targetNode, targetVM);
     } catch (err) {
       console.error(err);
@@ -225,7 +226,7 @@ export default function SnapshotsPage() {
           const targetVM = vmWithSnapshots?.vmId || list[0].id;
 
           setSelectedVM(targetVM);
-          fetchSnapshots(nodeName, targetVM);
+          fetchSnapshots(nodeName, targetVM, { showLoading: true });
           updateURL(nodeName, targetVM);
         } else {
           updateURL(nodeName, "");
@@ -242,13 +243,17 @@ export default function SnapshotsPage() {
   const handleVMChange = (vmId: string) => {
     setSelectedVM(vmId);
     if (selectedNode && vmId) {
-      fetchSnapshots(selectedNode, vmId);
+      fetchSnapshots(selectedNode, vmId, { showLoading: true });
       updateURL(selectedNode, vmId);
     }
   };
 
-  const fetchSnapshots = async (nodeName: string, vmName: string) => {
-    setLoading(true);
+  const fetchSnapshots = async (nodeName: string, vmName: string, { showLoading = false }: { showLoading?: boolean } = {}) => {
+    if (showLoading) {
+      setLoading(true);
+    } else {
+      setRefreshing(true);
+    }
     try {
       const res = await fetch("/api/list-snapshots", {
         method: "POST",
@@ -265,7 +270,11 @@ export default function SnapshotsPage() {
       console.error(err);
       toast.error("Failed to load snapshots");
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      } else {
+        setRefreshing(false);
+      }
     }
   };
 
@@ -447,9 +456,9 @@ export default function SnapshotsPage() {
             <button
               onClick={() => fetchSnapshots(selectedNode, selectedVM)}
               className="btn-secondary flex items-center gap-2"
-              disabled={!selectedNode || !selectedVM || loading}
+              disabled={!selectedNode || !selectedVM || refreshing}
             >
-              <RefreshCw size={16} />
+              <RefreshCw size={16} className={refreshing ? "animate-spin" : ""} />
               Refresh
             </button>
             <button
@@ -516,7 +525,7 @@ export default function SnapshotsPage() {
         </div>
       </div>
 
-      {loading ? (
+      {loading && snapshots.length === 0 ? (
         <div className="card text-center py-12">
           <p className="text-gray-500">Loading snapshots...</p>
         </div>
@@ -620,4 +629,3 @@ export default function SnapshotsPage() {
     </>
   );
 }
-

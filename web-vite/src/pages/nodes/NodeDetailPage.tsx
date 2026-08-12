@@ -71,6 +71,7 @@ export default function NodeDetailPage() {
   const [node, setNode] = useState<Node | null>(null);
   const [summary, setSummary] = useState<NodeSummary | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [showDevices, setShowDevices] = useState<string | null>(null);
   const [devicesData, setDevicesData] = useState<any>(null);
@@ -136,8 +137,12 @@ export default function NodeDetailPage() {
   };
 
   const handleRefresh = async () => {
-    setLoading(true);
-    await Promise.all([fetchNodeDetails(), fetchNodeSummary()]);
+    setRefreshing(true);
+    try {
+      await Promise.all([fetchNodeDetails(), fetchNodeSummary()]);
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const handleViewDevices = async (deviceType: string) => {
@@ -195,7 +200,7 @@ export default function NodeDetailPage() {
     }
   };
 
-  if (loading) {
+  if (loading && !node) {
     return (
       <div className="flex justify-center items-center h-64">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
@@ -226,10 +231,10 @@ export default function NodeDetailPage() {
           <div className="flex gap-2">
             <button
               onClick={handleRefresh}
-              disabled={loading}
+              disabled={refreshing}
               className="btn-secondary flex items-center gap-2"
             >
-              <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
+              <RefreshCw size={16} className={refreshing ? "animate-spin" : ""} />
               Refresh
             </button>
             <button
@@ -740,4 +745,3 @@ export default function NodeDetailPage() {
     </>
   );
 }
-

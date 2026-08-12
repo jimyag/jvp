@@ -18,6 +18,7 @@ export default function KeypairsPage() {
   const toast = useToast();
   const [keypairs, setKeypairs] = useState<KeyPair[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -32,8 +33,12 @@ export default function KeypairsPage() {
     public_key: "",
   });
 
-  const fetchKeypairs = async () => {
-    setLoading(true);
+  const fetchKeypairs = async ({ showLoading = false }: { showLoading?: boolean } = {}) => {
+    if (showLoading) {
+      setLoading(true);
+    } else {
+      setRefreshing(true);
+    }
     try {
       const response = await fetch("/api/describe-keypairs", {
         method: "POST",
@@ -50,12 +55,16 @@ export default function KeypairsPage() {
       console.error("Failed to fetch keypairs:", error);
       toast.error("Failed to load key pairs. Please check if backend is running.");
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      } else {
+        setRefreshing(false);
+      }
     }
   };
 
   useEffect(() => {
-    fetchKeypairs();
+    fetchKeypairs({ showLoading: true });
   }, []);
 
   const handleCreateKeypair = async (e: React.FormEvent) => {
@@ -208,10 +217,11 @@ export default function KeypairsPage() {
             </button>
           </div>
         }
-        onRefresh={fetchKeypairs}
+        onRefresh={() => fetchKeypairs()}
+        refreshLoading={refreshing}
       />
 
-      {loading ? (
+      {loading && keypairs.length === 0 ? (
         <div className="card text-center py-12">
           <p className="text-gray-500">Loading key pairs...</p>
         </div>
@@ -383,4 +393,3 @@ export default function KeypairsPage() {
     </>
   );
 }
-

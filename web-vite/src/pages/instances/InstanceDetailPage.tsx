@@ -57,6 +57,7 @@ export default function InstanceDetailPage() {
 
   const [instance, setInstance] = useState<Instance | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [isResetPasswordModalOpen, setIsResetPasswordModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -95,8 +96,12 @@ export default function InstanceDetailPage() {
     start_after_clone: true,
   });
 
-  const fetchInstance = async () => {
-    setLoading(true);
+  const fetchInstance = async ({ showLoading = false }: { showLoading?: boolean } = {}) => {
+    if (showLoading) {
+      setLoading(true);
+    } else {
+      setRefreshing(true);
+    }
     try {
       const response = await fetch("/api/describe-instances", {
         method: "POST",
@@ -118,7 +123,11 @@ export default function InstanceDetailPage() {
       console.error("Failed to fetch instance:", error);
       toast.error("Failed to load instance details");
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      } else {
+        setRefreshing(false);
+      }
     }
   };
 
@@ -290,7 +299,7 @@ export default function InstanceDetailPage() {
 
   useEffect(() => {
     if (nodeName && instanceId) {
-      fetchInstance();
+      fetchInstance({ showLoading: true });
       fetchSnapshots();
     }
   }, [nodeName, instanceId]);
@@ -453,7 +462,7 @@ export default function InstanceDetailPage() {
     },
   ];
 
-  if (loading) {
+  if (loading && !instance) {
     return (
       <div className="card text-center py-12">
         <p className="text-gray-500">Loading instance details...</p>
@@ -486,7 +495,8 @@ export default function InstanceDetailPage() {
             Back to List
           </button>
         }
-        onRefresh={fetchInstance}
+        onRefresh={() => fetchInstance()}
+        refreshLoading={refreshing}
       />
 
       {/* Status and Actions */}
@@ -617,7 +627,7 @@ export default function InstanceDetailPage() {
             </button>
           </div>
         </div>
-        {snapshotsLoading ? (
+        {snapshotsLoading && snapshots.length === 0 ? (
           <p className="text-gray-500 text-sm">Loading snapshots...</p>
         ) : snapshots.length === 0 ? (
           <p className="text-gray-500 text-sm">No snapshots. Create one to save the current state of this instance.</p>
@@ -1226,4 +1236,3 @@ export default function InstanceDetailPage() {
     </>
   );
 }
-

@@ -134,6 +134,7 @@ export default function TemplatesPage() {
   const [searchParams] = useSearchParams();
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [filters, setFilters] = useState({ nodeName: "", poolName: "" });
   const [registerForm, setRegisterForm] = useState(initialRegisterForm);
   const [showRegisterModal, setShowRegisterModal] = useState(false);
@@ -166,8 +167,12 @@ export default function TemplatesPage() {
     window.history.replaceState(null, "", newURL);
   }, []);
 
-  const fetchTemplates = useCallback(async () => {
-    setLoading(true);
+  const fetchTemplates = useCallback(async ({ showLoading = false }: { showLoading?: boolean } = {}) => {
+    if (showLoading) {
+      setLoading(true);
+    } else {
+      setRefreshing(true);
+    }
     try {
       const response = await apiPost<ListTemplatesResponse>("/api/list-templates", {
         node_name: filters.nodeName,
@@ -178,7 +183,11 @@ export default function TemplatesPage() {
       console.error("Failed to load templates:", error);
       toast.error(error?.message || "Failed to load templates");
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      } else {
+        setRefreshing(false);
+      }
     }
   }, [filters, toast]);
 
@@ -427,7 +436,7 @@ export default function TemplatesPage() {
   // 当 filters 变化时获取模板列表
   useEffect(() => {
     if (filters.nodeName && filters.poolName) {
-      fetchTemplates();
+      fetchTemplates({ showLoading: true });
     }
   }, [filters, fetchTemplates]);
 
@@ -721,7 +730,8 @@ export default function TemplatesPage() {
         <Header
           title="Templates"
           description="Register storage volumes as reusable VM templates"
-          onRefresh={fetchTemplates}
+          onRefresh={() => fetchTemplates()}
+          refreshLoading={refreshing}
           action={
             <button className="btn-primary flex items-center gap-2" onClick={openRegisterModal}>
               <Plus className="w-4 h-4" />
@@ -788,7 +798,7 @@ export default function TemplatesPage() {
           </p>
         </div>
 
-        {loading ? (
+        {loading && templates.length === 0 ? (
           <div className="flex items-center justify-center h-64">
             <div className="text-center">
               <RefreshCw className="w-8 h-8 animate-spin text-primary mx-auto mb-2" />
