@@ -708,7 +708,7 @@ func ensureQemuGuestAgentCloudInit(config *cloudinit.Config, userData *cloudinit
 		"( if ! command -v qemu-ga >/dev/null 2>&1 && ! command -v qemu-guest-agent >/dev/null 2>&1; then if command -v apt-get >/dev/null 2>&1; then export DEBIAN_FRONTEND=noninteractive; timeout 600 apt-get update -o Acquire::Retries=3 -o Acquire::Languages=none -o Acquire::IndexTargets::deb-src::Sources::DefaultEnabled=false && timeout 300 apt-get install -y --no-install-recommends qemu-guest-agent; elif command -v dnf >/dev/null 2>&1; then timeout 300 dnf install -y qemu-guest-agent; elif command -v yum >/dev/null 2>&1; then timeout 300 yum install -y qemu-guest-agent; elif command -v zypper >/dev/null 2>&1; then timeout 300 zypper --non-interactive install qemu-guest-agent; elif command -v apk >/dev/null 2>&1; then timeout 300 apk add --no-cache qemu-guest-agent; elif command -v pacman >/dev/null 2>&1; then timeout 300 pacman -Sy --noconfirm qemu-guest-agent; fi; fi; if command -v systemctl >/dev/null 2>&1; then systemctl enable --now qemu-guest-agent || systemctl enable --now qemu-ga || true; elif command -v rc-update >/dev/null 2>&1; then rc-update add qemu-guest-agent default || true; rc-service qemu-guest-agent start || true; fi ) >/var/log/jvp-qga-bootstrap.log 2>&1 &",
 	}
 	if hostBridgeIP != "" {
-		commands = append([]string{fmt.Sprintf("ping -c 1 -W 1 %s >/dev/null 2>&1 || true", hostBridgeIP)}, commands...)
+		commands = append([]string{buildNeighborRefreshCommand(hostBridgeIP)}, commands...)
 	}
 
 	if config != nil {
@@ -721,6 +721,11 @@ func ensureQemuGuestAgentCloudInit(config *cloudinit.Config, userData *cloudinit
 			userData.RunCmd = appendUniqueString(userData.RunCmd, command)
 		}
 	}
+}
+
+func buildNeighborRefreshCommand(hostBridgeIP string) string {
+	pingLoop := fmt.Sprintf("while true; do ping -c 1 -W 1 %s >/dev/null 2>&1 || true; sleep 60; done", hostBridgeIP)
+	return fmt.Sprintf("if command -v systemctl >/dev/null 2>&1; then cat >/etc/systemd/system/jvp-neighbor-refresh.service <<'EOF'\n[Unit]\nDescription=Refresh JVP host neighbor entry\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nExecStart=/bin/sh -c '%s'\nRestart=always\nRestartSec=10\n\n[Install]\nWantedBy=multi-user.target\nEOF\nsystemctl daemon-reload && systemctl enable --now jvp-neighbor-refresh.service || true; else ( %s ) >/var/log/jvp-neighbor-refresh.log 2>&1 & fi", pingLoop, pingLoop)
 }
 
 func lookupBridgeIPv4(client libvirt.LibvirtClient, bridgeName string) string {
