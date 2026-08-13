@@ -483,6 +483,7 @@ StoragePoolService → VolumeService
 - [x] Windows ISO 镜像支持（2026-08-12：通过 Template 注册 ISO，并在创建实例时作为安装介质使用）
 - [x] Windows 安装引导配置（2026-08-12：Windows 模式创建空系统盘并从安装 ISO 启动）
 - [x] VirtIO 驱动集成（2026-08-12：创建 Windows 实例时可选挂载 VirtIO Driver ISO）
+- [x] Windows Cloudbase-Init 初始化（2026-08-13：从预装 Cloudbase-Init 的磁盘模板创建增量盘，通过 NoCloud CIDATA 注入主机名、用户、密码、SSH 公钥、时区和命令）
 - [ ] Windows 激活支持（可选）
 
 ##### 6.4.2 Windows 优化配置
@@ -501,6 +502,8 @@ StoragePoolService → VolumeService
 技术实现：
 - Windows 模板元数据标记
 - Windows 安装路径不复用 Linux cloud-init，避免影响 Linux 创建流程
+- Windows Cloud Image 仅接受同时标记 `cloud_init` 和 `virtio` 的非 ISO 模板；旧请求缺省使用 `install`，保持 API 兼容
+- Cloudbase-Init 使用 Windows 专属 cloud-config 序列化，密码保持明文 `passwd`，不输出 Linux 的 sudo、shell、packages 或密码哈希
 - VirtIO ISO 自动挂载
 - Windows 特定的设备配置（已支持额外 CD-ROM 与 cdrom boot，后续补充 unattend 自动安装）
 

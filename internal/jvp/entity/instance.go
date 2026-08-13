@@ -41,19 +41,20 @@ type InstanceInterface struct {
 
 // RunInstanceRequest 创建实例请求
 type RunInstanceRequest struct {
-	NodeName      string          `json:"node_name" binding:"required"`     // 目标节点名称
-	PoolName      string          `json:"pool_name" binding:"required"`     // 目标存储池名称
-	TemplateID    string          `json:"template_id"`                      // 模板 ID（可选，如果不提供则创建空白 VM）
-	Name          string          `json:"name"`                             // 实例名称（可选，自动生成）
-	SizeGB        uint64          `json:"size_gb"`                          // 磁盘大小（GB）（可选，默认使用模板大小）
-	MemoryMB      uint64          `json:"memory_mb"`                        // 内存大小（MB）（可选，默认 2048MB）
-	VCPUs         uint16          `json:"vcpus"`                            // 虚拟 CPU 数量（可选，默认 2）
-	NetworkType   string          `json:"network_type,omitempty"`           // 网络类型：bridge, network（默认：bridge）
-	NetworkSource string          `json:"network_source,omitempty"`         // 网络源：网桥名称或网络名称（默认：br0）
-	OSType        string          `json:"os_type,omitempty"`                // 操作系统类型：linux, windows（默认：linux）
-	DriverISOID   string          `json:"driver_iso_template_id,omitempty"` // Windows 驱动 ISO 模板 ID（可选）
-	UserData      *UserDataConfig `json:"user_data,omitempty"`              // UserData 配置（可选）
-	KeyPairIDs    []string        `json:"keypair_ids,omitempty"`            // 密钥对 ID 列表（可选）
+	NodeName        string          `json:"node_name" binding:"required"`     // 目标节点名称
+	PoolName        string          `json:"pool_name" binding:"required"`     // 目标存储池名称
+	TemplateID      string          `json:"template_id"`                      // 模板 ID（可选，如果不提供则创建空白 VM）
+	Name            string          `json:"name"`                             // 实例名称（可选，自动生成）
+	SizeGB          uint64          `json:"size_gb"`                          // 磁盘大小（GB）（可选，默认使用模板大小）
+	MemoryMB        uint64          `json:"memory_mb"`                        // 内存大小（MB）（可选，默认 2048MB）
+	VCPUs           uint16          `json:"vcpus"`                            // 虚拟 CPU 数量（可选，默认 2）
+	NetworkType     string          `json:"network_type,omitempty"`           // 网络类型：bridge, network（默认：bridge）
+	NetworkSource   string          `json:"network_source,omitempty"`         // 网络源：网桥名称或网络名称（默认：br0）
+	OSType          string          `json:"os_type,omitempty"`                // 操作系统类型：linux, windows（默认：linux）
+	WindowsBootMode string          `json:"windows_boot_mode,omitempty"`      // Windows 创建模式：install, cloud_image（默认：install）
+	DriverISOID     string          `json:"driver_iso_template_id,omitempty"` // Windows 驱动 ISO 模板 ID（可选）
+	UserData        *UserDataConfig `json:"user_data,omitempty"`              // UserData 配置（可选）
+	KeyPairIDs      []string        `json:"keypair_ids,omitempty"`            // 密钥对 ID 列表（可选）
 }
 
 // UserDataConfig UserData 配置

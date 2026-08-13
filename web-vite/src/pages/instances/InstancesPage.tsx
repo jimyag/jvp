@@ -49,6 +49,12 @@ interface Template {
     version?: string;
     arch?: string;
   };
+	features?: {
+		cloud_init?: boolean;
+		virtio?: boolean;
+		qemu_guest_agent?: boolean;
+	};
+	tags?: string[];
 }
 
 interface KeyPair {
@@ -81,7 +87,8 @@ interface NetworkSources {
 
 const createInstanceSteps = {
   linux: ["Basic", "User & System", "Advanced"],
-  windows: ["Basic"],
+  windowsInstall: ["Basic"],
+  windowsCloudImage: ["Basic", "Initialization"],
 };
 
 function templateText(template: Template) {
@@ -94,12 +101,21 @@ function apiErrorMessage(error: any) {
 
 function isLikelyWindowsInstallISO(template: Template) {
   const text = templateText(template);
-  return text.includes("windows") || text.includes("winserver") || text.includes("server 20");
+  const tags = template.tags || [];
+  const isISO = template.volume_name?.toLowerCase().endsWith(".iso") || tags.includes("iso") || tags.includes("installer");
+  return isISO && !isLikelyDriverISO(template) && (text.includes("windows") || text.includes("winserver") || text.includes("server 20"));
 }
 
 function isLikelyDriverISO(template: Template) {
   const text = templateText(template);
   return text.includes("virtio") || text.includes("driver") || text.includes("guest-tools") || text.includes("guest tools");
+}
+
+function isWindowsCloudImage(template: Template) {
+  const text = templateText(template);
+  const isWindows = text.includes("windows") || text.includes("win10") || text.includes("win11") || (template.tags || []).includes("windows");
+  const isISO = template.volume_name?.toLowerCase().endsWith(".iso") || (template.tags || []).includes("iso");
+  return isWindows && !isISO && !isLikelyDriverISO(template) && template.features?.cloud_init === true && template.features?.virtio === true;
 }
 
 export default function InstancesPage() {
@@ -140,6 +156,7 @@ export default function InstancesPage() {
     pool_name: "",
     template_id: "",
     os_type: "linux",
+		windows_boot_mode: "install" as "install" | "cloud_image",
     driver_iso_template_id: "",
     size_gb: 20,
     memory_mb: 2048,
@@ -159,10 +176,19 @@ export default function InstancesPage() {
     user_shell: "/bin/bash",
   });
   const isWindowsMode = formData.os_type === "windows";
-  const steps = isWindowsMode ? createInstanceSteps.windows : createInstanceSteps.linux;
+	const isWindowsCloudImageMode = isWindowsMode && formData.windows_boot_mode === "cloud_image";
+	const usesCloudInit = !isWindowsMode || isWindowsCloudImageMode;
+  const steps = !isWindowsMode
+		? createInstanceSteps.linux
+		: isWindowsCloudImageMode
+			? createInstanceSteps.windowsCloudImage
+			: createInstanceSteps.windowsInstall;
   const maxStep = steps.length - 1;
-  const visibleTemplates = isWindowsMode ? templates.filter(isLikelyWindowsInstallISO) : templates;
-  const fallbackWindowsTemplates = isWindowsMode && visibleTemplates.length === 0 ? templates : visibleTemplates;
+	const windowsInstallerTemplates = templates.filter(isLikelyWindowsInstallISO);
+	const windowsCloudImageTemplates = templates.filter(isWindowsCloudImage);
+  const visibleTemplates = isWindowsMode
+		? (isWindowsCloudImageMode ? windowsCloudImageTemplates : windowsInstallerTemplates)
+		: templates;
   const driverISOTemplates = templates.filter((template) => template.id !== formData.template_id && isLikelyDriverISO(template));
 
   const filteredInstances = useMemo(() => {
@@ -379,7 +405,7 @@ export default function InstancesPage() {
 
     try {
       let finalKeypairIds = [...formData.keypair_ids];
-      if (!isWindowsMode && keypairInputMethod === "manual" && manualPublicKey.trim()) {
+      if (usesCloudInit && keypairInputMethod !== "select" && manualPublicKey.trim()) {
         try {
           const importResponse = await fetch("/api/import-keypair", {
             method: "POST",
@@ -409,30 +435,30 @@ export default function InstancesPage() {
       const userData: any = {};
       const structuredUserData: any = {};
 
-      if (!isWindowsMode && formData.hostname) {
+      if (usesCloudInit && formData.hostname) {
         structuredUserData.hostname = formData.hostname;
       }
-      if (!isWindowsMode && formData.timezone) {
+      if (usesCloudInit && formData.timezone) {
         structuredUserData.timezone = formData.timezone;
       }
       if (!isWindowsMode) {
         structuredUserData.disable_root = formData.disable_root;
       }
 
-      if (!isWindowsMode && formData.username) {
+      if (usesCloudInit && formData.username) {
         structuredUserData.users = [{
           name: formData.username,
           plain_text_passwd: formData.user_password || undefined,
-          sudo: formData.user_sudo,
+          sudo: isWindowsCloudImageMode ? undefined : formData.user_sudo,
           groups: formData.user_groups,
-          shell: formData.user_shell,
+          shell: isWindowsCloudImageMode ? undefined : formData.user_shell,
         }];
       }
 
       if (!isWindowsMode && formData.packages.length > 0) {
         structuredUserData.packages = formData.packages;
       }
-      if (!isWindowsMode && formData.run_cmd.length > 0) {
+      if (usesCloudInit && formData.run_cmd.length > 0) {
         structuredUserData.run_cmd = formData.run_cmd;
       }
 
@@ -451,11 +477,12 @@ export default function InstancesPage() {
         network_type: formData.network_type,
         network_source: formData.network_source,
         os_type: formData.os_type,
-        driver_iso_template_id: isWindowsMode ? formData.driver_iso_template_id || undefined : undefined,
-        keypair_ids: !isWindowsMode && finalKeypairIds.length > 0 ? finalKeypairIds : undefined,
+				windows_boot_mode: isWindowsMode ? formData.windows_boot_mode : undefined,
+        driver_iso_template_id: isWindowsMode && !isWindowsCloudImageMode ? formData.driver_iso_template_id || undefined : undefined,
+        keypair_ids: usesCloudInit && finalKeypairIds.length > 0 ? finalKeypairIds : undefined,
       };
 
-      if (!isWindowsMode && hasUserData) {
+      if (usesCloudInit && hasUserData) {
         requestBody.user_data = userData;
       }
 
@@ -480,6 +507,7 @@ export default function InstancesPage() {
           pool_name: "",
           template_id: "",
           os_type: "linux",
+					windows_boot_mode: "install",
           driver_iso_template_id: "",
           size_gb: 20,
           memory_mb: 2048,
@@ -835,7 +863,9 @@ export default function InstancesPage() {
                       setFormData({
                         ...formData,
                         os_type: "linux",
+						windows_boot_mode: "install",
                         driver_iso_template_id: "",
+						user_groups: "sudo",
                         size_gb: formData.size_gb === 64 ? 20 : formData.size_gb,
                       });
                     }}
@@ -850,8 +880,10 @@ export default function InstancesPage() {
                       setFormData({
                         ...formData,
                         os_type: "windows",
+						windows_boot_mode: "install",
                         template_id: "",
                         driver_iso_template_id: "",
+						user_groups: "Administrators",
                         size_gb: formData.size_gb < 64 ? 64 : formData.size_gb,
                         memory_mb: formData.memory_mb < 4096 ? 4096 : formData.memory_mb,
                       });
@@ -861,6 +893,34 @@ export default function InstancesPage() {
                   </button>
                 </div>
               </div>
+
+						{isWindowsMode && (
+							<div>
+								<label className="label">Provisioning Mode</label>
+								<div className="inline-flex rounded-md border border-gray-200 overflow-hidden">
+									<button
+										type="button"
+										className={`px-4 py-2 text-sm ${!isWindowsCloudImageMode ? "bg-accent text-white" : "bg-white text-gray-700 hover:bg-gray-50"}`}
+										onClick={() => {
+											setCurrentStep(0);
+											setFormData({ ...formData, windows_boot_mode: "install", template_id: "", user_groups: "Administrators" });
+										}}
+									>
+										Install ISO
+									</button>
+									<button
+										type="button"
+										className={`px-4 py-2 text-sm border-l border-gray-200 ${isWindowsCloudImageMode ? "bg-accent text-white" : "bg-white text-gray-700 hover:bg-gray-50"}`}
+										onClick={() => {
+											setCurrentStep(0);
+											setFormData({ ...formData, windows_boot_mode: "cloud_image", template_id: "", driver_iso_template_id: "", user_groups: "Administrators" });
+										}}
+									>
+										Cloud Image
+									</button>
+								</div>
+							</div>
+						)}
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -904,7 +964,9 @@ export default function InstancesPage() {
               </div>
 
               <div>
-                <label className="label">{isWindowsMode ? "Windows Installer ISO *" : "Template"}</label>
+                <label className="label">
+							{isWindowsMode ? (isWindowsCloudImageMode ? "Windows Cloud Image *" : "Windows Installer ISO *") : "Template"}
+						</label>
                 <select
                   className="input"
                   value={formData.template_id}
@@ -915,9 +977,11 @@ export default function InstancesPage() {
                   required={isWindowsMode}
                 >
                   <option value="">
-                    {isWindowsMode ? "Select Windows installer ISO" : "No Template (Empty Disk)"}
+							{isWindowsMode
+								? (isWindowsCloudImageMode ? "Select Windows cloud image" : "Select Windows installer ISO")
+								: "No Template (Empty Disk)"}
                   </option>
-                  {fallbackWindowsTemplates.map((template) => (
+							{visibleTemplates.map((template) => (
                     <option key={template.id} value={template.id}>
                       {template.name} ({template.size_gb}GB, {template.format})
                     </option>
@@ -940,19 +1004,16 @@ export default function InstancesPage() {
                     </ul>
                   </div>
                 )}
-                {isWindowsMode && formData.pool_name && templates.length === 0 && (
+						{isWindowsMode && formData.pool_name && visibleTemplates.length === 0 && (
                   <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
                     <p className="text-sm text-amber-800">
-                      Register a Windows ISO as a template in this pool first.
+								{isWindowsCloudImageMode
+									? "Register a Windows disk image with Cloud-init ready and Virtio drivers enabled first."
+									: "Register a Windows ISO as a template in this pool first."}
                     </p>
                   </div>
                 )}
-                {isWindowsMode && templates.length > 0 && visibleTemplates.length === 0 && (
-                  <p className="text-xs text-amber-700 mt-1">
-                    No obvious Windows ISO was detected by name, so all templates are shown.
-                  </p>
-                )}
-                {isWindowsMode && (
+						{isWindowsMode && !isWindowsCloudImageMode && (
                   <div className="mt-3">
                     <label className="label">VirtIO Driver ISO</label>
                     <select
@@ -1029,10 +1090,12 @@ export default function InstancesPage() {
                 />
               </div>
 
-              {isWindowsMode && (
+						{isWindowsMode && (
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                   <p className="text-sm text-blue-800">
-                    Windows mode creates a blank system disk, boots from the selected installer ISO, and attaches the optional driver ISO.
+								{isWindowsCloudImageMode
+									? "Cloud Image mode clones the selected Windows disk and applies first-boot settings through Cloudbase-Init."
+									: "Install ISO mode creates a blank system disk, boots from the installer, and attaches the optional driver ISO."}
                   </p>
                 </div>
               )}
@@ -1087,7 +1150,7 @@ export default function InstancesPage() {
                 </p>
               </div>
 
-              {!isWindowsMode && (
+						{usesCloudInit && (
               <div>
                 <label className="label">Key Pairs</label>
                 <div className="flex gap-4 mb-3">
@@ -1182,7 +1245,9 @@ export default function InstancesPage() {
           {/* Step 2: User and System Configuration */}
           {currentStep === 1 && (
             <div className="space-y-4">
-              <h3 className="font-semibold text-gray-900">User and System Configuration</h3>
+						<h3 className="font-semibold text-gray-900">
+							{isWindowsCloudImageMode ? "Windows Initialization" : "User and System Configuration"}
+						</h3>
 
               <div>
                 <label className="label">Hostname</label>
@@ -1227,7 +1292,7 @@ export default function InstancesPage() {
                       onChange={(e) =>
                         setFormData({ ...formData, username: e.target.value })
                       }
-                      placeholder="ubuntu"
+								placeholder={isWindowsCloudImageMode ? "jimyag" : "ubuntu"}
                     />
                   </div>
 
@@ -1245,7 +1310,7 @@ export default function InstancesPage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 mt-4">
+								<div className={`grid ${isWindowsCloudImageMode ? "grid-cols-1" : "grid-cols-2"} gap-4 mt-4`}>
                   <div>
                     <label className="label">Groups</label>
                     <input
@@ -1255,11 +1320,11 @@ export default function InstancesPage() {
                       onChange={(e) =>
                         setFormData({ ...formData, user_groups: e.target.value })
                       }
-                      placeholder="sudo"
+										placeholder={isWindowsCloudImageMode ? "Administrators" : "sudo"}
                     />
                   </div>
 
-                  <div>
+									{!isWindowsCloudImageMode && <div>
                     <label className="label">Shell</label>
                     <select
                       className="input"
@@ -1272,10 +1337,10 @@ export default function InstancesPage() {
                       <option value="/bin/sh">/bin/sh</option>
                       <option value="/bin/zsh">/bin/zsh</option>
                     </select>
-                  </div>
+									</div>}
                 </div>
 
-                <div className="mt-4">
+								{!isWindowsCloudImageMode && <div className="mt-4">
                   <label className="label">Sudo Permissions</label>
                   <input
                     type="text"
@@ -1286,10 +1351,10 @@ export default function InstancesPage() {
                     }
                     placeholder="ALL=(ALL) NOPASSWD:ALL"
                   />
-                </div>
+								</div>}
               </div>
 
-              <div className="flex items-center">
+						{!isWindowsCloudImageMode && <div className="flex items-center">
                 <input
                   type="checkbox"
                   id="disable_root"
@@ -1302,7 +1367,23 @@ export default function InstancesPage() {
                 <label htmlFor="disable_root" className="text-sm text-gray-700">
                   Disable root login
                 </label>
-              </div>
+						</div>}
+
+						{isWindowsCloudImageMode && (
+							<div>
+								<label className="label">Run Commands</label>
+								<textarea
+									className="input font-mono text-xs"
+									rows={5}
+									value={formData.run_cmd.join("\n")}
+									onChange={(e) => {
+										const commands = e.target.value.split("\n").map((command) => command.trim()).filter(Boolean);
+										setFormData({ ...formData, run_cmd: commands });
+									}}
+									placeholder={'One cmd.exe command per line, e.g.:\npowershell.exe -NoProfile -Command "Enable-PSRemoting -Force"'}
+								/>
+							</div>
+						)}
             </div>
           )}
 

@@ -84,8 +84,9 @@ type File struct {
 // MetaData 标准的 cloud-init meta-data 结构
 // 可直接序列化为 YAML 格式
 type MetaData struct {
-	InstanceID    string `yaml:"instance-id"`
-	LocalHostname string `yaml:"local-hostname"`
+	InstanceID    string   `yaml:"instance-id"`
+	LocalHostname string   `yaml:"local-hostname"`
+	PublicKeys    []string `yaml:"public-keys,omitempty"`
 }
 
 // UserData 标准的 cloud-init user-data 结构
@@ -108,6 +109,7 @@ type UserData struct {
 	Users       []any               `yaml:"users,omitempty"`        // 用户列表：可包含 "default" 字符串和 User 对象
 	DisableRoot bool                `yaml:"disable_root,omitempty"` // 禁用 root 登录
 	Timezone    string              `yaml:"timezone,omitempty"`     // 时区（如：Asia/Shanghai）
+	SetTimezone string              `yaml:"set_timezone,omitempty"` // Cloudbase-Init 时区
 	Packages    []string            `yaml:"packages,omitempty"`     // 要安装的软件包列表
 	RunCmd      []string            `yaml:"runcmd,omitempty"`       // 启动后执行的命令
 	WriteFiles  []WriteFile         `yaml:"write_files,omitempty"`  // 要写入的文件列表

@@ -1143,7 +1143,7 @@ export default function TemplatesPage() {
                         setRegisterForm({ ...registerForm, cloudInit: e.target.checked })
                       }
                     />
-                    Cloud-init ready
+					Cloud-init / Cloudbase-Init ready
                   </label>
                   <label className="flex items-center gap-2 text-sm text-gray-600">
                     <input

@@ -7,9 +7,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/netip"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -126,12 +128,20 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 		osType = "linux"
 	}
 	isWindows := osType == "windows"
+	windowsBootMode := strings.ToLower(strings.TrimSpace(req.WindowsBootMode))
+	if isWindows && windowsBootMode == "" {
+		windowsBootMode = "install"
+	}
+	if isWindows && windowsBootMode != "install" && windowsBootMode != "cloud_image" {
+		return nil, apierror.NewErrorWithStatus("InvalidParameter", "windows_boot_mode must be install or cloud_image", http.StatusBadRequest)
+	}
+	isWindowsCloudImage := isWindows && windowsBootMode == "cloud_image"
 	if isWindows && sizeGB == 20 && req.SizeGB == 0 {
 		sizeGB = 64
 	}
 
 	// 如果指定了模板，获取模板信息并创建增量磁盘
-	if req.TemplateID != "" && !isWindows {
+	if req.TemplateID != "" && (!isWindows || isWindowsCloudImage) {
 		// 获取模板信息
 		template, err := s.templateService.DescribeTemplate(ctx, &entity.DescribeTemplateRequest{
 			NodeName:   req.NodeName,
@@ -143,6 +153,20 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 		}
 
 		templateID = template.ID
+		if isWindowsCloudImage {
+			if !isWindowsTemplate(template) {
+				return nil, apierror.NewErrorWithStatus("InvalidParameter", "Windows cloud image template must be identified as Windows", http.StatusBadRequest)
+			}
+			if !template.Features.CloudInit {
+				return nil, apierror.NewErrorWithStatus("InvalidParameter", "Windows cloud image template must have Cloud-init ready enabled", http.StatusBadRequest)
+			}
+			if !template.Features.Virtio {
+				return nil, apierror.NewErrorWithStatus("InvalidParameter", "Windows cloud image template must include VirtIO drivers", http.StatusBadRequest)
+			}
+			if strings.EqualFold(filepath.Ext(template.VolumeName), ".iso") {
+				return nil, apierror.NewErrorWithStatus("InvalidParameter", "Windows cloud image template must be a disk image, not an ISO", http.StatusBadRequest)
+			}
+		}
 
 		// 使用模板的大小（如果请求没有指定更大的大小）
 		if req.SizeGB == 0 || uint64(template.SizeGB) > req.SizeGB {
@@ -182,7 +206,11 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 	} else {
 		if isWindows {
 			if req.TemplateID == "" {
-				return nil, apierror.NewErrorWithStatus("InvalidParameter", "template_id is required for Windows install ISO", 400)
+				message := "template_id is required for Windows install ISO"
+				if isWindowsCloudImage {
+					message = "template_id is required for Windows cloud image"
+				}
+				return nil, apierror.NewErrorWithStatus("InvalidParameter", message, http.StatusBadRequest)
 			}
 			installerTemplate, err := s.templateService.DescribeTemplate(ctx, &entity.DescribeTemplateRequest{
 				NodeName:   req.NodeName,
@@ -218,10 +246,18 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 		diskPath = volumeInfo.Path
 	}
 
-	// 处理 cloud-init 配置
+	// 处理 Linux cloud-init 或 Windows Cloudbase-Init 配置
 	var cloudInitISOPath string
-	if !isWindows && (req.UserData != nil || len(req.KeyPairIDs) > 0 || req.TemplateID != "") {
-		cloudInitConfig, userData, err := s.convertUserDataToCloudInit(ctx, instanceName, req.UserData)
+	needsCloudInit := (!isWindows && (req.UserData != nil || len(req.KeyPairIDs) > 0 || req.TemplateID != "")) || isWindowsCloudImage
+	if needsCloudInit {
+		var cloudInitConfig *cloudinit.Config
+		var userData *cloudinit.UserData
+		var err error
+		if isWindowsCloudImage {
+			cloudInitConfig, userData, err = s.convertWindowsUserDataToCloudInit(instanceName, req.UserData)
+		} else {
+			cloudInitConfig, userData, err = s.convertUserDataToCloudInit(ctx, instanceName, req.UserData)
+		}
 		if err != nil {
 			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to convert user data", err)
 		}
@@ -232,7 +268,8 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 			}
 		}
 
-		// 添加 SSH 密钥
+		// 添加 SSH 密钥。Linux 写入用户配置，Windows NoCloud 写入 meta-data。
+		publicKeys := make([]string, 0, len(req.KeyPairIDs))
 		if len(req.KeyPairIDs) > 0 && cloudInitConfig != nil {
 			for _, keyPairID := range req.KeyPairIDs {
 				keyPair, err := s.keyPairService.GetKeyPairByID(ctx, keyPairID)
@@ -241,6 +278,16 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 						Str("keypair_id", keyPairID).
 						Err(err).
 						Msg("Failed to get key pair, skipping")
+					continue
+				}
+				publicKeys = append(publicKeys, keyPair.PublicKey)
+				if isWindowsCloudImage {
+					if userData != nil && len(userData.Users) > 0 {
+						if user, ok := userData.Users[0].(cloudinit.User); ok {
+							user.SSHAuthorizedKeys = append(user.SSHAuthorizedKeys, keyPair.PublicKey)
+							userData.Users[0] = user
+						}
+					}
 					continue
 				}
 				// 添加到默认用户的 SSH 密钥
@@ -270,11 +317,13 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 			networkSource = "br0"
 		}
 
-		hostBridgeIP := ""
-		if networkType == "bridge" {
-			hostBridgeIP = lookupBridgeIPv4(client, networkSource)
+		if !isWindowsCloudImage {
+			hostBridgeIP := ""
+			if networkType == "bridge" {
+				hostBridgeIP = lookupBridgeIPv4(client, networkSource)
+			}
+			ensureQemuGuestAgentCloudInit(cloudInitConfig, userData, hostBridgeIP)
 		}
-		ensureQemuGuestAgentCloudInit(cloudInitConfig, userData, hostBridgeIP)
 
 		// 生成 cloud-init ISO
 		if cloudInitConfig != nil || userData != nil {
@@ -286,7 +335,7 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 
 			// 生成 cloud-init 配置文件内容
 			generator := cloudinit.NewGenerator()
-			metaData, err := generator.GenerateMetaData(cloudInitConfig.Hostname)
+			metaData, err := generator.GenerateMetaDataWithPublicKeys(cloudInitConfig.Hostname, publicKeys)
 			if err != nil {
 				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to generate meta-data", err)
 			}
@@ -340,7 +389,6 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 	}
 
 	if isWindows {
-		vmConfig.DisableOSBoot = true
 		vmConfig.MachineType = "q35"
 		vmConfig.DiskBus = "sata"
 		vmConfig.CPUMode = "host-passthrough"
@@ -352,23 +400,34 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 		vmConfig.NVRAMPath = "/var/lib/libvirt/qemu/nvram/" + instanceName + "_VARS.fd"
 		vmConfig.TPM = true
 		vmConfig.SMM = true
-		vmConfig.CDROMs = append(vmConfig.CDROMs, libvirt.CDROMConfig{
-			Path:   windowsInstallISOPath,
-			Device: "sdb",
-			Bus:    "sata",
-			Boot:   true,
-		})
-		if windowsDriverISOPath != "" {
+		if isWindowsCloudImage {
+			if cloudInitISOPath != "" {
+				vmConfig.CDROMs = append(vmConfig.CDROMs, libvirt.CDROMConfig{
+					Path:   cloudInitISOPath,
+					Device: "sdb",
+					Bus:    "sata",
+				})
+			}
+		} else {
+			vmConfig.DisableOSBoot = true
 			vmConfig.CDROMs = append(vmConfig.CDROMs, libvirt.CDROMConfig{
-				Path:   windowsDriverISOPath,
-				Device: "sdc",
+				Path:   windowsInstallISOPath,
+				Device: "sdb",
 				Bus:    "sata",
+				Boot:   true,
 			})
+			if windowsDriverISOPath != "" {
+				vmConfig.CDROMs = append(vmConfig.CDROMs, libvirt.CDROMConfig{
+					Path:   windowsDriverISOPath,
+					Device: "sdc",
+					Bus:    "sata",
+				})
+			}
 		}
 	}
 
 	// 如果有 cloud-init ISO，添加到配置
-	if cloudInitISOPath != "" {
+	if cloudInitISOPath != "" && !isWindowsCloudImage {
 		vmConfig.ISOPath = cloudInitISOPath
 	}
 
@@ -400,7 +459,7 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 			Str("name", instanceName).
 			Msg("Failed to start domain, it might already be running")
 	}
-	if isWindows {
+	if isWindows && !isWindowsCloudImage {
 		go s.sendWindowsInstallerBootKey(client, domain, instanceName, logger.With().Logger())
 	}
 
@@ -467,6 +526,75 @@ func (s *InstanceService) shouldSendWindowsInstallerBootKey(client libvirt.Libvi
 // formatDomainUUID 格式化 Domain UUID
 func formatDomainUUID(uuid [16]byte) string {
 	return hex.EncodeToString(uuid[:])
+}
+
+func isWindowsTemplate(template *entity.Template) bool {
+	if template == nil {
+		return false
+	}
+	metadata := strings.ToLower(strings.Join([]string{
+		template.Name,
+		template.VolumeName,
+		template.OS.Name,
+		strings.Join(template.Tags, " "),
+	}, " "))
+	return strings.Contains(metadata, "windows") || strings.Contains(metadata, "win10") || strings.Contains(metadata, "win11")
+}
+
+// convertWindowsUserDataToCloudInit maps the shared API shape to the subset
+// supported by Cloudbase-Init. Windows passwords must remain plaintext here.
+func (s *InstanceService) convertWindowsUserDataToCloudInit(
+	instanceID string,
+	userDataConfig *entity.UserDataConfig,
+) (*cloudinit.Config, *cloudinit.UserData, error) {
+	config := &cloudinit.Config{Hostname: instanceID}
+	if userDataConfig == nil {
+		return config, &cloudinit.UserData{}, nil
+	}
+
+	if rawUserData := strings.TrimSpace(userDataConfig.RawUserData); rawUserData != "" {
+		config.CustomUserData = rawUserData
+		return config, nil, nil
+	}
+	if userDataConfig.StructuredUserData == nil {
+		return config, &cloudinit.UserData{}, nil
+	}
+
+	structured := userDataConfig.StructuredUserData
+	if structured.Hostname != "" {
+		config.Hostname = structured.Hostname
+	}
+	userData := &cloudinit.UserData{
+		SetTimezone: structured.Timezone,
+		RunCmd:      append([]string(nil), structured.RunCmd...),
+	}
+
+	if len(structured.Groups) > 0 {
+		userData.Groups = make(map[string][]string, len(structured.Groups))
+		for _, group := range structured.Groups {
+			userData.Groups[group.Name] = append([]string(nil), group.Members...)
+		}
+	}
+	for _, sourceUser := range structured.Users {
+		if sourceUser.HashedPasswd != "" {
+			return nil, nil, fmt.Errorf("hashed_passwd is not supported by Cloudbase-Init; use plain_text_passwd")
+		}
+		userData.Users = append(userData.Users, cloudinit.User{
+			Name:              sourceUser.Name,
+			Groups:            sourceUser.Groups,
+			Passwd:            sourceUser.PlainTextPasswd,
+			SSHAuthorizedKeys: append([]string(nil), sourceUser.SSHAuthorizedKeys...),
+		})
+	}
+	for _, sourceFile := range structured.WriteFiles {
+		userData.WriteFiles = append(userData.WriteFiles, cloudinit.WriteFile{
+			Path:        sourceFile.Path,
+			Content:     sourceFile.Content,
+			Permissions: sourceFile.Permissions,
+		})
+	}
+
+	return config, userData, nil
 }
 
 // convertUserDataToCloudInit 将 entity.UserDataConfig 转换为 cloudinit 配置

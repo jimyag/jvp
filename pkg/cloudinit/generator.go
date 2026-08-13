@@ -18,6 +18,11 @@ func NewGenerator() *Generator {
 
 // GenerateMetaData 生成 meta-data 文件内容
 func (g *Generator) GenerateMetaData(hostname string) (string, error) {
+	return g.GenerateMetaDataWithPublicKeys(hostname, nil)
+}
+
+// GenerateMetaDataWithPublicKeys 生成包含 SSH 公钥的 NoCloud meta-data。
+func (g *Generator) GenerateMetaDataWithPublicKeys(hostname string, publicKeys []string) (string, error) {
 	if hostname == "" {
 		hostname = "localhost"
 	}
@@ -30,6 +35,7 @@ func (g *Generator) GenerateMetaData(hostname string) (string, error) {
 	metaData := &MetaData{
 		InstanceID:    instanceID,
 		LocalHostname: hostname,
+		PublicKeys:    publicKeys,
 	}
 
 	yamlData, err := yaml.Marshal(metaData)
