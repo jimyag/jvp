@@ -118,6 +118,11 @@ function isWindowsCloudImage(template: Template) {
   return isWindows && !isISO && !isLikelyDriverISO(template) && template.features?.cloud_init === true && template.features?.virtio === true;
 }
 
+function isRecommendedWindowsCloudImage(template: Template) {
+  const tags = template.tags || [];
+  return isWindowsCloudImage(template) && template.features?.qemu_guest_agent === true && tags.includes("vnc-clipboard");
+}
+
 export default function InstancesPage() {
   const toast = useToast();
   const [searchParams] = useSearchParams();
@@ -184,8 +189,11 @@ export default function InstancesPage() {
 			? createInstanceSteps.windowsCloudImage
 			: createInstanceSteps.windowsInstall;
   const maxStep = steps.length - 1;
-	const windowsInstallerTemplates = templates.filter(isLikelyWindowsInstallISO);
-	const windowsCloudImageTemplates = templates.filter(isWindowsCloudImage);
+  const windowsInstallerTemplates = templates.filter(isLikelyWindowsInstallISO);
+  const windowsCloudImageTemplates = templates
+    .filter(isWindowsCloudImage)
+    .sort((left, right) => Number(isRecommendedWindowsCloudImage(right)) - Number(isRecommendedWindowsCloudImage(left)));
+  const recommendedWindowsCloudImage = windowsCloudImageTemplates.find(isRecommendedWindowsCloudImage);
   const visibleTemplates = isWindowsMode
 		? (isWindowsCloudImageMode ? windowsCloudImageTemplates : windowsInstallerTemplates)
 		: templates;
@@ -913,7 +921,13 @@ export default function InstancesPage() {
 										className={`px-4 py-2 text-sm border-l border-gray-200 ${isWindowsCloudImageMode ? "bg-accent text-white" : "bg-white text-gray-700 hover:bg-gray-50"}`}
 										onClick={() => {
 											setCurrentStep(0);
-											setFormData({ ...formData, windows_boot_mode: "cloud_image", template_id: "", driver_iso_template_id: "", user_groups: "Administrators" });
+											setFormData({
+												...formData,
+												windows_boot_mode: "cloud_image",
+												template_id: recommendedWindowsCloudImage?.id || "",
+												driver_iso_template_id: "",
+												user_groups: "Administrators",
+											});
 										}}
 									>
 										Cloud Image
@@ -983,10 +997,17 @@ export default function InstancesPage() {
                   </option>
 							{visibleTemplates.map((template) => (
                     <option key={template.id} value={template.id}>
-                      {template.name} ({template.size_gb}GB, {template.format})
+                      {template.name}
+                      {isRecommendedWindowsCloudImage(template) ? " (Recommended)" : ""}
+                      {" "}({template.size_gb}GB, {template.format})
                     </option>
                   ))}
                 </select>
+                {isWindowsCloudImageMode && recommendedWindowsCloudImage && (
+                  <p className="text-xs text-blue-700 mt-1">
+                    Use <strong>{recommendedWindowsCloudImage.name}</strong>. It is prepared for Cloudbase-Init, VirtIO, QEMU Guest Agent, and VNC clipboard support.
+                  </p>
+                )}
                 {formData.pool_name && !isWindowsMode && templates.length === 0 && (
                   <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
                     <p className="text-sm text-amber-800">
@@ -1094,8 +1115,8 @@ export default function InstancesPage() {
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                   <p className="text-sm text-blue-800">
 								{isWindowsCloudImageMode
-									? "Cloud Image mode clones the selected Windows disk and applies first-boot settings through Cloudbase-Init."
-									: "Install ISO mode creates a blank system disk, boots from the installer, and attaches the optional driver ISO."}
+									? "Cloud Image mode clones the recommended prepared disk and applies first-boot settings through Cloudbase-Init."
+									: "Install ISO mode is for manual Windows installation. It creates a blank system disk, boots from the installer, and attaches the optional driver ISO."}
                   </p>
                 </div>
               )}

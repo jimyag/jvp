@@ -25,6 +25,23 @@ interface Template {
   format: string;
   created_at: string;
   tags: string[];
+  features?: {
+    cloud_init?: boolean;
+    virtio?: boolean;
+    qemu_guest_agent?: boolean;
+  };
+}
+
+function isRecommendedWindowsCloudImage(template: Template) {
+  const tags = template.tags || [];
+  return (
+    tags.includes("windows") &&
+    tags.includes("cloud-image") &&
+    tags.includes("vnc-clipboard") &&
+    template.features?.cloud_init === true &&
+    template.features?.virtio === true &&
+    template.features?.qemu_guest_agent === true
+  );
 }
 
 interface ListTemplatesResponse {
@@ -686,6 +703,11 @@ export default function TemplatesPage() {
           <div className="flex items-center gap-2">
             <Package className="w-4 h-4 text-blue-600" />
             <span className="font-medium">{row.name}</span>
+            {isRecommendedWindowsCloudImage(row) && (
+              <span className="inline-flex px-2 py-0.5 rounded-full bg-green-50 text-green-700 text-xs">
+                Recommended Cloud Image
+              </span>
+            )}
           </div>
           <p className="text-xs text-gray-500 mt-1">{row.description || "No description"}</p>
         </div>
@@ -801,6 +823,12 @@ export default function TemplatesPage() {
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {templates.some(isRecommendedWindowsCloudImage) && (
+          <div className="border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+            For automated Windows provisioning, use the template marked <strong>Recommended Cloud Image</strong>. Windows installer ISO is intended for manual installation only.
           </div>
         )}
 
