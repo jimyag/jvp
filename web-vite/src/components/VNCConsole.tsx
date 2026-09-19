@@ -49,7 +49,7 @@ export default function VNCConsole({
       src={iframeUrl}
       className="w-full h-full border-0"
       title="VNC Console"
-      allow="fullscreen"
+      allow="fullscreen; clipboard-read; clipboard-write"
     />
   );
 }

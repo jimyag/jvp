@@ -50,6 +50,62 @@
             z-index: 1000;
             pointer-events: none;
         }
+        #clipboard-toolbar {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 1001;
+        }
+        #clipboard-toolbar button,
+        #clipboard-panel button {
+            border: 1px solid #6b7280;
+            background: rgba(17, 24, 39, 0.92);
+            color: #fff;
+            min-height: 36px;
+            padding: 8px 12px;
+            font: inherit;
+            cursor: pointer;
+        }
+        #clipboard-toolbar button:hover,
+        #clipboard-panel button:hover {
+            background: #1f2937;
+        }
+        #clipboard-toolbar button:disabled {
+            color: #9ca3af;
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
+        #clipboard-panel {
+            position: absolute;
+            top: 56px;
+            right: 10px;
+            width: min(420px, calc(100vw - 20px));
+            padding: 12px;
+            background: rgba(17, 24, 39, 0.97);
+            border: 1px solid #4b5563;
+            color: #fff;
+            z-index: 1002;
+        }
+        #clipboard-panel[hidden] {
+            display: none;
+        }
+        #clipboard-panel textarea {
+            display: block;
+            width: 100%;
+            min-height: 112px;
+            margin-bottom: 10px;
+            padding: 8px;
+            border: 1px solid #6b7280;
+            background: #111827;
+            color: #fff;
+            font: 14px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            resize: vertical;
+        }
+        #clipboard-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+        }
         .connecting {
             color: #fbbf24;
         }
@@ -63,14 +119,31 @@
 </head>
 <body>
     <div id="status" class="connecting">Connecting...</div>
+    <div id="clipboard-toolbar">
+        <button id="paste-clipboard" type="button" title="Paste clipboard text into the console" disabled>Paste</button>
+    </div>
+    <div id="clipboard-panel" hidden>
+        <textarea id="clipboard-text" aria-label="Text to paste into the console" placeholder="Paste text here"></textarea>
+        <div id="clipboard-actions">
+            <button id="cancel-paste" type="button">Cancel</button>
+            <button id="send-paste" type="button">Send</button>
+        </div>
+    </div>
     <div id="screen"></div>
 
     <script type="module">
         // 使用本地的 noVNC ES module
         import RFB from '/novnc/rfb.js';
+        import KeyTable from '/novnc/input/keysym.js';
+        import keysyms from '/novnc/input/keysymdef.js';
 
         const status = document.getElementById('status');
         const screen = document.getElementById('screen');
+        const pasteButton = document.getElementById('paste-clipboard');
+        const clipboardPanel = document.getElementById('clipboard-panel');
+        const clipboardText = document.getElementById('clipboard-text');
+        const cancelPasteButton = document.getElementById('cancel-paste');
+        const sendPasteButton = document.getElementById('send-paste');
 
         // 从 URL 参数获取 WebSocket地址
         const urlParams = new URLSearchParams(window.location.search);
@@ -95,6 +168,7 @@
 
                 let capturedMouse = null;
                 let ignoreInitialPointerMove = false;
+                let isConnected = false;
 
                 const getCanvas = () => rfb._canvas;
                 const getDisplay = () => rfb._display;
@@ -103,6 +177,116 @@
                 const focusConsole = () => {
                     rfb.focus({ preventScroll: true });
                 };
+                const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+                const shiftedKeys = {
+                    '~': 'Backquote', '!': 'Digit1', '@': 'Digit2', '#': 'Digit3',
+                    '$': 'Digit4', '%': 'Digit5', '^': 'Digit6', '&': 'Digit7',
+                    '*': 'Digit8', '(': 'Digit9', ')': 'Digit0', '_': 'Minus',
+                    '+': 'Equal', '{': 'BracketLeft', '}': 'BracketRight',
+                    '|': 'Backslash', ':': 'Semicolon', '"': 'Quote',
+                    '<': 'Comma', '>': 'Period', '?': 'Slash',
+                };
+                const plainKeys = {
+                    '`': 'Backquote', '-': 'Minus', '=': 'Equal', '[': 'BracketLeft',
+                    ']': 'BracketRight', '\\': 'Backslash', ';': 'Semicolon',
+                    "'": 'Quote', ',': 'Comma', '.': 'Period', '/': 'Slash',
+                    ' ': 'Space',
+                };
+
+                const keyStrokeForCharacter = (character) => {
+                    if (/^[a-z]$/.test(character)) {
+                        return { keysym: keysyms.lookup(character.codePointAt(0)), code: `Key${character.toUpperCase()}` };
+                    }
+                    if (/^[A-Z]$/.test(character)) {
+                        return { keysym: keysyms.lookup(character.codePointAt(0)), code: `Key${character}`, shift: true };
+                    }
+                    if (/^[0-9]$/.test(character)) {
+                        return { keysym: keysyms.lookup(character.codePointAt(0)), code: `Digit${character}` };
+                    }
+                    if (shiftedKeys[character]) {
+                        return { keysym: keysyms.lookup(character.codePointAt(0)), code: shiftedKeys[character], shift: true };
+                    }
+                    if (plainKeys[character]) {
+                        return { keysym: keysyms.lookup(character.codePointAt(0)), code: plainKeys[character] };
+                    }
+                    return { keysym: keysyms.lookup(character.codePointAt(0)) };
+                };
+
+                const sendTextAsKeys = async (text) => {
+                    if (!text) return;
+                    if (!isConnected) {
+                        status.textContent = 'Connect to the console before pasting';
+                        status.className = 'disconnected';
+                        status.style.display = 'block';
+                        return;
+                    }
+
+                    if (isPointerLocked()) {
+                        document.exitPointerLock();
+                    }
+                    clipboardPanel.hidden = true;
+                    focusConsole();
+
+                    for (const character of text.replace(/\r\n/g, '\n')) {
+                        let keyStroke;
+                        if (character === '\n') {
+                            keyStroke = { keysym: KeyTable.XK_Return, code: 'Enter' };
+                        } else if (character === '\t') {
+                            keyStroke = { keysym: KeyTable.XK_Tab, code: 'Tab' };
+                        } else {
+                            keyStroke = keyStrokeForCharacter(character);
+                        }
+                        if (keyStroke.keysym) {
+                            if (keyStroke.shift) {
+                                rfb.sendKey(KeyTable.XK_Shift_L, 'ShiftLeft', true);
+                            }
+                            rfb.sendKey(keyStroke.keysym, keyStroke.code);
+                            if (keyStroke.shift) {
+                                rfb.sendKey(KeyTable.XK_Shift_L, 'ShiftLeft', false);
+                            }
+                            await sleep(5);
+                        }
+                    }
+
+                    status.textContent = 'Clipboard text sent';
+                    status.className = 'connected';
+                    status.style.display = 'block';
+                };
+
+                const openClipboardPanel = (text = '') => {
+                    if (isPointerLocked()) {
+                        document.exitPointerLock();
+                    }
+                    clipboardText.value = text;
+                    clipboardPanel.hidden = false;
+                    clipboardText.focus();
+                };
+
+                pasteButton.addEventListener('click', async () => {
+                    try {
+                        const text = await navigator.clipboard.readText();
+                        if (text) {
+                            await sendTextAsKeys(text);
+                            return;
+                        }
+                    } catch (error) {
+                        console.warn('Clipboard read failed:', error);
+                    }
+                    openClipboardPanel();
+                });
+                cancelPasteButton.addEventListener('click', () => {
+                    clipboardPanel.hidden = true;
+                    focusConsole();
+                });
+                sendPasteButton.addEventListener('click', async () => {
+                    await sendTextAsKeys(clipboardText.value);
+                });
+                clipboardText.addEventListener('keydown', async (event) => {
+                    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                        event.preventDefault();
+                        await sendTextAsKeys(clipboardText.value);
+                    }
+                });
 
                 const buttonMask = (buttons) => {
                     const buttonMaskMap = {
@@ -235,7 +419,7 @@
                 };
 
                 const installMouseCapture = () => {
-                    document.addEventListener('mousedown', requestMouseCapture, true);
+                    screen.addEventListener('mousedown', requestMouseCapture, true);
                     document.addEventListener('pointerlockchange', handlePointerLockChange);
                     document.addEventListener('pointerlockerror', handlePointerLockError);
                     document.addEventListener('mousemove', handleCapturedMouseMove, true);
@@ -258,6 +442,8 @@
                 // 连接事件
                 rfb.addEventListener('connect', () => {
                     console.log('VNC connected');
+                    isConnected = true;
+                    pasteButton.disabled = false;
                     status.textContent = 'Click console to capture mouse';
                     status.className = 'connected';
                     status.style.display = 'block';
@@ -269,6 +455,9 @@
                 // 断开连接事件
                 rfb.addEventListener('disconnect', (e) => {
                     console.log('VNC disconnected:', e.detail);
+                    isConnected = false;
+                    pasteButton.disabled = true;
+                    clipboardPanel.hidden = true;
                     status.textContent = 'Disconnected';
                     status.className = 'disconnected';
                     status.style.display = 'block';
