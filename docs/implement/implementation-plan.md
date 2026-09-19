@@ -368,7 +368,7 @@ StoragePoolService → VolumeService
 - [x] 前端实例详情/列表支持展示与修改自动启动（autostart），通过 modify-attribute 调用后端实现
 
 进度更新 (2026-08-13)：
-- [x] VNC 控制台支持读取浏览器剪贴板并以键盘事件向客体发送文本；浏览器拒绝剪贴板权限时提供手动输入回退
+- [x] VNC 控制台通过 noVNC/QEMU clipboard 协议与客体双向同步纯文本剪贴板；`Ctrl+V` 会先刷新浏览器剪贴板再触发客体粘贴，浏览器拒绝读取权限时仍提供手动发送面板
 - [x] VNC 图形控制台改为独立标签页，并使用 noVNC 原生绝对指针处理；移除与 USB tablet 冲突的 Pointer Lock 相对坐标转换
 
 ### 阶段 5：集成与优化（第 8 周）
@@ -493,12 +493,14 @@ StoragePoolService → VolumeService
 ##### 6.4.2 Windows 优化配置
 - [ ] CPU 模式优化（host-passthrough）
 - [ ] 时钟同步配置（QEMU Guest Agent）
+- [x] 禁用休眠与自动睡眠（2026-09-20：domain 禁用 ACPI S3/S4，Cloudbase-Init 同步关闭 Hibernate 及 AC/DC 自动睡眠）
 - [ ] 磁盘缓存策略优化
 - [ ] 网络驱动优化
 - [ ] 显示驱动优化（QXL/VirtIO）
 
 ##### 6.4.3 Windows 工具集成
-- [ ] QEMU Guest Agent for Windows
+- [x] QEMU Guest Agent for Windows
+- [x] SPICE vdagent 与 `qemu-vdagent` 通道（2026-09-19：支持 noVNC 与 Windows 双向同步纯文本剪贴板）
 - [ ] VirtIO 驱动自动安装
 - [ ] Windows 系统信息查询
 - [ ] Windows 密码重置支持
@@ -511,6 +513,10 @@ StoragePoolService → VolumeService
 - Windows Cloud Image 使用卷标 `config-2` 和 `openstack/latest/meta_data.json`；domain UUID 与元数据 UUID 保持一致，Cloudbase-Init 从 `admin_username`/`admin_pass` 创建管理员账户
 - Windows 11 Cloud Image 默认启用 UEFI Secure Boot、enrolled keys、SMM 和 TPM 2.0，并要求至少 2 vCPU、4 GiB 内存和 64 GiB 磁盘
 - Windows 11 24H2/25H2 基础镜像必须从交互式 Administrator 会话执行 Sysprep，避免 LocalSystem Sysprep 导致 XAML AppX 注册缺失和首次登录 Explorer 黑屏；ConfigDrive v3 已通过新用户首次登录、Explorer 事件日志和 VNC 桌面验证
+- ConfigDrive v4 通过 Cloudbase-Init LocalScripts 一次性安装 SPICE vdagent；成功后删除安装器和脚本，新建 Windows domain 仅在 Windows 路径启用 `com.redhat.spice.0` 与 QEMU VNC clipboard
+- 模板列表和实例创建页会标记并优先选择具备 Cloudbase-Init、VirtIO、QEMU Guest Agent 与 VNC clipboard 的推荐 Windows Cloud Image；安装 ISO 明确仅用于手工安装
+- Windows 实例通过 libvirt `<pm>` 禁用 suspend-to-mem/suspend-to-disk，并由 Cloudbase-Init 执行 `powercfg` 关闭休眠及 AC/DC 自动睡眠；`pmsuspended` 状态展示为 stopped，启动操作改为 PM wakeup
+- 删除实例会先销毁所有仍 active 的 domain 状态（包括 `pmsuspended`），并清理实例生成的 ConfigDrive ISO 与 VNC socket，避免已删除磁盘仍被 QEMU 占用
 - Linux 创建流程继续使用 NoCloud `cidata`，与 Windows ConfigDrive 生成路径相互独立
 - VirtIO ISO 自动挂载
 - Windows 特定的设备配置（已支持额外 CD-ROM 与 cdrom boot，后续补充 unattend 自动安装）
