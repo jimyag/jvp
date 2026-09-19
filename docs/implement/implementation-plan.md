@@ -369,6 +369,7 @@ StoragePoolService → VolumeService
 
 进度更新 (2026-08-13)：
 - [x] VNC 控制台支持读取浏览器剪贴板并以键盘事件向客体发送文本；浏览器拒绝剪贴板权限时提供手动输入回退
+- [x] VNC 图形控制台改为独立标签页，并使用 noVNC 原生绝对指针处理；移除与 USB tablet 冲突的 Pointer Lock 相对坐标转换
 
 ### 阶段 5：集成与优化（第 8 周）
 

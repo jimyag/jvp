@@ -180,7 +180,14 @@ export default function InstanceConsolePage() {
       </div>
 
       {/* Console Display */}
-      <div className="card p-0 overflow-hidden flex-1" style={{ minHeight: "400px", height: "calc(100vh - 320px)" }}>
+      <div
+        className="card p-0 overflow-hidden flex-1"
+        style={
+          consoleType === "vnc"
+            ? { minHeight: "176px" }
+            : { minHeight: "400px", height: "calc(100vh - 320px)" }
+        }
+      >
         {loading ? (
           <div className="flex items-center justify-center h-full bg-gray-50">
             <div className="text-center">
@@ -206,21 +213,7 @@ export default function InstanceConsolePage() {
           </div>
         ) : consoleInfo && getWebSocketURL() ? (
           consoleType === "vnc" ? (
-            <VNCConsole
-              wsUrl={getWebSocketURL()}
-              onConnect={() => {
-                setConnected(true);
-                toast.success("VNC console connected");
-              }}
-              onDisconnect={() => {
-                setConnected(false);
-                toast.info("VNC console disconnected");
-              }}
-              onError={(err) => {
-                setError(err);
-                toast.error(err);
-              }}
-            />
+            <VNCConsole wsUrl={getWebSocketURL()} />
           ) : (
             <SerialConsole
               wsUrl={getWebSocketURL()}
