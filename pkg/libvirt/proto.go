@@ -36,6 +36,7 @@ type DomainXML struct {
 	// Clock and timers
 	// Source: https://libvirt.org/formatdomain.html#time-keeping
 	Clock *DomainClock `xml:"clock,omitempty"`
+	PM    *DomainPM    `xml:"pm,omitempty"`
 
 	// Lifecycle management
 	// Source: https://libvirt.org/formatdomain.html#events-configuration
@@ -58,6 +59,16 @@ type DomainMemory struct {
 type DomainVCPU struct {
 	Placement string `xml:"placement,attr"`
 	Value     int    `xml:",chardata"`
+}
+
+// DomainPM controls whether the guest can enter ACPI sleep states.
+type DomainPM struct {
+	SuspendToMem  *DomainPMState `xml:"suspend-to-mem,omitempty"`
+	SuspendToDisk *DomainPMState `xml:"suspend-to-disk,omitempty"`
+}
+
+type DomainPMState struct {
+	Enabled string `xml:"enabled,attr"`
 }
 
 // DomainOS represents operating system configuration
@@ -546,10 +557,20 @@ type DomainChannel struct {
 
 // DomainChannelSource represents channel source
 type DomainChannelSource struct {
-	Mode string `xml:"mode,attr,omitempty"` // bind, connect
-	Path string `xml:"path,attr,omitempty"` // Unix socket path
-	Host string `xml:"host,attr,omitempty"` // Hostname for TCP
-	Port string `xml:"port,attr,omitempty"` // Port for TCP/UDP
+	Mode      string                  `xml:"mode,attr,omitempty"` // bind, connect
+	Path      string                  `xml:"path,attr,omitempty"` // Unix socket path
+	Host      string                  `xml:"host,attr,omitempty"` // Hostname for TCP
+	Port      string                  `xml:"port,attr,omitempty"` // Port for TCP/UDP
+	Clipboard *DomainChannelClipboard `xml:"clipboard,omitempty"`
+	Mouse     *DomainChannelMouse     `xml:"mouse,omitempty"`
+}
+
+type DomainChannelClipboard struct {
+	CopyPaste string `xml:"copypaste,attr"`
+}
+
+type DomainChannelMouse struct {
+	Mode string `xml:"mode,attr"`
 }
 
 // DomainChannelTarget represents channel target

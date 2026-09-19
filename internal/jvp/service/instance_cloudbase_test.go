@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	libvirtlib "github.com/digitalocean/go-libvirt"
 	"github.com/jimyag/jvp/internal/jvp/entity"
 	"github.com/jimyag/jvp/pkg/cloudinit"
 	"gopkg.in/yaml.v3"
@@ -43,6 +44,9 @@ func TestConvertWindowsUserDataToCloudInit(t *testing.T) {
 		"groups: Administrators",
 		"passwd: StrongPassw0rd!",
 		"runcmd:",
+		"powercfg.exe /hibernate off",
+		"powercfg.exe /change standby-timeout-ac 0",
+		"powercfg.exe /change standby-timeout-dc 0",
 	} {
 		if !strings.Contains(content, expected) {
 			t.Errorf("generated user data does not contain %q:\n%s", expected, content)
@@ -52,6 +56,12 @@ func TestConvertWindowsUserDataToCloudInit(t *testing.T) {
 		if strings.Contains(content, unexpected) {
 			t.Errorf("generated Windows user data contains Linux field %q:\n%s", unexpected, content)
 		}
+	}
+}
+
+func TestConvertDomainStateTreatsPMSuspendedAsStopped(t *testing.T) {
+	if state := convertDomainState(uint8(libvirtlib.DomainPmsuspended)); state != "stopped" {
+		t.Fatalf("convertDomainState(DomainPmsuspended) = %q, want stopped", state)
 	}
 }
 

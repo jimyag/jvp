@@ -447,6 +447,8 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 	}
 
 	if isWindows {
+		vmConfig.VNCClipboard = true
+		vmConfig.DisableSuspend = true
 		vmConfig.MachineType = "q35"
 		vmConfig.DiskBus = "sata"
 		vmConfig.CPUMode = "host-passthrough"
@@ -640,7 +642,7 @@ func (s *InstanceService) convertWindowsUserDataToCloudInit(
 ) (*cloudinit.Config, *cloudinit.UserData, error) {
 	config := &cloudinit.Config{Hostname: instanceID}
 	if userDataConfig == nil {
-		return config, &cloudinit.UserData{}, nil
+		return config, &cloudinit.UserData{RunCmd: windowsDisableSuspendCommands()}, nil
 	}
 
 	if rawUserData := strings.TrimSpace(userDataConfig.RawUserData); rawUserData != "" {
@@ -648,7 +650,7 @@ func (s *InstanceService) convertWindowsUserDataToCloudInit(
 		return config, nil, nil
 	}
 	if userDataConfig.StructuredUserData == nil {
-		return config, &cloudinit.UserData{}, nil
+		return config, &cloudinit.UserData{RunCmd: windowsDisableSuspendCommands()}, nil
 	}
 
 	structured := userDataConfig.StructuredUserData
@@ -657,7 +659,7 @@ func (s *InstanceService) convertWindowsUserDataToCloudInit(
 	}
 	userData := &cloudinit.UserData{
 		SetTimezone: structured.Timezone,
-		RunCmd:      append([]string(nil), structured.RunCmd...),
+		RunCmd:      append(append([]string(nil), structured.RunCmd...), windowsDisableSuspendCommands()...),
 	}
 
 	if len(structured.Groups) > 0 {
@@ -686,6 +688,14 @@ func (s *InstanceService) convertWindowsUserDataToCloudInit(
 	}
 
 	return config, userData, nil
+}
+
+func windowsDisableSuspendCommands() []string {
+	return []string{
+		`powercfg.exe /hibernate off`,
+		`powercfg.exe /change standby-timeout-ac 0`,
+		`powercfg.exe /change standby-timeout-dc 0`,
+	}
 }
 
 // convertUserDataToCloudInit 将 entity.UserDataConfig 转换为 cloudinit 配置
@@ -917,16 +927,18 @@ func (s *InstanceService) applyInstanceFilters(instances []entity.Instance, req 
 
 // convertDomainState 转换 libvirt 状态为 JVP 状态
 func convertDomainState(state uint8) string {
-	switch state {
-	case 1: // Running
+	switch libvirtlib.DomainState(state) {
+	case libvirtlib.DomainRunning:
 		return "running"
-	case 3: // Paused
+	case libvirtlib.DomainPaused:
 		return "stopped"
-	case 4: // Shutdown
+	case libvirtlib.DomainShutdown:
 		return "stopped"
-	case 5: // Shutoff
+	case libvirtlib.DomainShutoff:
 		return "stopped"
-	case 6: // Crashed
+	case libvirtlib.DomainPmsuspended:
+		return "stopped"
+	case libvirtlib.DomainCrashed:
 		return "failed"
 	default:
 		return "pending"
@@ -1374,6 +1386,10 @@ func (s *InstanceService) TerminateInstances(ctx context.Context, req *entity.Te
 				Err(err).
 				Msg("Failed to get domain disks before deletion")
 		}
+		consoleInfo, consoleErr := client.GetDomainConsoleInfo(domain)
+		if consoleErr != nil {
+			logger.Warn().Str("instanceID", instanceID).Err(consoleErr).Msg("Failed to get console info before deletion")
+		}
 
 		// 删除 domain（会先停止运行中的实例）
 		// 使用 DomainUndefineSnapshotsMetadata 标志同时删除快照元数据
@@ -1397,7 +1413,7 @@ func (s *InstanceService) TerminateInstances(ctx context.Context, req *entity.Te
 
 		// 删除关联的卷（可选）
 		if req.DeleteVolumes && len(disks) > 0 {
-			if err := s.deleteVolumesByDisks(ctx, client, disks); err != nil {
+			if err := s.deleteVolumesByDisks(ctx, client, instanceID, disks); err != nil {
 				logger.Error().
 					Str("instanceID", instanceID).
 					Err(err).
@@ -1407,6 +1423,11 @@ func (s *InstanceService) TerminateInstances(ctx context.Context, req *entity.Te
 			logger.Info().
 				Str("instanceID", instanceID).
 				Msg("Associated volumes deleted")
+		}
+		if consoleInfo != nil && consoleInfo.VNCSocket != "" {
+			if err := deleteInstanceFile(client, consoleInfo.VNCSocket); err != nil {
+				logger.Warn().Err(err).Str("path", consoleInfo.VNCSocket).Msg("Failed to delete VNC socket")
+			}
 		}
 
 		// Domain 已从 libvirt 删除，不需要额外操作
@@ -1438,14 +1459,16 @@ func (s *InstanceService) TerminateInstances(ctx context.Context, req *entity.Te
 }
 
 // deleteVolumesByDisks 根据磁盘列表删除对应的卷（优先按路径删除）
-func (s *InstanceService) deleteVolumesByDisks(ctx context.Context, client libvirt.LibvirtClient, disks []libvirt.DomainDisk) error {
+func (s *InstanceService) deleteVolumesByDisks(ctx context.Context, client libvirt.LibvirtClient, instanceID string, disks []libvirt.DomainDisk) error {
 	logger := zerolog.Ctx(ctx)
 
 	for _, disk := range disks {
 		if disk.Source.File == "" {
 			continue
 		}
-		if disk.Device != "disk" {
+		baseName := filepath.Base(disk.Source.File)
+		generatedConfigDrive := disk.Device == "cdrom" && (baseName == instanceID+"-cidata.iso" || baseName == instanceID+"-config-drive.iso")
+		if disk.Device != "disk" && !generatedConfigDrive {
 			logger.Debug().
 				Str("path", disk.Source.File).
 				Str("device", disk.Device).
@@ -1467,30 +1490,10 @@ func (s *InstanceService) deleteVolumesByDisks(ctx context.Context, client libvi
 				Str("path", disk.Source.File).
 				Msg("Failed to delete volume via libvirt, trying direct file deletion")
 
-			if client.IsRemoteConnection() {
-				// 远程连接：通过 SSH 删除
-				if rmErr := client.ExecuteRemoteCommand(fmt.Sprintf("rm -f '%s'", disk.Source.File)); rmErr != nil {
-					logger.Warn().
-						Err(rmErr).
-						Str("path", disk.Source.File).
-						Msg("Failed to delete volume file remotely, skipping")
-				} else {
-					logger.Info().
-						Str("path", disk.Source.File).
-						Msg("Deleted instance volume file remotely")
-				}
+			if rmErr := deleteInstanceFile(client, disk.Source.File); rmErr != nil {
+				logger.Warn().Err(rmErr).Str("path", disk.Source.File).Msg("Failed to delete volume file, skipping")
 			} else {
-				// 本地连接：直接删除文件
-				if rmErr := os.Remove(disk.Source.File); rmErr != nil && !os.IsNotExist(rmErr) {
-					logger.Warn().
-						Err(rmErr).
-						Str("path", disk.Source.File).
-						Msg("Failed to delete volume file, skipping")
-				} else {
-					logger.Info().
-						Str("path", disk.Source.File).
-						Msg("Deleted instance volume file")
-				}
+				logger.Info().Str("path", disk.Source.File).Msg("Deleted instance volume file")
 			}
 		} else {
 			logger.Info().
@@ -1499,6 +1502,17 @@ func (s *InstanceService) deleteVolumesByDisks(ctx context.Context, client libvi
 		}
 	}
 
+	return nil
+}
+
+func deleteInstanceFile(client libvirt.LibvirtClient, path string) error {
+	if client.IsRemoteConnection() {
+		quotedPath := "'" + strings.ReplaceAll(path, "'", `'"'"'`) + "'"
+		return client.ExecuteRemoteCommand("rm -f -- " + quotedPath)
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	return nil
 }
 
@@ -1669,11 +1683,18 @@ func (s *InstanceService) StartInstances(ctx context.Context, req *entity.StartI
 			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get domain from libvirt", err)
 		}
 
-		// 启动 domain
-		logger.Info().
-			Str("instanceID", instanceID).
-			Msg("Starting domain")
-		err = client.StartDomain(domain)
+		state, _, err := client.GetDomainState(domain)
+		if err != nil {
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get domain state", err)
+		}
+
+		if libvirtlib.DomainState(state) == libvirtlib.DomainPmsuspended {
+			logger.Info().Str("instanceID", instanceID).Msg("Waking suspended domain")
+			err = client.WakeDomain(domain)
+		} else {
+			logger.Info().Str("instanceID", instanceID).Msg("Starting domain")
+			err = client.StartDomain(domain)
+		}
 		if err != nil {
 			logger.Error().
 				Str("instanceID", instanceID).

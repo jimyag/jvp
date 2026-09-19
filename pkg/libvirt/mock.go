@@ -108,6 +108,11 @@ func (m *MockClient) DestroyDomain(domain libvirt.Domain) error {
 	return args.Error(0)
 }
 
+func (m *MockClient) WakeDomain(domain libvirt.Domain) error {
+	args := m.Called(domain)
+	return args.Error(0)
+}
+
 func (m *MockClient) DeleteDomain(domain libvirt.Domain, flags libvirt.DomainUndefineFlagsValues) error {
 	args := m.Called(domain, flags)
 	return args.Error(0)

@@ -80,6 +80,8 @@ type CreateVMConfig struct {
 	VNCSocket         string              // VNC Unix socket 路径（可选，默认：/var/lib/jvp/qemu/{name}.vnc）
 	Autostart         bool                // 是否开机自动启动（默认：false）
 	QemuGuestAgent    bool                // 是否添加 QEMU Guest Agent 通道
+	VNCClipboard      bool                // 是否通过 qemu-vdagent 启用 VNC 与客体剪贴板同步
+	DisableSuspend    bool                // 是否禁止客体进入 ACPI S3/S4
 	CloudInit         *cloudinit.Config   // cloud-init 配置（可选）
 	CloudInitUserData *cloudinit.UserData // cloud-init 用户数据（可选）
 	cloudInitISOPath  string              // cloud-init ISO 路径（内部使用）
@@ -744,6 +746,14 @@ func (c *Client) DestroyDomain(domain libvirt.Domain) error {
 	return nil
 }
 
+// WakeDomain resumes a guest that entered an ACPI suspended state.
+func (c *Client) WakeDomain(domain libvirt.Domain) error {
+	if err := c.conn.DomainPmWakeup(domain, 0); err != nil {
+		return fmt.Errorf("failed to wake domain %s: %v", domain.Name, err)
+	}
+	return nil
+}
+
 // ModifyDomainMemory 修改域的内存大小
 // memoryKB: 新的内存大小（KB）
 // live: true=热修改（如果域正在运行），false=仅修改配置（需要重启生效）
@@ -850,16 +860,15 @@ func (c *Client) SetDomainAutostart(domain libvirt.Domain, autostart bool) error
 //   - libvirt.DomainUndefineSnapshotsMetadata: 同时删除快照元数据
 //   - libvirt.DomainUndefineNvram: 同时删除 NVRAM 文件
 func (c *Client) DeleteDomain(domain libvirt.Domain, flags libvirt.DomainUndefineFlagsValues) error {
-	// 检查域是否在运行
-	state, _, err := c.conn.DomainGetState(domain, 0)
+	active, err := c.conn.DomainIsActive(domain)
 	if err != nil {
-		return fmt.Errorf("failed to get domain state: %v", err)
+		return fmt.Errorf("failed to check whether domain is active: %v", err)
 	}
 
-	// 如果域正在运行，先强制关闭
-	if libvirt.DomainState(state) == libvirt.DomainRunning {
+	// Paused, blocked and ACPI-suspended domains are active as well.
+	if active == 1 {
 		if err := c.conn.DomainDestroy(domain); err != nil {
-			return fmt.Errorf("failed to destroy running domain: %v", err)
+			return fmt.Errorf("failed to destroy active domain: %v", err)
 		}
 	}
 
@@ -991,6 +1000,12 @@ func (c *Client) buildDomainXML(config *CreateVMConfig) (*DomainXML, error) {
 		OnReboot:   "restart",
 		OnCrash:    "destroy",
 		Devices:    c.buildDevices(config),
+	}
+	if config.DisableSuspend {
+		domain.PM = &DomainPM{
+			SuspendToMem:  &DomainPMState{Enabled: "no"},
+			SuspendToDisk: &DomainPMState{Enabled: "no"},
+		}
 	}
 	if config.CPUMode != "" || config.CPUSockets > 0 || config.CPUCores > 0 || config.CPUThreads > 0 {
 		domain.CPU = c.buildCPU(config)
@@ -1184,6 +1199,19 @@ func (c *Client) buildDevices(config *CreateVMConfig) DomainDevices {
 			Target: &DomainChannelTarget{
 				Type: "virtio",
 				Name: "org.qemu.guest_agent.0",
+			},
+		})
+	}
+	if config.VNCClipboard {
+		devices.Channels = append(devices.Channels, DomainChannel{
+			Type: "qemu-vdagent",
+			Source: &DomainChannelSource{
+				Clipboard: &DomainChannelClipboard{CopyPaste: "yes"},
+				Mouse:     &DomainChannelMouse{Mode: "client"},
+			},
+			Target: &DomainChannelTarget{
+				Type: "virtio",
+				Name: "com.redhat.spice.0",
 			},
 		})
 	}

@@ -26,6 +26,7 @@ type LibvirtClient interface {
 	StopDomain(domain libvirt.Domain) error
 	RebootDomain(domain libvirt.Domain) error
 	DestroyDomain(domain libvirt.Domain) error
+	WakeDomain(domain libvirt.Domain) error
 	DeleteDomain(domain libvirt.Domain, flags libvirt.DomainUndefineFlagsValues) error
 	ModifyDomainMemory(domain libvirt.Domain, memoryKB uint64, live bool) error
 	ModifyDomainVCPU(domain libvirt.Domain, vcpus uint16, live bool) error
