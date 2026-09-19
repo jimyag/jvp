@@ -49,6 +49,8 @@
             top: 10px;
             right: 10px;
             z-index: 1001;
+            display: flex;
+            gap: 8px;
         }
         #clipboard-toolbar button,
         #clipboard-panel button {
@@ -114,10 +116,11 @@
 <body>
     <div id="status" class="connecting">Connecting...</div>
     <div id="clipboard-toolbar">
-        <button id="paste-clipboard" type="button" title="Paste clipboard text into the console" disabled>Paste</button>
+        <button id="paste-clipboard" type="button" title="Send local clipboard to the virtual machine" disabled>Paste</button>
+        <button id="copy-clipboard" type="button" title="Copy virtual machine clipboard to this device" hidden disabled>Copy</button>
     </div>
     <div id="clipboard-panel" hidden>
-        <textarea id="clipboard-text" aria-label="Text to paste into the console" placeholder="Paste text here"></textarea>
+        <textarea id="clipboard-text" aria-label="Clipboard text" placeholder="Paste text here"></textarea>
         <div id="clipboard-actions">
             <button id="cancel-paste" type="button">Cancel</button>
             <button id="send-paste" type="button">Send</button>
@@ -134,6 +137,7 @@
         const status = document.getElementById('status');
         const screen = document.getElementById('screen');
         const pasteButton = document.getElementById('paste-clipboard');
+        const copyButton = document.getElementById('copy-clipboard');
         const clipboardPanel = document.getElementById('clipboard-panel');
         const clipboardText = document.getElementById('clipboard-text');
         const cancelPasteButton = document.getElementById('cancel-paste');
@@ -161,46 +165,33 @@
                 rfb.showDotCursor = true;
 
                 let isConnected = false;
+                let guestClipboard = '';
+                let clipboardPanelMode = 'send';
+                let pasteKeyIntercepted = false;
 
                 const focusConsole = () => {
                     rfb.focus({ preventScroll: true });
                 };
-                const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-                const shiftedKeys = {
-                    '~': 'Backquote', '!': 'Digit1', '@': 'Digit2', '#': 'Digit3',
-                    '$': 'Digit4', '%': 'Digit5', '^': 'Digit6', '&': 'Digit7',
-                    '*': 'Digit8', '(': 'Digit9', ')': 'Digit0', '_': 'Minus',
-                    '+': 'Equal', '{': 'BracketLeft', '}': 'BracketRight',
-                    '|': 'Backslash', ':': 'Semicolon', '"': 'Quote',
-                    '<': 'Comma', '>': 'Period', '?': 'Slash',
+                const sendGuestPasteShortcut = () => {
+                    rfb.sendKey(KeyTable.XK_Control_L, 'ControlLeft', true);
+                    rfb.sendKey(keysyms.lookup('v'.codePointAt(0)), 'KeyV', true);
+                    rfb.sendKey(keysyms.lookup('v'.codePointAt(0)), 'KeyV', false);
+                    rfb.sendKey(KeyTable.XK_Control_L, 'ControlLeft', false);
                 };
-                const plainKeys = {
-                    '`': 'Backquote', '-': 'Minus', '=': 'Equal', '[': 'BracketLeft',
-                    ']': 'BracketRight', '\\': 'Backslash', ';': 'Semicolon',
-                    "'": 'Quote', ',': 'Comma', '.': 'Period', '/': 'Slash',
-                    ' ': 'Space',
-                };
+                const syncClipboardAndPaste = async () => {
+                    try {
+                        const text = await navigator.clipboard.readText();
+                        rfb.clipboardPasteFrom(text);
+                        // ClientCutText reaches Windows asynchronously through qemu-vdagent.
+                        await new Promise((resolve) => setTimeout(resolve, 200));
+                    } catch (error) {
+                        console.warn('Clipboard read failed:', error);
+                    }
 
-                const keyStrokeForCharacter = (character) => {
-                    if (/^[a-z]$/.test(character)) {
-                        return { keysym: keysyms.lookup(character.codePointAt(0)), code: `Key${character.toUpperCase()}` };
-                    }
-                    if (/^[A-Z]$/.test(character)) {
-                        return { keysym: keysyms.lookup(character.codePointAt(0)), code: `Key${character}`, shift: true };
-                    }
-                    if (/^[0-9]$/.test(character)) {
-                        return { keysym: keysyms.lookup(character.codePointAt(0)), code: `Digit${character}` };
-                    }
-                    if (shiftedKeys[character]) {
-                        return { keysym: keysyms.lookup(character.codePointAt(0)), code: shiftedKeys[character], shift: true };
-                    }
-                    if (plainKeys[character]) {
-                        return { keysym: keysyms.lookup(character.codePointAt(0)), code: plainKeys[character] };
-                    }
-                    return { keysym: keysyms.lookup(character.codePointAt(0)) };
+                    sendGuestPasteShortcut();
+                    focusConsole();
                 };
-
-                const sendTextAsKeys = async (text) => {
+                const sendClipboard = (text) => {
                     if (!text) return;
                     if (!isConnected) {
                         status.textContent = 'Connect to the console before pasting';
@@ -210,45 +201,29 @@
                     }
 
                     clipboardPanel.hidden = true;
-                    focusConsole();
+                    rfb.clipboardPasteFrom(text);
 
-                    for (const character of text.replace(/\r\n/g, '\n')) {
-                        let keyStroke;
-                        if (character === '\n') {
-                            keyStroke = { keysym: KeyTable.XK_Return, code: 'Enter' };
-                        } else if (character === '\t') {
-                            keyStroke = { keysym: KeyTable.XK_Tab, code: 'Tab' };
-                        } else {
-                            keyStroke = keyStrokeForCharacter(character);
-                        }
-                        if (keyStroke.keysym) {
-                            if (keyStroke.shift) {
-                                rfb.sendKey(KeyTable.XK_Shift_L, 'ShiftLeft', true);
-                            }
-                            rfb.sendKey(keyStroke.keysym, keyStroke.code);
-                            if (keyStroke.shift) {
-                                rfb.sendKey(KeyTable.XK_Shift_L, 'ShiftLeft', false);
-                            }
-                            await sleep(5);
-                        }
-                    }
-
-                    status.textContent = 'Clipboard text sent';
+                    status.textContent = 'Clipboard sent to virtual machine';
                     status.className = 'connected';
                     status.style.display = 'block';
+                    focusConsole();
                 };
 
-                const openClipboardPanel = (text = '') => {
+                const openClipboardPanel = (text = '', mode = 'send') => {
+                    clipboardPanelMode = mode;
                     clipboardText.value = text;
+                    clipboardText.readOnly = mode === 'receive';
+                    sendPasteButton.hidden = mode === 'receive';
                     clipboardPanel.hidden = false;
                     clipboardText.focus();
+                    if (mode === 'receive') clipboardText.select();
                 };
 
                 pasteButton.addEventListener('click', async () => {
                     try {
                         const text = await navigator.clipboard.readText();
                         if (text) {
-                            await sendTextAsKeys(text);
+                            sendClipboard(text);
                             return;
                         }
                     } catch (error) {
@@ -256,18 +231,67 @@
                     }
                     openClipboardPanel();
                 });
+                copyButton.addEventListener('click', async () => {
+                    try {
+                        await navigator.clipboard.writeText(guestClipboard);
+                        status.textContent = 'Virtual machine clipboard copied';
+                        status.className = 'connected';
+                        status.style.display = 'block';
+                    } catch (error) {
+                        console.warn('Clipboard write failed:', error);
+                        openClipboardPanel(guestClipboard, 'receive');
+                    }
+                });
                 cancelPasteButton.addEventListener('click', () => {
                     clipboardPanel.hidden = true;
                     focusConsole();
                 });
-                sendPasteButton.addEventListener('click', async () => {
-                    await sendTextAsKeys(clipboardText.value);
+                sendPasteButton.addEventListener('click', () => {
+                    sendClipboard(clipboardText.value);
                 });
-                clipboardText.addEventListener('keydown', async (event) => {
-                    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                clipboardText.addEventListener('keydown', (event) => {
+                    if (clipboardPanelMode === 'send' && (event.ctrlKey || event.metaKey) && event.key === 'Enter') {
                         event.preventDefault();
-                        await sendTextAsKeys(clipboardText.value);
+                        sendClipboard(clipboardText.value);
                     }
+                });
+
+                screen.addEventListener('keydown', (event) => {
+                    if (!isConnected || !event.ctrlKey || event.altKey || event.metaKey || event.code !== 'KeyV') {
+                        return;
+                    }
+
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                    if (event.repeat) return;
+
+                    pasteKeyIntercepted = true;
+                    // Release the physical Ctrl while clipboard synchronization completes.
+                    rfb.sendKey(KeyTable.XK_Control_L, 'ControlLeft', false);
+                    void syncClipboardAndPaste();
+                }, true);
+                screen.addEventListener('keyup', (event) => {
+                    if (!pasteKeyIntercepted || event.code !== 'KeyV') return;
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                    pasteKeyIntercepted = false;
+                }, true);
+
+                rfb.addEventListener('clipboard', async (event) => {
+                    guestClipboard = event.detail.text || '';
+                    copyButton.hidden = !guestClipboard;
+                    copyButton.disabled = !guestClipboard;
+                    if (!guestClipboard) return;
+
+                    try {
+                        await navigator.clipboard.writeText(guestClipboard);
+                        status.textContent = 'Clipboard received from virtual machine';
+                    } catch (error) {
+                        console.warn('Automatic clipboard write failed:', error);
+                        status.textContent = 'Virtual machine clipboard ready to copy';
+                    }
+                    status.className = 'connected';
+                    status.style.display = 'block';
                 });
 
                 // 更新缩放的函数
@@ -299,6 +323,8 @@
                     console.log('VNC disconnected:', e.detail);
                     isConnected = false;
                     pasteButton.disabled = true;
+                    copyButton.hidden = true;
+                    copyButton.disabled = true;
                     clipboardPanel.hidden = true;
                     status.textContent = 'Disconnected';
                     status.className = 'disconnected';
