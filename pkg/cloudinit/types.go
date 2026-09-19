@@ -89,6 +89,16 @@ type MetaData struct {
 	PublicKeys    []string `yaml:"public-keys,omitempty"`
 }
 
+// OpenStackMetaData is the metadata consumed by Cloudbase-Init's
+// OpenStack ConfigDriveService.
+type OpenStackMetaData struct {
+	UUID       string            `json:"uuid"`
+	Name       string            `json:"name"`
+	Hostname   string            `json:"hostname"`
+	PublicKeys map[string]string `json:"public_keys,omitempty"`
+	Meta       map[string]string `json:"meta,omitempty"`
+}
+
 // UserData 标准的 cloud-init user-data 结构
 // 可直接序列化为 YAML 格式，提供最大的灵活性
 //

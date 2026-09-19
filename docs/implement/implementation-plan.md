@@ -367,6 +367,9 @@ StoragePoolService → VolumeService
 进度更新 (2025-11-29)：
 - [x] 前端实例详情/列表支持展示与修改自动启动（autostart），通过 modify-attribute 调用后端实现
 
+进度更新 (2026-08-13)：
+- [x] VNC 控制台支持读取浏览器剪贴板并以键盘事件向客体发送文本；浏览器拒绝剪贴板权限时提供手动输入回退
+
 ### 阶段 5：集成与优化（第 8 周）
 
 - [ ] API 统一为 Action 风格
@@ -483,7 +486,7 @@ StoragePoolService → VolumeService
 - [x] Windows ISO 镜像支持（2026-08-12：通过 Template 注册 ISO，并在创建实例时作为安装介质使用）
 - [x] Windows 安装引导配置（2026-08-12：Windows 模式创建空系统盘并从安装 ISO 启动）
 - [x] VirtIO 驱动集成（2026-08-12：创建 Windows 实例时可选挂载 VirtIO Driver ISO）
-- [x] Windows Cloudbase-Init 初始化（2026-08-13：从预装 Cloudbase-Init 的磁盘模板创建增量盘，通过 NoCloud CIDATA 注入主机名、用户、密码、SSH 公钥、时区和命令）
+- [x] Windows Cloudbase-Init 初始化（2026-09-19：从预装 Cloudbase-Init 的不可变磁盘模板创建增量盘，通过 OpenStack ConfigDrive v2 注入主机名、用户、密码、SSH 公钥、时区和命令）
 - [ ] Windows 激活支持（可选）
 
 ##### 6.4.2 Windows 优化配置
@@ -504,6 +507,10 @@ StoragePoolService → VolumeService
 - Windows 安装路径不复用 Linux cloud-init，避免影响 Linux 创建流程
 - Windows Cloud Image 仅接受同时标记 `cloud_init` 和 `virtio` 的非 ISO 模板；旧请求缺省使用 `install`，保持 API 兼容
 - Cloudbase-Init 使用 Windows 专属 cloud-config 序列化，密码保持明文 `passwd`，不输出 Linux 的 sudo、shell、packages 或密码哈希
+- Windows Cloud Image 使用卷标 `config-2` 和 `openstack/latest/meta_data.json`；domain UUID 与元数据 UUID 保持一致，Cloudbase-Init 从 `admin_username`/`admin_pass` 创建管理员账户
+- Windows 11 Cloud Image 默认启用 UEFI Secure Boot、enrolled keys、SMM 和 TPM 2.0，并要求至少 2 vCPU、4 GiB 内存和 64 GiB 磁盘
+- Windows 11 24H2/25H2 基础镜像必须从交互式 Administrator 会话执行 Sysprep，避免 LocalSystem Sysprep 导致 XAML AppX 注册缺失和首次登录 Explorer 黑屏；ConfigDrive v3 已通过新用户首次登录、Explorer 事件日志和 VNC 桌面验证
+- Linux 创建流程继续使用 NoCloud `cidata`，与 Windows ConfigDrive 生成路径相互独立
 - VirtIO ISO 自动挂载
 - Windows 特定的设备配置（已支持额外 CD-ROM 与 cdrom boot，后续补充 unattend 自动安装）
 

@@ -46,7 +46,7 @@ type RunInstanceRequest struct {
 	TemplateID      string          `json:"template_id"`                      // 模板 ID（可选，如果不提供则创建空白 VM）
 	Name            string          `json:"name"`                             // 实例名称（可选，自动生成）
 	SizeGB          uint64          `json:"size_gb"`                          // 磁盘大小（GB）（可选，默认使用模板大小）
-	MemoryMB        uint64          `json:"memory_mb"`                        // 内存大小（MB）（可选，默认 2048MB）
+	MemoryMB        uint64          `json:"memory_mb"`                        // 内存大小（MB）（可选，Linux 默认 2048MB，Windows 默认 4096MB）
 	VCPUs           uint16          `json:"vcpus"`                            // 虚拟 CPU 数量（可选，默认 2）
 	NetworkType     string          `json:"network_type,omitempty"`           // 网络类型：bridge, network（默认：bridge）
 	NetworkSource   string          `json:"network_source,omitempty"`         // 网络源：网桥名称或网络名称（默认：br0）

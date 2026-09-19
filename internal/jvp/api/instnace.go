@@ -50,7 +50,12 @@ func (i *Instance) RegisterRoutes(router *gin.RouterGroup) {
 func (i *Instance) RunInstances(ctx *gin.Context, req *entity.RunInstanceRequest) (*entity.RunInstanceResponse, error) {
 	logger := zerolog.Ctx(ctx)
 	logger.Info().
-		Interface("request", req).
+		Str("node_name", req.NodeName).
+		Str("pool_name", req.PoolName).
+		Str("template_id", req.TemplateID).
+		Str("name", req.Name).
+		Str("os_type", req.OSType).
+		Str("windows_boot_mode", req.WindowsBootMode).
 		Msg("RunInstances called")
 
 	// 调用 Instance Service 创建实例

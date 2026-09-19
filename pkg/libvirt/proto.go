@@ -62,10 +62,21 @@ type DomainVCPU struct {
 
 // DomainOS represents operating system configuration
 type DomainOS struct {
-	Type   DomainOSType  `xml:"type"`
-	Loader *DomainLoader `xml:"loader,omitempty"`
-	NVRAM  *DomainNVRAM  `xml:"nvram,omitempty"`
-	Boot   *DomainBoot   `xml:"boot,omitempty"`
+	Firmware         string          `xml:"firmware,attr,omitempty"`
+	Type             DomainOSType    `xml:"type"`
+	FirmwareFeatures *DomainFirmware `xml:"firmware,omitempty"`
+	Loader           *DomainLoader   `xml:"loader,omitempty"`
+	NVRAM            *DomainNVRAM    `xml:"nvram,omitempty"`
+	Boot             *DomainBoot     `xml:"boot,omitempty"`
+}
+
+type DomainFirmware struct {
+	Features []DomainFirmwareFeature `xml:"feature"`
+}
+
+type DomainFirmwareFeature struct {
+	Enabled string `xml:"enabled,attr"`
+	Name    string `xml:"name,attr"`
 }
 
 // DomainOSType represents OS type details
@@ -83,6 +94,7 @@ type DomainBoot struct {
 // DomainLoader represents UEFI loader configuration.
 type DomainLoader struct {
 	Readonly string `xml:"readonly,attr,omitempty"`
+	Secure   string `xml:"secure,attr,omitempty"`
 	Type     string `xml:"type,attr,omitempty"`
 	Value    string `xml:",chardata"`
 }

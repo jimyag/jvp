@@ -1051,7 +1051,7 @@ export default function InstancesPage() {
                     onChange={(e) =>
                       setFormData({ ...formData, vcpus: Number(e.target.value) })
                     }
-                    min="1"
+                    min={isWindowsMode ? 2 : 1}
                     max="32"
                     required
                   />
@@ -1066,7 +1066,7 @@ export default function InstancesPage() {
                     onChange={(e) =>
                       setFormData({ ...formData, memory_mb: Number(e.target.value) })
                     }
-                    min="512"
+                    min={isWindowsMode ? 4096 : 512}
                     step="512"
                     required
                   />
@@ -1085,7 +1085,7 @@ export default function InstancesPage() {
                   onChange={(e) =>
                     setFormData({ ...formData, size_gb: Number(e.target.value) })
                   }
-                  min="10"
+                  min={isWindowsMode ? 64 : 10}
                   required
                 />
               </div>

@@ -102,4 +102,5 @@ type LibvirtClient interface {
 
 	// Cloud-Init 操作
 	CreateCloudInitISO(outputDir, vmName, metaData, userData string) (string, error)
+	CreateConfigDriveISO(outputDir, vmName, volumeLabel string, files map[string]string) (string, error)
 }

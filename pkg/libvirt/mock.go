@@ -379,6 +379,11 @@ func (m *MockClient) CreateCloudInitISO(outputDir, vmName, metaData, userData st
 	return args.String(0), args.Error(1)
 }
 
+func (m *MockClient) CreateConfigDriveISO(outputDir, vmName, volumeLabel string, files map[string]string) (string, error) {
+	args := m.Called(outputDir, vmName, volumeLabel, files)
+	return args.String(0), args.Error(1)
+}
+
 // NewMockClient 创建新的 MockClient
 // 这是一个便捷函数，用于在测试中创建 mock client
 func NewMockClient() *MockClient {

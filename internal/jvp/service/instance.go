@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -104,25 +105,6 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 		instanceName = fmt.Sprintf("i-%d", id)
 	}
 
-	// 设置默认值
-	memoryMB := req.MemoryMB
-	if memoryMB == 0 {
-		memoryMB = 2048 // 默认 2GB
-	}
-	vcpus := req.VCPUs
-	if vcpus == 0 {
-		vcpus = 2 // 默认 2 核
-	}
-	sizeGB := req.SizeGB
-	if sizeGB == 0 {
-		sizeGB = 20 // 默认 20GB
-	}
-
-	var diskPath string
-	var templateID string
-	var diskVolumeName string
-	var windowsInstallISOPath string
-	var windowsDriverISOPath string
 	osType := strings.ToLower(strings.TrimSpace(req.OSType))
 	if osType == "" {
 		osType = "linux"
@@ -136,8 +118,47 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 		return nil, apierror.NewErrorWithStatus("InvalidParameter", "windows_boot_mode must be install or cloud_image", http.StatusBadRequest)
 	}
 	isWindowsCloudImage := isWindows && windowsBootMode == "cloud_image"
-	if isWindows && sizeGB == 20 && req.SizeGB == 0 {
-		sizeGB = 64
+
+	// 设置默认值
+	memoryMB := req.MemoryMB
+	if memoryMB == 0 {
+		memoryMB = 2048
+		if isWindows {
+			memoryMB = 4096
+		}
+	}
+	vcpus := req.VCPUs
+	if vcpus == 0 {
+		vcpus = 2
+	}
+	sizeGB := req.SizeGB
+	if sizeGB == 0 {
+		sizeGB = 20
+		if isWindows {
+			sizeGB = 64
+		}
+	}
+	if isWindows && memoryMB < 4096 {
+		return nil, apierror.NewErrorWithStatus("InvalidParameter", "Windows 11 requires at least 4096 MB of memory", http.StatusBadRequest)
+	}
+	if isWindows && vcpus < 2 {
+		return nil, apierror.NewErrorWithStatus("InvalidParameter", "Windows 11 requires at least 2 vCPUs", http.StatusBadRequest)
+	}
+	if isWindows && sizeGB < 64 {
+		return nil, apierror.NewErrorWithStatus("InvalidParameter", "Windows 11 requires at least 64 GB of disk space", http.StatusBadRequest)
+	}
+
+	var diskPath string
+	var templateID string
+	var diskVolumeName string
+	var windowsInstallISOPath string
+	var windowsDriverISOPath string
+	var requestedDomainUUID string
+	if isWindowsCloudImage {
+		requestedDomainUUID, err = generateDomainUUID()
+		if err != nil {
+			return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to generate instance UUID", err)
+		}
 	}
 
 	// 如果指定了模板，获取模板信息并创建增量磁盘
@@ -268,7 +289,7 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 			}
 		}
 
-		// 添加 SSH 密钥。Linux 写入用户配置，Windows NoCloud 写入 meta-data。
+		// 添加 SSH 密钥。Linux 写入用户配置，Windows 写入 OpenStack meta-data。
 		publicKeys := make([]string, 0, len(req.KeyPairIDs))
 		if len(req.KeyPairIDs) > 0 && cloudInitConfig != nil {
 			for _, keyPairID := range req.KeyPairIDs {
@@ -325,7 +346,7 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 			ensureQemuGuestAgentCloudInit(cloudInitConfig, userData, hostBridgeIP)
 		}
 
-		// 生成 cloud-init ISO
+		// 生成 Linux NoCloud ISO 或 Windows OpenStack config drive。
 		if cloudInitConfig != nil || userData != nil {
 			// 获取存储池路径
 			poolInfo, err := client.GetStoragePool(req.PoolName)
@@ -333,13 +354,8 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to get storage pool", err)
 			}
 
-			// 生成 cloud-init 配置文件内容
+			// 生成初始化配置内容
 			generator := cloudinit.NewGenerator()
-			metaData, err := generator.GenerateMetaDataWithPublicKeys(cloudInitConfig.Hostname, publicKeys)
-			if err != nil {
-				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to generate meta-data", err)
-			}
-
 			var userDataContent string
 			if userData != nil {
 				userDataContent, err = generator.GenerateUserDataFromStruct(userData)
@@ -350,20 +366,61 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to generate user-data", err)
 			}
 
-			// 在远程节点上生成 cloud-init ISO
-			cloudInitISOPath, err = client.CreateCloudInitISO(
-				poolInfo.Path,
-				instanceName,
-				metaData,
-				userDataContent,
-			)
+			if isWindowsCloudImage {
+				adminUsername, adminPassword, credentialErr := windowsAdminCredentials(req.UserData)
+				if credentialErr != nil {
+					return nil, apierror.NewErrorWithStatus("InvalidParameter", credentialErr.Error(), http.StatusBadRequest)
+				}
+				publicKeyMap := make(map[string]string, len(publicKeys))
+				for index, publicKey := range publicKeys {
+					publicKeyMap[fmt.Sprintf("key-%d", index+1)] = publicKey
+				}
+				metadataValues := make(map[string]string, 2)
+				if adminUsername != "" {
+					metadataValues["admin_username"] = adminUsername
+				}
+				if adminPassword != "" {
+					metadataValues["admin_pass"] = adminPassword
+				}
+				metaData, metadataErr := generator.GenerateOpenStackMetaData(&cloudinit.OpenStackMetaData{
+					UUID:       requestedDomainUUID,
+					Name:       instanceName,
+					Hostname:   cloudInitConfig.Hostname,
+					PublicKeys: publicKeyMap,
+					Meta:       metadataValues,
+				})
+				if metadataErr != nil {
+					return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to generate Windows config drive meta-data", metadataErr)
+				}
+				cloudInitISOPath, err = client.CreateConfigDriveISO(
+					poolInfo.Path,
+					instanceName,
+					"config-2",
+					map[string]string{
+						"openstack/latest/meta_data.json": metaData,
+						"openstack/latest/user_data":      userDataContent,
+					},
+				)
+			} else {
+				metaData, metadataErr := generator.GenerateMetaDataWithPublicKeys(cloudInitConfig.Hostname, publicKeys)
+				if metadataErr != nil {
+					return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to generate meta-data", metadataErr)
+				}
+				cloudInitISOPath, err = client.CreateCloudInitISO(
+					poolInfo.Path,
+					instanceName,
+					metaData,
+					userDataContent,
+				)
+			}
 			if err != nil {
-				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to generate cloud-init ISO on remote node", err)
+				return nil, apierror.WrapError(apierror.ErrInternalError, "Failed to generate instance config drive", err)
 			}
 
 			logger.Info().
-				Str("cloud_init_iso", cloudInitISOPath).
-				Msg("Cloud-init ISO generated on remote node")
+				Str("config_drive", cloudInitISOPath).
+				Bool("windows", isWindowsCloudImage).
+				Msg("Instance config drive generated")
 		}
 	}
 
@@ -380,6 +437,7 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 	// 创建 Domain
 	vmConfig := &libvirt.CreateVMConfig{
 		Name:           instanceName,
+		UUID:           requestedDomainUUID,
 		Memory:         memoryMB * 1024, // 转换为 KB
 		VCPUs:          vcpus,
 		DiskPath:       diskPath,
@@ -395,9 +453,8 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 		vmConfig.CPUSockets = 1
 		vmConfig.CPUCores = int(vcpus)
 		vmConfig.CPUThreads = 1
-		vmConfig.LoaderPath = "/usr/share/OVMF/OVMF_CODE_4M.ms.fd"
-		vmConfig.NVRAMTemplate = "/usr/share/OVMF/OVMF_VARS_4M.ms.fd"
-		vmConfig.NVRAMPath = "/var/lib/libvirt/qemu/nvram/" + instanceName + "_VARS.fd"
+		vmConfig.Firmware = "efi"
+		vmConfig.SecureBoot = true
 		vmConfig.TPM = true
 		vmConfig.SMM = true
 		if isWindowsCloudImage {
@@ -440,6 +497,11 @@ func (s *InstanceService) RunInstance(ctx context.Context, req *entity.RunInstan
 
 	domain, err := client.CreateDomain(vmConfig, true)
 	if err != nil {
+		if cloudInitISOPath != "" {
+			if cleanupErr := client.DeleteVolumeByPath(cloudInitISOPath); cleanupErr != nil {
+				logger.Warn().Err(cleanupErr).Str("path", cloudInitISOPath).Msg("Failed to clean up config drive after domain creation failure")
+			}
+		}
 		if diskVolumeName != "" {
 			if cleanupErr := client.DeleteVolume(req.PoolName, diskVolumeName); cleanupErr != nil {
 				logger.Warn().
@@ -526,6 +588,35 @@ func (s *InstanceService) shouldSendWindowsInstallerBootKey(client libvirt.Libvi
 // formatDomainUUID 格式化 Domain UUID
 func formatDomainUUID(uuid [16]byte) string {
 	return hex.EncodeToString(uuid[:])
+}
+
+func generateDomainUUID() (string, error) {
+	var uuid [16]byte
+	if _, err := rand.Read(uuid[:]); err != nil {
+		return "", fmt.Errorf("read random UUID bytes: %w", err)
+	}
+	uuid[6] = (uuid[6] & 0x0f) | 0x40
+	uuid[8] = (uuid[8] & 0x3f) | 0x80
+
+	encoded := hex.EncodeToString(uuid[:])
+	return fmt.Sprintf("%s-%s-%s-%s-%s", encoded[0:8], encoded[8:12], encoded[12:16], encoded[16:20], encoded[20:32]), nil
+}
+
+func windowsAdminCredentials(userDataConfig *entity.UserDataConfig) (string, string, error) {
+	if userDataConfig == nil || strings.TrimSpace(userDataConfig.RawUserData) != "" || userDataConfig.StructuredUserData == nil {
+		return "", "", nil
+	}
+	users := userDataConfig.StructuredUserData.Users
+	if len(users) == 0 {
+		return "", "", nil
+	}
+
+	username := strings.TrimSpace(users[0].Name)
+	password := users[0].PlainTextPasswd
+	if username == "" && password != "" {
+		return "", "", fmt.Errorf("Windows administrator username is required when a password is provided")
+	}
+	return username, password, nil
 }
 
 func isWindowsTemplate(template *entity.Template) bool {

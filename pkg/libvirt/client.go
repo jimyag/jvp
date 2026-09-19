@@ -51,6 +51,7 @@ type NetworkInterface struct {
 // CreateVMConfig 创建虚拟机配置参数
 type CreateVMConfig struct {
 	Name              string              // 虚拟机名称（必填）
+	UUID              string              // 虚拟机 UUID（可选，由 libvirt 自动生成）
 	Memory            uint64              // 内存大小（KB）（必填）
 	VCPUs             uint16              // 虚拟 CPU 数量（必填）
 	DiskPath          string              // 磁盘路径（必填）
@@ -65,6 +66,8 @@ type CreateVMConfig struct {
 	CPUSockets        int                 // CPU socket 数（可选）
 	CPUCores          int                 // 每 socket core 数（可选）
 	CPUThreads        int                 // 每 core thread 数（可选）
+	Firmware          string              // 固件类型：efi, bios（可选）
+	SecureBoot        bool                // 要求 UEFI Secure Boot 且预置签名密钥
 	LoaderPath        string              // UEFI loader 路径（可选）
 	NVRAMPath         string              // UEFI NVRAM 路径（可选）
 	NVRAMTemplate     string              // UEFI NVRAM 模板路径（可选）
@@ -952,6 +955,7 @@ func (c *Client) buildDomainXML(config *CreateVMConfig) (*DomainXML, error) {
 	domain := &DomainXML{
 		Type: "kvm",
 		Name: config.Name,
+		UUID: config.UUID,
 		Memory: DomainMemory{
 			Unit:  "KiB",
 			Value: config.Memory,
@@ -965,14 +969,16 @@ func (c *Client) buildDomainXML(config *CreateVMConfig) (*DomainXML, error) {
 			Value:     int(config.VCPUs),
 		},
 		OS: DomainOS{
+			Firmware: config.Firmware,
 			Type: DomainOSType{
 				Arch:    config.Architecture,
 				Machine: config.MachineType,
 				Value:   config.OSType,
 			},
-			Loader: c.buildLoader(config),
-			NVRAM:  c.buildNVRAM(config),
-			Boot:   c.buildOSBoot(config),
+			FirmwareFeatures: c.buildFirmwareFeatures(config),
+			Loader:           c.buildLoader(config),
+			NVRAM:            c.buildNVRAM(config),
+			Boot:             c.buildOSBoot(config),
 		},
 		Features: &DomainFeatures{
 			ACPI: &DomainFeatureEnabled{},
@@ -996,6 +1002,16 @@ func (c *Client) buildDomainXML(config *CreateVMConfig) (*DomainXML, error) {
 	return domain, nil
 }
 
+func (c *Client) buildFirmwareFeatures(config *CreateVMConfig) *DomainFirmware {
+	if !config.SecureBoot {
+		return nil
+	}
+	return &DomainFirmware{Features: []DomainFirmwareFeature{
+		{Enabled: "yes", Name: "secure-boot"},
+		{Enabled: "yes", Name: "enrolled-keys"},
+	}}
+}
+
 func (c *Client) buildOSBoot(config *CreateVMConfig) *DomainBoot {
 	if config.BootDevice == "" {
 		return nil
@@ -1009,9 +1025,17 @@ func (c *Client) buildLoader(config *CreateVMConfig) *DomainLoader {
 	}
 	return &DomainLoader{
 		Readonly: "yes",
+		Secure:   secureLoader(config.SecureBoot),
 		Type:     "pflash",
 		Value:    config.LoaderPath,
 	}
+}
+
+func secureLoader(enabled bool) string {
+	if enabled {
+		return "yes"
+	}
+	return ""
 }
 
 func (c *Client) buildNVRAM(config *CreateVMConfig) *DomainNVRAM {

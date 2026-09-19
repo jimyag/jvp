@@ -6,6 +6,9 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -981,6 +984,164 @@ func (c *Client) CreateCloudInitISO(outputDir, vmName, metaData, userData string
 		return c.createCloudInitISORemote(outputDir, vmName, metaData, userData, isoPath)
 	}
 	return c.createCloudInitISOLocal(outputDir, vmName, metaData, userData, isoPath)
+}
+
+// CreateConfigDriveISO creates an ISO with an explicit volume label and file
+// hierarchy. OpenStack config drives require nested openstack/latest paths.
+func (c *Client) CreateConfigDriveISO(outputDir, vmName, volumeLabel string, files map[string]string) (string, error) {
+	if err := validateConfigDriveInput(outputDir, vmName, volumeLabel, files); err != nil {
+		return "", err
+	}
+
+	isoPath := filepath.Join(outputDir, vmName+"-config-drive.iso")
+	if c.IsRemoteConnection() {
+		return c.createConfigDriveISORemote(vmName, volumeLabel, files, isoPath)
+	}
+	return c.createConfigDriveISOLocal(volumeLabel, files, isoPath)
+}
+
+func validateConfigDriveInput(outputDir, vmName, volumeLabel string, files map[string]string) error {
+	if outputDir == "" {
+		return fmt.Errorf("config drive output directory is required")
+	}
+	if vmName == "" || filepath.Base(vmName) != vmName || strings.ContainsAny(vmName, `/\\`) {
+		return fmt.Errorf("invalid config drive VM name %q", vmName)
+	}
+	if volumeLabel == "" || strings.ContainsAny(volumeLabel, `/\\'\"`) {
+		return fmt.Errorf("invalid config drive volume label %q", volumeLabel)
+	}
+	if len(files) == 0 {
+		return fmt.Errorf("config drive files are required")
+	}
+	for filePath := range files {
+		if strings.Contains(filePath, `\\`) {
+			return fmt.Errorf("invalid config drive file path %q", filePath)
+		}
+		cleanPath := path.Clean(filePath)
+		if cleanPath != filePath || cleanPath == "." || path.IsAbs(cleanPath) || cleanPath == ".." || strings.HasPrefix(cleanPath, "../") {
+			return fmt.Errorf("invalid config drive file path %q", filePath)
+		}
+	}
+	return nil
+}
+
+func sortedConfigDrivePaths(files map[string]string) []string {
+	paths := make([]string, 0, len(files))
+	for filePath := range files {
+		paths = append(paths, path.Clean(filePath))
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+func (c *Client) createConfigDriveISOLocal(volumeLabel string, files map[string]string, isoPath string) (string, error) {
+	tmpDir, err := os.MkdirTemp("", "config-drive-")
+	if err != nil {
+		return "", fmt.Errorf("create config drive temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	for _, filePath := range sortedConfigDrivePaths(files) {
+		targetPath := filepath.Join(tmpDir, filepath.FromSlash(filePath))
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0o700); err != nil {
+			return "", fmt.Errorf("create config drive directory for %s: %w", filePath, err)
+		}
+		if err := os.WriteFile(targetPath, []byte(files[filePath]), 0o600); err != nil {
+			return "", fmt.Errorf("write config drive file %s: %w", filePath, err)
+		}
+	}
+
+	cmd, err := configDriveISOCommand(isoPath, volumeLabel, tmpDir)
+	if err != nil {
+		return "", err
+	}
+	if output, err := cmd.CombinedOutput(); err != nil {
+		_ = os.Remove(isoPath)
+		return "", fmt.Errorf("create config drive ISO: %w, output: %s", err, string(output))
+	}
+
+	if err := c.fixVNCDirOwnership(isoPath); err != nil {
+		if chmodErr := os.Chmod(isoPath, 0o644); chmodErr != nil {
+			return "", fmt.Errorf("make config drive readable: %w", chmodErr)
+		}
+		log.Warn().Err(err).Str("path", isoPath).Msg("Failed to set config drive ownership; using read-only world access")
+	} else if err := os.Chmod(isoPath, 0o640); err != nil {
+		return "", fmt.Errorf("set config drive permissions: %w", err)
+	}
+
+	return isoPath, nil
+}
+
+func configDriveISOCommand(isoPath, volumeLabel, sourceDir string) (*exec.Cmd, error) {
+	if _, err := exec.LookPath("genisoimage"); err == nil {
+		return exec.Command("genisoimage", "-output", isoPath, "-volid", volumeLabel, "-joliet", "-rock", sourceDir), nil
+	}
+	if _, err := exec.LookPath("mkisofs"); err == nil {
+		return exec.Command("mkisofs", "-output", isoPath, "-volid", volumeLabel, "-joliet", "-rock", sourceDir), nil
+	}
+	return nil, fmt.Errorf("neither genisoimage nor mkisofs found")
+}
+
+func (c *Client) createConfigDriveISORemote(vmName, volumeLabel string, files map[string]string, isoPath string) (string, error) {
+	sshTarget, err := c.GetSSHTarget()
+	if err != nil {
+		return "", err
+	}
+
+	tmpDir := fmt.Sprintf("/tmp/config-drive-%s-%d", vmName, time.Now().UnixNano())
+	if err := runSSHCommand(sshTarget, "mkdir -m 700 -p "+quoteShellArg(tmpDir), nil); err != nil {
+		return "", fmt.Errorf("create remote config drive temp dir: %w", err)
+	}
+	defer func() {
+		_ = runSSHCommand(sshTarget, "rm -rf "+quoteShellArg(tmpDir), nil)
+	}()
+
+	for _, filePath := range sortedConfigDrivePaths(files) {
+		remotePath := path.Join(tmpDir, filePath)
+		if err := runSSHCommand(sshTarget, "mkdir -m 700 -p "+quoteShellArg(path.Dir(remotePath)), nil); err != nil {
+			return "", fmt.Errorf("create remote config drive directory for %s: %w", filePath, err)
+		}
+		writeCommand := "umask 077 && cat > " + quoteShellArg(remotePath)
+		if err := runSSHCommand(sshTarget, writeCommand, strings.NewReader(files[filePath])); err != nil {
+			return "", fmt.Errorf("write remote config drive file %s: %w", filePath, err)
+		}
+	}
+
+	createCommand := fmt.Sprintf(
+		"if command -v genisoimage >/dev/null 2>&1; then genisoimage -output %s -volid %s -joliet -rock %s; "+
+			"elif command -v mkisofs >/dev/null 2>&1; then mkisofs -output %s -volid %s -joliet -rock %s; "+
+			"else echo 'neither genisoimage nor mkisofs found' >&2; exit 127; fi",
+		quoteShellArg(isoPath), quoteShellArg(volumeLabel), quoteShellArg(tmpDir),
+		quoteShellArg(isoPath), quoteShellArg(volumeLabel), quoteShellArg(tmpDir),
+	)
+	if err := runSSHCommand(sshTarget, createCommand, nil); err != nil {
+		return "", fmt.Errorf("create remote config drive ISO: %w", err)
+	}
+
+	permissionCommand := fmt.Sprintf(
+		"if chown libvirt-qemu:kvm %s 2>/dev/null || chown qemu:qemu %s 2>/dev/null; then chmod 640 %s; else chmod 644 %s; fi",
+		quoteShellArg(isoPath), quoteShellArg(isoPath), quoteShellArg(isoPath), quoteShellArg(isoPath),
+	)
+	if err := runSSHCommand(sshTarget, permissionCommand, nil); err != nil {
+		return "", fmt.Errorf("set remote config drive permissions: %w", err)
+	}
+
+	return isoPath, nil
+}
+
+func runSSHCommand(sshTarget, command string, stdin *strings.Reader) error {
+	cmd := exec.Command("ssh", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes", sshTarget, command)
+	if stdin != nil {
+		cmd.Stdin = stdin
+	}
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("ssh command failed: %w, output: %s", err, string(output))
+	}
+	return nil
+}
+
+func quoteShellArg(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 // createCloudInitISOLocal 在本地创建 cloud-init ISO

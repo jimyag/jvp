@@ -2,6 +2,7 @@ package cloudinit
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 
 	"golang.org/x/crypto/bcrypt"
@@ -44,6 +45,30 @@ func (g *Generator) GenerateMetaDataWithPublicKeys(hostname string, publicKeys [
 	}
 
 	return string(yamlData), nil
+}
+
+// GenerateOpenStackMetaData generates the JSON metadata layout used by
+// Cloudbase-Init's OpenStack ConfigDriveService.
+func (g *Generator) GenerateOpenStackMetaData(metaData *OpenStackMetaData) (string, error) {
+	if metaData == nil {
+		return "", fmt.Errorf("OpenStack meta-data is required")
+	}
+	if metaData.UUID == "" {
+		return "", fmt.Errorf("OpenStack meta-data UUID is required")
+	}
+	if metaData.Hostname == "" {
+		return "", fmt.Errorf("OpenStack meta-data hostname is required")
+	}
+	if metaData.Name == "" {
+		metaData.Name = metaData.Hostname
+	}
+
+	jsonData, err := json.MarshalIndent(metaData, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal OpenStack meta-data to JSON: %w", err)
+	}
+
+	return string(jsonData), nil
 }
 
 // GenerateUserDataFromStruct 直接从 UserData 结构生成 user-data 文件内容
