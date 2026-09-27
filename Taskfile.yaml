@@ -31,7 +31,7 @@ tasks:
     cmds:
       - go mod download
       - go install  github.com/go-task/task/v3/cmd/task@latest
-      - go install mvdan.cc/gofumpt@latest
+      - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 
   deps-dev-tools:
     desc: Install development tools

@@ -4,6 +4,9 @@ jimyag's virtualization platform
 
 English | [中文](README_CN.md)
 
+[![Check](https://github.com/jimyag/jvp/actions/workflows/check.yaml/badge.svg)](https://github.com/jimyag/jvp/actions/workflows/check.yaml)
+[![Release](https://github.com/jimyag/jvp/actions/workflows/release.yml/badge.svg)](https://github.com/jimyag/jvp/actions/workflows/release.yml)
+
 ## Introduction
 
 JVP is a virtualization platform based on QEMU/KVM and libvirt, providing complete Linux and Windows virtual machine lifecycle management through a RESTful API and a modern web interface.
@@ -63,6 +66,21 @@ Download from [GitHub Releases](https://github.com/jimyag/jvp/releases) and run:
 For detailed installation guides, feature documentation, and API reference, visit:
 
 **[https://jvp.jimyag.com](https://jvp.jimyag.com)**
+
+## Development
+
+Install the frontend dependencies and build before running the Go tests:
+
+```bash
+task build
+go test ./...
+```
+
+CI builds the frontend, runs golangci-lint on new findings, and tests the Go packages.
+
+## Release
+
+Pushing a `v*` tag publishes Linux and macOS binaries and container images. Release notes list commits since the previous tag.
 
 ## License
 

@@ -8,11 +8,9 @@ project_name: jvp
 # 构建前钩子：构建前端并复制到 static 目录
 before:
   hooks:
-    - sh -c "cd web-vite && bun install && bun run build"
+    - sh -c "cd web-vite && bun install --frozen-lockfile && bun run build"
     - sh -c "rm -rf ./internal/jvp/api/static && mkdir -p ./internal/jvp/api/static"
     - sh -c "cp -r ./web-vite/dist/* ./internal/jvp/api/static/"
-    # 生成 changelog（从上一个正式版本开始计算）
-    - sh -c "./scripts/changelog.sh"
 
 # 构建配置
 builds:
@@ -49,8 +47,9 @@ release:
     owner: jimyag
     name: jvp
   mode: replace
-  # 自定义 release notes 通过 CI 命令行参数传入：
-  # goreleaser release --release-notes=CHANGELOG.tmp.md
+
+changelog:
+  use: git
 
 # Docker 镜像配置（使用 dockers_v2）
 # 简化配置：GoReleaser 会自动构建多架构镜像并创建 manifest

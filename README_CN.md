@@ -4,6 +4,9 @@ jimyag's virtualization platform
 
 [English](README.md) | 中文
 
+[![Check](https://github.com/jimyag/jvp/actions/workflows/check.yaml/badge.svg)](https://github.com/jimyag/jvp/actions/workflows/check.yaml)
+[![Release](https://github.com/jimyag/jvp/actions/workflows/release.yml/badge.svg)](https://github.com/jimyag/jvp/actions/workflows/release.yml)
+
 ## 简介
 
 JVP 是一个基于 QEMU/KVM 和 libvirt 的虚拟化平台，通过 RESTful API 和现代化 Web 界面提供完整的 Linux 与 Windows 虚拟机生命周期管理。
@@ -63,6 +66,21 @@ docker compose up -d
 详细的安装指南、功能文档和 API 参考，请访问:
 
 **[https://jvp.jimyag.com](https://jvp.jimyag.com)**
+
+## 开发
+
+先构建前端，再运行 Go 测试：
+
+```bash
+task build
+go test ./...
+```
+
+CI 会构建前端、用 golangci-lint 检查新增问题，并运行 Go 测试。
+
+## 发布
+
+推送 `v*` 标签后会发布 Linux、macOS 二进制和容器镜像。Release notes 列出相对上一个标签新增的提交。
 
 ## 许可证
 

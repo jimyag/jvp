@@ -25,6 +25,7 @@ bin/
 .DS_Store
 
 !Dockerfile
+!LICENSE
 
 .claude
 
@@ -34,6 +35,3 @@ bin/
 flint
 
 internal/jvp/api/static
-
-# goreleaser 生成的临时 changelog
-CHANGELOG.tmp.md
