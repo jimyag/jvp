@@ -1,1531 +1,341 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { Link, useSearchParams } from "react-router-dom";
-import Header from "@/components/Header";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Camera, Monitor, Play, Plus, RotateCcw, Server, Square, Trash2 } from "lucide-react";
+import PageHeader from "@/components/PageHeader";
 import Table from "@/components/Table";
-import StatusBadge from "@/components/StatusBadge";
-import Modal from "@/components/Modal";
-import ConfirmDialog from "@/components/ConfirmDialog";
+import type { Column } from "@/components/Table";
+import DropdownMenu from "@/components/DropdownMenu";
+import NodeSelect from "@/components/NodeSelect";
 import SearchFilter from "@/components/SearchFilter";
+import { Badge, EmptyState, SegmentedControl, Spinner, StatusBadge } from "@/components/ui";
 import { useToast } from "@/components/ToastContainer";
-import { Play, Square, RefreshCw, Trash2, Plus } from "lucide-react";
+import { api, errorMessage } from "@/lib/api";
+import { formatMemoryMB, shortId } from "@/lib/format";
+import { useScopedNode } from "@/lib/nodes";
+import type { Instance } from "@/lib/types";
+import CreateInstanceModal from "./CreateInstanceModal";
+import { actionProgressLabel, useInstanceActions } from "./useInstanceActions";
 
-interface Instance {
-  id: string;
-  name: string;
-  state: string;
-  node_name: string;
-  autostart?: boolean;
-  template_id?: string;
-  vcpus: number;
-  memory_mb: number;
-  created_at: string;
-  domain_uuid?: string;
-  domain_name?: string;
-  ip_address?: string;
-  interfaces?: { ips?: string[] }[];
-  disks?: { target?: string; path?: string; format?: string }[];
-}
+type StateFilter = "all" | "running" | "stopped";
 
-interface Node {
-  name: string;
-  uri: string;
-  status: string;
-}
+const POLL_INTERVAL = 15000;
 
-interface StoragePool {
-  name: string;
-  state: string;
-  path: string;
-}
-
-interface Template {
-  id: string;
-  name: string;
-  volume_name?: string;
-  format: string;
-  size_gb: number;
-  os?: {
-    name?: string;
-    version?: string;
-    arch?: string;
-  };
-	features?: {
-		cloud_init?: boolean;
-		virtio?: boolean;
-		qemu_guest_agent?: boolean;
-	};
-	tags?: string[];
-}
-
-interface KeyPair {
-  id: string;
-  name: string;
-  fingerprint: string;
-}
-
-interface LibvirtNetwork {
-  name: string;
-  uuid: string;
-  mode: string;
-  state: string;
-  ip_address: string;
-  netmask: string;
-  dhcp_start: string;
-  dhcp_end: string;
-}
-
-interface HostBridge {
-  name: string;
-  state: string;
-  ips: string[];
-}
-
-interface NetworkSources {
-  libvirt_networks: LibvirtNetwork[];
-  host_bridges: HostBridge[];
-}
-
-const createInstanceSteps = {
-  linux: ["Basic", "User & System", "Advanced"],
-  windowsInstall: ["Basic"],
-  windowsCloudImage: ["Basic", "Initialization"],
-};
-
-function templateText(template: Template) {
-  return `${template.name} ${template.volume_name || ""} ${template.os?.name || ""} ${template.os?.version || ""} ${template.format || ""}`.toLowerCase();
-}
-
-function apiErrorMessage(error: any) {
-  return error?.message || error?.errors?.[0]?.message || error?.error || "Unknown error";
-}
-
-function isLikelyWindowsInstallISO(template: Template) {
-  const text = templateText(template);
-  const tags = template.tags || [];
-  const isISO = template.volume_name?.toLowerCase().endsWith(".iso") || tags.includes("iso") || tags.includes("installer");
-  return isISO && !isLikelyDriverISO(template) && (text.includes("windows") || text.includes("winserver") || text.includes("server 20"));
-}
-
-function isLikelyDriverISO(template: Template) {
-  const text = templateText(template);
-  return text.includes("virtio") || text.includes("driver") || text.includes("guest-tools") || text.includes("guest tools");
-}
-
-function isWindowsCloudImage(template: Template) {
-  const text = templateText(template);
-  const isWindows = text.includes("windows") || text.includes("win10") || text.includes("win11") || (template.tags || []).includes("windows");
-  const isISO = template.volume_name?.toLowerCase().endsWith(".iso") || (template.tags || []).includes("iso");
-  return isWindows && !isISO && !isLikelyDriverISO(template) && template.features?.cloud_init === true && template.features?.virtio === true;
-}
-
-function isRecommendedWindowsCloudImage(template: Template) {
-  const tags = template.tags || [];
-  return isWindowsCloudImage(template) && template.features?.qemu_guest_agent === true && tags.includes("vnc-clipboard");
+function instanceIPs(instance: Instance): string[] {
+  const fromIfaces = instance.interfaces?.flatMap((i) => i.ips || []) || [];
+  return Array.from(new Set([instance.ip_address, ...fromIfaces].filter(Boolean) as string[]));
 }
 
 export default function InstancesPage() {
   const toast = useToast();
-  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { nodes, currentNode, setCurrentNode, loading: nodesLoading } = useScopedNode();
+
   const [instances, setInstances] = useState<Instance[]>([]);
-  const [nodes, setNodes] = useState<Node[]>([]);
-  const [storagePools, setStoragePools] = useState<StoragePool[]>([]);
-  const [templates, setTemplates] = useState<Template[]>([]);
-  const [keypairs, setKeypairs] = useState<KeyPair[]>([]);
-  const [networkSources, setNetworkSources] = useState<NetworkSources | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-  const [deleteVolumes, setDeleteVolumes] = useState(false);
-  const [instanceToDelete, setInstanceToDelete] = useState<{id: string, nodeName: string} | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedNode, setSelectedNode] = useState<string>("");
+  const [query, setQuery] = useState("");
+  const [stateFilter, setStateFilter] = useState<StateFilter>("all");
+  const [createOpen, setCreateOpen] = useState(searchParams.get("create") === "1");
+  const requestRef = useRef(0);
 
-  const initDoneRef = useRef(false);
+  const fetchInstances = useCallback(
+    async ({ silent = false }: { silent?: boolean } = {}) => {
+      if (!currentNode) return;
+      const requestId = ++requestRef.current;
+      if (!silent) setRefreshing(true);
+      try {
+        const data = await api<{ instances: Instance[] }>("/api/describe-instances", { node_name: currentNode });
+        if (requestId === requestRef.current) setInstances(data.instances || []);
+      } catch (err) {
+        if (!silent && requestId === requestRef.current) toast.error(errorMessage(err, "Failed to load instances"));
+      } finally {
+        if (requestId === requestRef.current) {
+          setLoading(false);
+          setRefreshing(false);
+        }
+      }
+    },
+    [currentNode, toast]
+  );
 
-  // 从 URL 获取参数
-  const urlNode = searchParams.get("node") || "";
-
-  // 更新 URL（不触发页面刷新）
-  const updateURL = useCallback((node: string) => {
-    const params = new URLSearchParams();
-    if (node) params.set("node", node);
-    const newURL = params.toString() ? `/instances?${params.toString()}` : "/instances";
-    window.history.replaceState(null, "", newURL);
-  }, []);
-  const [currentStep, setCurrentStep] = useState(0);
-  const [keypairInputMethod, setKeypairInputMethod] = useState<"select" | "upload" | "manual">("select");
-  const [manualPublicKey, setManualPublicKey] = useState("");
-  const [formData, setFormData] = useState({
-    node_name: "",
-    pool_name: "",
-    template_id: "",
-    os_type: "linux",
-		windows_boot_mode: "install" as "install" | "cloud_image",
-    driver_iso_template_id: "",
-    size_gb: 20,
-    memory_mb: 2048,
-    vcpus: 2,
-    network_type: "bridge",
-    network_source: "br0",
-    keypair_ids: [] as string[],
-    hostname: "",
-    timezone: "Asia/Shanghai",
-    disable_root: false,
-    packages: [] as string[],
-    run_cmd: [] as string[],
-    username: "",
-    user_password: "",
-    user_sudo: "ALL=(ALL) NOPASSWD:ALL",
-    user_groups: "sudo",
-    user_shell: "/bin/bash",
-  });
-  const isWindowsMode = formData.os_type === "windows";
-	const isWindowsCloudImageMode = isWindowsMode && formData.windows_boot_mode === "cloud_image";
-	const usesCloudInit = !isWindowsMode || isWindowsCloudImageMode;
-  const steps = !isWindowsMode
-		? createInstanceSteps.linux
-		: isWindowsCloudImageMode
-			? createInstanceSteps.windowsCloudImage
-			: createInstanceSteps.windowsInstall;
-  const maxStep = steps.length - 1;
-  const windowsInstallerTemplates = templates.filter(isLikelyWindowsInstallISO);
-  const windowsCloudImageTemplates = templates
-    .filter(isWindowsCloudImage)
-    .sort((left, right) => Number(isRecommendedWindowsCloudImage(right)) - Number(isRecommendedWindowsCloudImage(left)));
-  const recommendedWindowsCloudImage = windowsCloudImageTemplates.find(isRecommendedWindowsCloudImage);
-  const visibleTemplates = isWindowsMode
-		? (isWindowsCloudImageMode ? windowsCloudImageTemplates : windowsInstallerTemplates)
-		: templates;
-  const driverISOTemplates = templates.filter((template) => template.id !== formData.template_id && isLikelyDriverISO(template));
-
-  const filteredInstances = useMemo(() => {
-    let filtered = instances;
-    if (selectedNode) {
-      filtered = filtered.filter(i => i.node_name === selectedNode);
+  useEffect(() => {
+    if (nodesLoading) return;
+    if (!currentNode) {
+      setLoading(false);
+      return;
     }
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(
-        (instance) =>
-          instance.id.toLowerCase().includes(query) ||
-          instance.name?.toLowerCase().includes(query) ||
-          instance.state.toLowerCase().includes(query) ||
-          instance.node_name?.toLowerCase().includes(query)
+    setLoading(true);
+    setInstances([]);
+    fetchInstances({ silent: true });
+  }, [currentNode, nodesLoading, fetchInstances]);
+
+  // 页面可见时定期刷新状态
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") fetchInstances({ silent: true });
+    }, POLL_INTERVAL);
+    return () => clearInterval(timer);
+  }, [fetchInstances]);
+
+  const { request, busy, dialog } = useInstanceActions({
+    onChanged: () => {
+      fetchInstances({ silent: true });
+      setTimeout(() => fetchInstances({ silent: true }), 2500);
+    },
+  });
+
+  const counts = useMemo(
+    () => ({
+      all: instances.length,
+      running: instances.filter((i) => i.state === "running").length,
+      stopped: instances.filter((i) => i.state !== "running").length,
+    }),
+    [instances]
+  );
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return instances
+      .filter((i) => (stateFilter === "all" ? true : stateFilter === "running" ? i.state === "running" : i.state !== "running"))
+      .filter(
+        (i) =>
+          !q ||
+          i.id.toLowerCase().includes(q) ||
+          i.name?.toLowerCase().includes(q) ||
+          instanceIPs(i).some((ip) => ip.includes(q))
+      )
+      .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
+  }, [instances, query, stateFilter]);
+
+  const closeCreate = () => {
+    setCreateOpen(false);
+    if (searchParams.get("create")) {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete("create");
+          return next;
+        },
+        { replace: true }
       );
     }
-    return filtered;
-  }, [instances, searchQuery, selectedNode]);
-
-  const fetchNodes = useCallback(async () => {
-    if (initDoneRef.current) return;
-    initDoneRef.current = true;
-
-    try {
-      const nodesRes = await fetch("/api/list-nodes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-
-      if (nodesRes.ok) {
-        const nodesData = await nodesRes.json();
-        const nodeList = nodesData.nodes || [];
-        setNodes(nodeList);
-
-        if (nodeList.length > 0) {
-          // 检查 URL 参数中的节点是否存在
-          const urlNodeExists = urlNode && nodeList.some((n: Node) => n.name === urlNode);
-
-          // 如果 URL 指定的节点存在则使用它，否则使用第一个节点
-          const targetNode = urlNodeExists ? urlNode : nodeList[0].name;
-          setSelectedNode(targetNode);
-          updateURL(targetNode);
-        }
-      }
-    } catch (error) {
-      console.error("Failed to fetch nodes:", error);
-    }
-  }, [urlNode, updateURL]);
-
-  // 手动切换节点时调用
-  const handleNodeChange = useCallback((nodeName: string) => {
-    setSelectedNode(nodeName);
-    updateURL(nodeName);
-  }, [updateURL]);
-
-  const fetchInstances = async ({ showLoading = false }: { showLoading?: boolean } = {}) => {
-    if (!selectedNode) return;
-    if (showLoading) {
-      setLoading(true);
-    } else {
-      setRefreshing(true);
-    }
-    try {
-      const response = await fetch("/api/describe-instances", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ node_name: selectedNode }),
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setInstances(data.instances || []);
-      } else {
-        toast.error("Failed to load instances");
-      }
-    } catch (error) {
-      console.error("Failed to fetch instances:", error);
-      toast.error("Failed to load instances. Please check if backend is running.");
-    } finally {
-      if (showLoading) {
-        setLoading(false);
-      } else {
-        setRefreshing(false);
-      }
-    }
   };
 
-  const fetchStoragePools = async (nodeName: string) => {
-    if (!nodeName) return;
-    try {
-      const response = await fetch("/api/list-storage-pools", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ node_name: nodeName }),
-      });
-      if (response.ok) {
-        const data = await response.json();
-        const pools = data.pools || [];
-        setStoragePools(pools);
-        // 自动选择第一个 storage pool
-        if (pools.length > 0) {
-          setFormData(prev => ({ ...prev, pool_name: pools[0].name, template_id: "" }));
-        }
-      }
-    } catch (error) {
-      console.error("Failed to fetch storage pools:", error);
-    }
-  };
+  const detailPath = (i: Instance) => `/instances/${encodeURIComponent(i.node_name)}/${encodeURIComponent(i.id)}`;
 
-  const fetchTemplates = async (nodeName: string, poolName: string) => {
-    if (!nodeName || !poolName) return;
-    try {
-      const response = await fetch("/api/list-templates", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ node_name: nodeName, pool_name: poolName }),
-      });
-      if (response.ok) {
-        const data = await response.json();
-        const templateList = data.templates || [];
-        setTemplates(templateList);
-        // 如果有 template，自动选择第一个
-        if (templateList.length > 0) {
-          setFormData(prev => ({ ...prev, template_id: templateList[0].id }));
-        } else {
-          setFormData(prev => ({ ...prev, template_id: "" }));
-        }
-      }
-    } catch (error) {
-      console.error("Failed to fetch templates:", error);
-    }
-  };
-
-  const fetchKeypairs = async () => {
-    try {
-      const response = await fetch("/api/describe-keypairs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setKeypairs(data.keypairs || []);
-      }
-    } catch (error) {
-      console.error("Failed to fetch keypairs:", error);
-    }
-  };
-
-  const fetchNetworkSources = async (nodeName: string) => {
-    if (!nodeName) return;
-    try {
-      const response = await fetch("/api/list-network-sources", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ node_name: nodeName }),
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setNetworkSources(data.sources || null);
-        // Auto-select the first available network source
-        const sources = data.sources as NetworkSources | null;
-        if (sources) {
-          // Prefer active libvirt networks first
-          const activeNetwork = sources.libvirt_networks?.find(n => n.state === "active");
-          if (activeNetwork) {
-            setFormData(prev => ({
-              ...prev,
-              network_type: "network",
-              network_source: activeNetwork.name
-            }));
-          } else if (sources.host_bridges?.length > 0) {
-            // Fall back to first bridge
-            setFormData(prev => ({
-              ...prev,
-              network_type: "bridge",
-              network_source: sources.host_bridges[0].name
-            }));
-          }
-        }
-      }
-    } catch (error) {
-      console.error("Failed to fetch network sources:", error);
-    }
-  };
-
-  useEffect(() => {
-    fetchNodes();
-    fetchKeypairs();
-  }, []);
-
-  useEffect(() => {
-    if (selectedNode) {
-      fetchInstances({ showLoading: true });
-    }
-  }, [selectedNode]);
-
-  useEffect(() => {
-    if (formData.node_name) {
-      fetchStoragePools(formData.node_name);
-      fetchNetworkSources(formData.node_name);
-    }
-  }, [formData.node_name]);
-
-  useEffect(() => {
-    if (formData.node_name && formData.pool_name) {
-      fetchTemplates(formData.node_name, formData.pool_name);
-    }
-  }, [formData.node_name, formData.pool_name]);
-
-  const handleCreateInstance = async () => {
-    if (currentStep < maxStep) return;
-
-    try {
-      let finalKeypairIds = [...formData.keypair_ids];
-      if (usesCloudInit && keypairInputMethod !== "select" && manualPublicKey.trim()) {
-        try {
-          const importResponse = await fetch("/api/import-keypair", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              name: `keypair-${Date.now()}`,
-              public_key: manualPublicKey.trim(),
-            }),
-          });
-
-          if (importResponse.ok) {
-            const importData = await importResponse.json();
-            finalKeypairIds = [importData.id];
-            toast.success("Public key imported successfully!");
-          } else {
-            const error = await importResponse.json();
-            toast.error(`Failed to import public key: ${apiErrorMessage(error)}`);
-            return;
-          }
-        } catch (error) {
-          console.error("Failed to import public key:", error);
-          toast.error("Failed to import public key. Please try again.");
-          return;
-        }
-      }
-
-      const userData: any = {};
-      const structuredUserData: any = {};
-
-      if (usesCloudInit && formData.hostname) {
-        structuredUserData.hostname = formData.hostname;
-      }
-      if (usesCloudInit && formData.timezone) {
-        structuredUserData.timezone = formData.timezone;
-      }
-      if (!isWindowsMode) {
-        structuredUserData.disable_root = formData.disable_root;
-      }
-
-      if (usesCloudInit && formData.username) {
-        structuredUserData.users = [{
-          name: formData.username,
-          plain_text_passwd: formData.user_password || undefined,
-          sudo: isWindowsCloudImageMode ? undefined : formData.user_sudo,
-          groups: formData.user_groups,
-          shell: isWindowsCloudImageMode ? undefined : formData.user_shell,
-        }];
-      }
-
-      if (!isWindowsMode && formData.packages.length > 0) {
-        structuredUserData.packages = formData.packages;
-      }
-      if (usesCloudInit && formData.run_cmd.length > 0) {
-        structuredUserData.run_cmd = formData.run_cmd;
-      }
-
-      const hasUserData = Object.keys(structuredUserData).length > 0;
-      if (hasUserData) {
-        userData.structured_user_data = structuredUserData;
-      }
-
-      const requestBody: any = {
-        node_name: formData.node_name,
-        pool_name: formData.pool_name,
-        template_id: formData.template_id || undefined,
-        size_gb: formData.size_gb,
-        memory_mb: formData.memory_mb,
-        vcpus: formData.vcpus,
-        network_type: formData.network_type,
-        network_source: formData.network_source,
-        os_type: formData.os_type,
-				windows_boot_mode: isWindowsMode ? formData.windows_boot_mode : undefined,
-        driver_iso_template_id: isWindowsMode && !isWindowsCloudImageMode ? formData.driver_iso_template_id || undefined : undefined,
-        keypair_ids: usesCloudInit && finalKeypairIds.length > 0 ? finalKeypairIds : undefined,
-      };
-
-      if (usesCloudInit && hasUserData) {
-        requestBody.user_data = userData;
-      }
-
-      const response = await fetch("/api/run-instances", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(requestBody),
-      });
-
-      if (response.ok) {
-        const createdNodeName = formData.node_name;
-        setIsCreateModalOpen(false);
-        setCurrentStep(0);
-        if (createdNodeName === selectedNode) {
-          fetchInstances();
-        } else {
-          setSelectedNode(createdNodeName);
-        }
-        fetchKeypairs();
-        setFormData({
-          node_name: "",
-          pool_name: "",
-          template_id: "",
-          os_type: "linux",
-					windows_boot_mode: "install",
-          driver_iso_template_id: "",
-          size_gb: 20,
-          memory_mb: 2048,
-          vcpus: 2,
-          network_type: "bridge",
-          network_source: "br0",
-          keypair_ids: [],
-          hostname: "",
-          timezone: "Asia/Shanghai",
-          disable_root: false,
-          packages: [],
-          run_cmd: [],
-          username: "",
-          user_password: "",
-          user_sudo: "ALL=(ALL) NOPASSWD:ALL",
-          user_groups: "sudo",
-          user_shell: "/bin/bash",
-        });
-        setKeypairInputMethod("select");
-        setManualPublicKey("");
-        toast.success("Instance created successfully!");
-      } else {
-        const error = await response.json();
-        toast.error(`Failed to create instance: ${apiErrorMessage(error)}`);
-      }
-    } catch (error) {
-      console.error("Failed to create instance:", error);
-      toast.error("Failed to create instance. Please try again.");
-    }
-  };
-
-  const handleAction = async (instance: Instance, action: string) => {
-    try {
-      const response = await fetch(`/api/${action}-instances`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          node_name: instance.node_name,
-          instance_ids: [instance.id]
-        }),
-      });
-
-      if (response.ok) {
-        const actionName = action === "start" ? "started" : action === "stop" ? "stopped" : "rebooted";
-        toast.success(`Instance ${actionName} successfully!`);
-        setTimeout(() => {
-          fetchInstances();
-        }, 2000);
-      } else {
-        const error = await response.json();
-        toast.error(`Failed to ${action} instance: ${apiErrorMessage(error)}`);
-      }
-    } catch (error) {
-      console.error(`Failed to ${action} instance:`, error);
-      toast.error(`Failed to ${action} instance. Please try again.`);
-    }
-  };
-
-  const handleDeleteClick = (instance: Instance) => {
-    setInstanceToDelete({id: instance.id, nodeName: instance.node_name});
-    setDeleteVolumes(false);
-    setIsDeleteDialogOpen(true);
-  };
-
-  const handleDeleteConfirm = async () => {
-    if (!instanceToDelete) return;
-    try {
-      const response = await fetch("/api/terminate-instances", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          node_name: instanceToDelete.nodeName,
-          instance_ids: [instanceToDelete.id],
-          delete_volumes: deleteVolumes,
-        }),
-      });
-
-      if (response.ok) {
-        fetchInstances();
-        toast.success("Instance terminated successfully!");
-      } else {
-        const error = await response.json();
-        toast.error(`Failed to terminate instance: ${apiErrorMessage(error)}`);
-      }
-    } catch (error) {
-      console.error("Failed to delete instance:", error);
-      toast.error("Failed to terminate instance. Please try again.");
-    }
-  };
-
-  const columns = [
-    {
-      key: "id",
-      label: "ID",
-      render: (value: unknown, row: any) => {
-        const idStr = String(value);
-        const displayId = idStr.length > 12 ? `${idStr.substring(0, 12)}...` : idStr;
-        return (
-          <Link to={`/instances/${row.node_name}/${value}`} className="text-accent hover:underline font-mono text-xs">
-            {displayId}
-          </Link>
-        );
-      },
-    },
+  const columns: Column<Instance>[] = [
     {
       key: "name",
-      label: "Name",
-      render: (_: unknown, row: any) => (
-        <Link to={`/instances/${row.node_name}/${row.id}`} className="text-primary hover:text-accent font-medium">
-          {row.name || row.domain_name || "N/A"}
-        </Link>
+      header: "Name",
+      render: (i) => (
+        <div className="min-w-0">
+          <Link to={detailPath(i)} onClick={(e) => e.stopPropagation()} className="font-medium text-fg hover:text-accent">
+            {i.name || i.domain_name || i.id}
+          </Link>
+          <div className="whitespace-nowrap font-mono text-xs text-fg-subtle" title={i.id}>
+            {shortId(i.id, 20)}
+          </div>
+        </div>
       ),
     },
     {
-      key: "node_name",
-      label: "Node",
-      render: (value: unknown) => <span className="text-gray-600">{String(value)}</span>,
-    },
-    {
       key: "state",
-      label: "Status",
-      render: (value: unknown) => <StatusBadge status={String(value)} />,
+      header: "Status",
+      render: (i) =>
+        busy[i.id] ? (
+          <Badge tone="warning" dot pulse>
+            {actionProgressLabel[busy[i.id]]}…
+          </Badge>
+        ) : (
+          <StatusBadge status={i.state} />
+        ),
     },
     {
-      key: "ip_address",
-      label: "IP",
-      render: (_: unknown, row: Instance) => {
-        const ifaceIPs = row.interfaces?.flatMap((i) => i.ips || []) || [];
-        const ips = Array.from(new Set([row.ip_address, ...ifaceIPs].filter(Boolean) as string[]));
+      key: "ip",
+      header: "IP address",
+      render: (i) => {
+        const ips = instanceIPs(i);
+        if (ips.length === 0) return <span className="text-fg-subtle">—</span>;
         return (
-          <div className="flex flex-col text-xs font-mono">
-            {(ips.length > 0 ? ips : ["N/A"]).map((ip) => (
-              <span key={ip}>{ip}</span>
-            ))}
+          <div className="font-mono text-xs">
+            {ips[0]}
+            {ips.length > 1 && (
+              <span className="ml-1.5 text-fg-subtle" title={ips.slice(1).join("\n")}>
+                +{ips.length - 1}
+              </span>
+            )}
           </div>
         );
       },
     },
     {
-      key: "vcpus",
-      label: "vCPUs",
-      render: (value: unknown) => <span>{String(value)} cores</span>,
-    },
-    {
-      key: "memory_mb",
-      label: "Memory",
-      render: (value: unknown) => <span>{(Number(value) / 1024).toFixed(1)} GB</span>,
-    },
-    {
-      key: "autostart",
-      label: "Auto Start",
-      render: (value: unknown) => (
-        <span className={`px-2 py-1 rounded text-xs font-medium ${value ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-600"}`}>
-          {value ? "Enabled" : "Disabled"}
+      key: "spec",
+      header: "Spec",
+      render: (i) => (
+        <span className="whitespace-nowrap text-fg-muted">
+          {i.vcpus} vCPU · {formatMemoryMB(i.memory_mb)}
         </span>
       ),
     },
     {
-      key: "template_id",
-      label: "Template",
-      render: (value: unknown) => {
-        if (!value) return <span>N/A</span>;
-        const valueStr = String(value);
-        return <span>{valueStr.length > 12 ? `${valueStr.substring(0, 12)}...` : valueStr}</span>;
-      }
-    },
-    {
-      key: "snapshots",
-      label: "Snapshots",
-      render: (_: unknown, row: Instance) => (
-        <Link
-          to={`/snapshots?node=${encodeURIComponent(row.node_name)}&vm=${encodeURIComponent(row.id)}`}
-          className="text-blue-600 hover:underline text-sm"
-        >
-          View
-        </Link>
-      ),
+      key: "autostart",
+      header: "Autostart",
+      render: (i) => (i.autostart ? <Badge tone="accent">On</Badge> : <span className="text-fg-subtle">Off</span>),
     },
     {
       key: "actions",
-      label: "Actions",
-      render: (_: unknown, row: Record<string, unknown>) => {
-        const instance = row as unknown as Instance;
+      header: <span className="sr-only">Actions</span>,
+      align: "right",
+      render: (i) => {
+        const running = i.state === "running";
+        const isBusy = Boolean(busy[i.id]);
         return (
-          <div className="flex gap-2 whitespace-nowrap">
-            {instance.state === "running" ? (
-              <button
-                onClick={() => handleAction(instance, "stop")}
-                className="p-2 text-gray-600 hover:text-red-600 transition-colors"
-                title="Stop"
-              >
-                <Square size={18} />
+          <div className="flex items-center justify-end gap-0.5" onClick={(e) => e.stopPropagation()}>
+            {isBusy ? (
+              <span className="flex h-8 w-8 items-center justify-center">
+                <Spinner />
+              </span>
+            ) : running ? (
+              <button className="btn-icon" title="Stop" onClick={() => request(i, "stop")}>
+                <Square size={15} />
               </button>
             ) : (
-              <button
-                onClick={() => handleAction(instance, "start")}
-                className="p-2 text-gray-600 hover:text-green-600 transition-colors"
-                title="Start"
-              >
-                <Play size={18} />
+              <button className="btn-icon hover:text-success" title="Start" onClick={() => request(i, "start")}>
+                <Play size={15} />
               </button>
             )}
-            <button
-              onClick={() => handleAction(instance, "reboot")}
-              className="p-2 text-gray-600 hover:text-blue-600 transition-colors"
-              title="Reboot"
-            >
-              <RefreshCw size={18} />
+            <button className="btn-icon" title="Console" onClick={() => navigate(`${detailPath(i)}/console`)}>
+              <Monitor size={15} />
             </button>
-            <button
-              onClick={() => handleDeleteClick(instance)}
-              className="p-2 text-gray-600 hover:text-red-600 transition-colors"
-              title="Delete"
-            >
-              <Trash2 size={18} />
-            </button>
+            <DropdownMenu
+              items={[
+                { label: "Reboot", icon: <RotateCcw size={14} />, onClick: () => request(i, "reboot"), disabled: !running || isBusy },
+                {
+                  label: "Snapshots",
+                  icon: <Camera size={14} />,
+                  onClick: () => navigate(`/snapshots?node=${encodeURIComponent(i.node_name)}&vm=${encodeURIComponent(i.id)}`),
+                },
+                { divider: true, label: "divider" },
+                { label: "Terminate", icon: <Trash2 size={14} />, danger: true, onClick: () => request(i, "terminate"), disabled: isBusy },
+              ]}
+            />
           </div>
         );
       },
     },
   ];
 
+  const noNodes = !nodesLoading && nodes.length === 0;
+
   return (
     <>
-      <Header
+      <PageHeader
         title="Instances"
-        description="Manage your virtual machine instances"
-        action={
-          <button
-            onClick={() => setIsCreateModalOpen(true)}
-            className="btn-primary flex items-center gap-2"
-          >
-            <Plus size={16} />
-            Create Instance
-          </button>
-        }
+        description="Virtual machines running on the selected node."
         onRefresh={() => fetchInstances()}
-        refreshLoading={refreshing}
+        refreshing={refreshing}
+        actions={
+          <>
+            <NodeSelect />
+            <button className="btn-primary" onClick={() => setCreateOpen(true)} disabled={noNodes}>
+              <Plus size={15} />
+              Create instance
+            </button>
+          </>
+        }
       />
 
-      {/* Node selector */}
-      <div className="mb-4 flex gap-4 items-center">
-        <label className="text-sm font-medium text-gray-700">Node:</label>
-        <select
-          className="input w-48"
-          value={selectedNode}
-          onChange={(e) => handleNodeChange(e.target.value)}
-        >
-          {nodes.map((node) => (
-            <option key={node.name} value={node.name}>
-              {node.name}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {loading ? (
-        <div className="card text-center py-12">
-          <p className="text-gray-500">Loading instances...</p>
+      {noNodes ? (
+        <div className="card">
+          <EmptyState
+            icon={<Server size={20} />}
+            title="No nodes yet"
+            description="Add a libvirt node before creating instances."
+            action={
+              <Link to="/nodes?add=1" className="btn-primary">
+                Add node
+              </Link>
+            }
+          />
         </div>
       ) : (
         <>
-          <div className="mb-4">
-            <SearchFilter
-              onSearch={setSearchQuery}
-              placeholder="Search instances by ID, name, state, or node..."
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <SegmentedControl
+              value={stateFilter}
+              onChange={setStateFilter}
+              options={[
+                { value: "all", label: <>All <span className="text-fg-subtle">{counts.all}</span></> },
+                { value: "running", label: <>Running <span className="text-fg-subtle">{counts.running}</span></> },
+                { value: "stopped", label: <>Stopped <span className="text-fg-subtle">{counts.stopped}</span></> },
+              ]}
             />
+            <SearchFilter value={query} onChange={setQuery} placeholder="Search by name, ID or IP" className="sm:w-80" />
           </div>
+
           <Table
             columns={columns}
-            data={filteredInstances}
-            emptyMessage={
-              searchQuery
-                ? "No instances match your search criteria."
-                : "No instances found. Create your first instance to get started."
+            rows={filtered}
+            rowKey={(i) => i.id}
+            onRowClick={(i) => navigate(detailPath(i))}
+            loading={loading}
+            loadingLabel="Loading instances…"
+            empty={
+              instances.length > 0 ? (
+                <EmptyState
+                  title="No matching instances"
+                  description="Try a different search or filter."
+                  action={
+                    <button
+                      className="btn-secondary"
+                      onClick={() => {
+                        setQuery("");
+                        setStateFilter("all");
+                      }}
+                    >
+                      Clear filters
+                    </button>
+                  }
+                />
+              ) : (
+                <EmptyState
+                  icon={<Server size={20} />}
+                  title={`No instances on ${currentNode || "this node"}`}
+                  description="Create an instance from a template, cloud image or installer ISO."
+                  action={
+                    <button className="btn-primary" onClick={() => setCreateOpen(true)}>
+                      <Plus size={15} />
+                      Create instance
+                    </button>
+                  }
+                />
+              )
             }
           />
         </>
       )}
 
-      <Modal
-        isOpen={isCreateModalOpen}
-        onClose={() => {
-          setIsCreateModalOpen(false);
-          setCurrentStep(0);
-        }}
-        onOpen={() => {
-          // 自动选择第一个 node
-          if (nodes.length > 0 && !formData.node_name) {
-            setFormData(prev => ({ ...prev, node_name: nodes[0].name, pool_name: "", template_id: "" }));
-          }
-        }}
-        title="Create New Instance"
-        maxWidth="xl"
-      >
-        <form
-          onSubmit={(e) => e.preventDefault()}
-          onKeyDown={(e) => {
-            // 阻止 Enter 键在非最后一步时提交表单
-            if (e.key === "Enter" && currentStep < maxStep) {
-              e.preventDefault();
+      {createOpen && !nodesLoading && (
+        <CreateInstanceModal
+          nodes={nodes}
+          defaultNode={currentNode}
+          onClose={closeCreate}
+          onCreated={(instance, nodeName) => {
+            closeCreate();
+            if (nodeName !== currentNode) {
+              setCurrentNode(nodeName);
+            } else {
+              fetchInstances({ silent: true });
+            }
+            if (instance?.id) {
+              navigate(`/instances/${encodeURIComponent(nodeName)}/${encodeURIComponent(instance.id)}`);
             }
           }}
-          className="space-y-6"
-        >
-          {/* Step indicator */}
-          <div className="flex items-center justify-between border-b pb-4">
-            {steps.map((step, index) => (
-              <div key={step} className="flex items-center">
-                <button
-                  type="button"
-                  onClick={() => setCurrentStep(index)}
-                  disabled={index === 0 ? false : (index === 1 ? !formData.node_name || !formData.pool_name : false)}
-                  className={`flex items-center justify-center w-8 h-8 rounded-full border-2 transition-colors ${
-                    currentStep >= index
-                      ? "border-accent bg-accent text-white"
-                      : "border-gray-300 text-gray-400"
-                  } ${index > 0 && (!formData.node_name || !formData.pool_name) ? "cursor-not-allowed opacity-50" : "cursor-pointer hover:opacity-80"}`}
-                >
-                  {index + 1}
-                </button>
-                <span
-                  className={`ml-2 text-sm font-medium ${
-                    currentStep >= index ? "text-accent" : "text-gray-400"
-                  }`}
-                >
-                  {step}
-                </span>
-                {index < maxStep && (
-                  <div
-                    className={`w-12 h-0.5 mx-2 ${
-                      currentStep > index ? "bg-accent" : "bg-gray-300"
-                    }`}
-                  />
-                )}
-              </div>
-            ))}
-          </div>
+        />
+      )}
 
-          {/* Step 1: Basic Configuration */}
-          {currentStep === 0 && (
-            <div className="space-y-4">
-              <h3 className="font-semibold text-gray-900">Basic Configuration</h3>
-
-              <div>
-                <label className="label">Operating System</label>
-                <div className="inline-flex rounded-md border border-gray-200 overflow-hidden">
-                  <button
-                    type="button"
-                    className={`px-4 py-2 text-sm ${!isWindowsMode ? "bg-accent text-white" : "bg-white text-gray-700 hover:bg-gray-50"}`}
-                    onClick={() => {
-                      setCurrentStep(0);
-                      setFormData({
-                        ...formData,
-                        os_type: "linux",
-						windows_boot_mode: "install",
-                        driver_iso_template_id: "",
-						user_groups: "sudo",
-                        size_gb: formData.size_gb === 64 ? 20 : formData.size_gb,
-                      });
-                    }}
-                  >
-                    Linux
-                  </button>
-                  <button
-                    type="button"
-                    className={`px-4 py-2 text-sm border-l border-gray-200 ${isWindowsMode ? "bg-accent text-white" : "bg-white text-gray-700 hover:bg-gray-50"}`}
-                    onClick={() => {
-                      setCurrentStep(0);
-                      setFormData({
-                        ...formData,
-                        os_type: "windows",
-						windows_boot_mode: "install",
-                        template_id: "",
-                        driver_iso_template_id: "",
-						user_groups: "Administrators",
-                        size_gb: formData.size_gb < 64 ? 64 : formData.size_gb,
-                        memory_mb: formData.memory_mb < 4096 ? 4096 : formData.memory_mb,
-                      });
-                    }}
-                  >
-                    Windows
-                  </button>
-                </div>
-              </div>
-
-						{isWindowsMode && (
-							<div>
-								<label className="label">Provisioning Mode</label>
-								<div className="inline-flex rounded-md border border-gray-200 overflow-hidden">
-									<button
-										type="button"
-										className={`px-4 py-2 text-sm ${!isWindowsCloudImageMode ? "bg-accent text-white" : "bg-white text-gray-700 hover:bg-gray-50"}`}
-										onClick={() => {
-											setCurrentStep(0);
-											setFormData({ ...formData, windows_boot_mode: "install", template_id: "", user_groups: "Administrators" });
-										}}
-									>
-										Install ISO
-									</button>
-									<button
-										type="button"
-										className={`px-4 py-2 text-sm border-l border-gray-200 ${isWindowsCloudImageMode ? "bg-accent text-white" : "bg-white text-gray-700 hover:bg-gray-50"}`}
-										onClick={() => {
-											setCurrentStep(0);
-											setFormData({
-												...formData,
-												windows_boot_mode: "cloud_image",
-												template_id: recommendedWindowsCloudImage?.id || "",
-												driver_iso_template_id: "",
-												user_groups: "Administrators",
-											});
-										}}
-									>
-										Cloud Image
-									</button>
-								</div>
-							</div>
-						)}
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="label">Node *</label>
-                  <select
-                    className="input"
-                    value={formData.node_name}
-                    onChange={(e) =>
-                      setFormData({ ...formData, node_name: e.target.value, pool_name: "", template_id: "", driver_iso_template_id: "" })
-                    }
-                    required
-                  >
-                    <option value="">Select Node</option>
-                    {nodes.map((node) => (
-                      <option key={node.name} value={node.name}>
-                        {node.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="label">Storage Pool *</label>
-                  <select
-                    className="input"
-                    value={formData.pool_name}
-                    onChange={(e) =>
-                      setFormData({ ...formData, pool_name: e.target.value, template_id: "", driver_iso_template_id: "" })
-                    }
-                    required
-                    disabled={!formData.node_name}
-                  >
-                    <option value="">Select Storage Pool</option>
-                    {storagePools.map((pool) => (
-                      <option key={pool.name} value={pool.name}>
-                        {pool.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="label">
-							{isWindowsMode ? (isWindowsCloudImageMode ? "Windows Cloud Image *" : "Windows Installer ISO *") : "Template"}
-						</label>
-                <select
-                  className="input"
-                  value={formData.template_id}
-                  onChange={(e) =>
-                    setFormData({ ...formData, template_id: e.target.value })
-                  }
-                  disabled={!formData.pool_name}
-                  required={isWindowsMode}
-                >
-                  <option value="">
-							{isWindowsMode
-								? (isWindowsCloudImageMode ? "Select Windows cloud image" : "Select Windows installer ISO")
-								: "No Template (Empty Disk)"}
-                  </option>
-							{visibleTemplates.map((template) => (
-                    <option key={template.id} value={template.id}>
-                      {template.name}
-                      {isRecommendedWindowsCloudImage(template) ? " (Recommended)" : ""}
-                      {" "}({template.size_gb}GB, {template.format})
-                    </option>
-                  ))}
-                </select>
-                {isWindowsCloudImageMode && recommendedWindowsCloudImage && (
-                  <p className="text-xs text-blue-700 mt-1">
-                    Use <strong>{recommendedWindowsCloudImage.name}</strong>. It is prepared for Cloudbase-Init, VirtIO, QEMU Guest Agent, and VNC clipboard support.
-                  </p>
-                )}
-                {formData.pool_name && !isWindowsMode && templates.length === 0 && (
-                  <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                    <p className="text-sm text-amber-800">
-                      <strong>No templates found</strong> in this storage pool. You can:
-                    </p>
-                    <ul className="text-sm text-amber-700 mt-1 list-disc list-inside">
-                      <li>Select a different storage pool that contains templates</li>
-                      <li>
-                        <a href="/templates" className="text-amber-900 underline hover:text-amber-700">
-                          Create a new template
-                        </a>{" "}
-                        in this storage pool
-                      </li>
-                      <li>Continue without a template (creates an empty disk)</li>
-                    </ul>
-                  </div>
-                )}
-						{isWindowsMode && formData.pool_name && visibleTemplates.length === 0 && (
-                  <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                    <p className="text-sm text-amber-800">
-								{isWindowsCloudImageMode
-									? "Register a Windows disk image with Cloud-init ready and Virtio drivers enabled first."
-									: "Register a Windows ISO as a template in this pool first."}
-                    </p>
-                  </div>
-                )}
-						{isWindowsMode && !isWindowsCloudImageMode && (
-                  <div className="mt-3">
-                    <label className="label">VirtIO Driver ISO</label>
-                    <select
-                      className="input"
-                      value={formData.driver_iso_template_id}
-                      onChange={(e) => setFormData({ ...formData, driver_iso_template_id: e.target.value })}
-                      disabled={!formData.pool_name}
-                    >
-                      <option value="">No driver ISO</option>
-                      {driverISOTemplates.map((template) => (
-                        <option key={template.id} value={template.id}>
-                          {template.name} ({template.size_gb}GB, {template.format})
-                        </option>
-                      ))}
-                    </select>
-                    <p className="text-xs text-gray-500 mt-1">
-                      Use a VirtIO driver ISO when installing Windows onto a virtio disk or using virtio networking.
-                    </p>
-                  </div>
-                )}
-                {(!isWindowsMode && (!formData.pool_name || templates.length > 0)) && (
-                  <p className="text-xs text-gray-500 mt-1">
-                    Select a template to create instance from, or leave empty for blank disk
-                  </p>
-                )}
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="label">vCPUs *</label>
-                  <input
-                    type="number"
-                    className="input"
-                    value={formData.vcpus}
-                    onChange={(e) =>
-                      setFormData({ ...formData, vcpus: Number(e.target.value) })
-                    }
-                    min={isWindowsMode ? 2 : 1}
-                    max="32"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="label">Memory (MB) *</label>
-                  <input
-                    type="number"
-                    className="input"
-                    value={formData.memory_mb}
-                    onChange={(e) =>
-                      setFormData({ ...formData, memory_mb: Number(e.target.value) })
-                    }
-                    min={isWindowsMode ? 4096 : 512}
-                    step="512"
-                    required
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    {(formData.memory_mb / 1024).toFixed(1)} GB
-                  </p>
-                </div>
-              </div>
-
-              <div>
-                <label className="label">Disk Size (GB) *</label>
-                <input
-                  type="number"
-                  className="input"
-                  value={formData.size_gb}
-                  onChange={(e) =>
-                    setFormData({ ...formData, size_gb: Number(e.target.value) })
-                  }
-                  min={isWindowsMode ? 64 : 10}
-                  required
-                />
-              </div>
-
-						{isWindowsMode && (
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  <p className="text-sm text-blue-800">
-								{isWindowsCloudImageMode
-									? "Cloud Image mode clones the recommended prepared disk and applies first-boot settings through Cloudbase-Init."
-									: "Install ISO mode is for manual Windows installation. It creates a blank system disk, boots from the installer, and attaches the optional driver ISO."}
-                  </p>
-                </div>
-              )}
-
-              <div>
-                <label className="label">Network</label>
-                <select
-                  className="input"
-                  value={`${formData.network_type}:${formData.network_source}`}
-                  onChange={(e) => {
-                    const [type, source] = e.target.value.split(':');
-                    setFormData({ ...formData, network_type: type, network_source: source });
-                  }}
-                  disabled={!formData.node_name}
-                >
-                  <option value="">Select Network</option>
-                  {networkSources?.libvirt_networks && networkSources.libvirt_networks.length > 0 && (
-                    <optgroup label="Libvirt Networks">
-                      {networkSources.libvirt_networks.map((net) => (
-                        <option
-                          key={`network:${net.name}`}
-                          value={`network:${net.name}`}
-                          disabled={net.state !== "active"}
-                        >
-                          {net.name} ({net.mode})
-                          {net.ip_address && ` - ${net.ip_address}`}
-                          {net.state !== "active" && " [inactive]"}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {networkSources?.host_bridges && networkSources.host_bridges.length > 0 && (
-                    <optgroup label="Host Bridges">
-                      {networkSources.host_bridges.map((br) => (
-                        <option
-                          key={`bridge:${br.name}`}
-                          value={`bridge:${br.name}`}
-                          disabled={br.state !== "up"}
-                        >
-                          {br.name}
-                          {br.ips && br.ips.length > 0 && ` (${br.ips[0]})`}
-                          {br.state !== "up" && " [down]"}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                </select>
-                <p className="text-xs text-gray-500 mt-1">
-                  {formData.network_type === "network"
-                    ? "Libvirt NAT network provides DHCP and NAT"
-                    : "Bridge connects VM directly to host network"}
-                </p>
-              </div>
-
-						{usesCloudInit && (
-              <div>
-                <label className="label">Key Pairs</label>
-                <div className="flex gap-4 mb-3">
-                  <label className="flex items-center">
-                    <input
-                      type="radio"
-                      name="keypairMethod"
-                      value="select"
-                      checked={keypairInputMethod === "select"}
-                      onChange={(e) => setKeypairInputMethod(e.target.value as "select" | "upload" | "manual")}
-                      className="mr-2"
-                    />
-                    <span className="text-sm">Select Existing</span>
-                  </label>
-                  <label className="flex items-center">
-                    <input
-                      type="radio"
-                      name="keypairMethod"
-                      value="upload"
-                      checked={keypairInputMethod === "upload"}
-                      onChange={(e) => setKeypairInputMethod(e.target.value as "select" | "upload" | "manual")}
-                      className="mr-2"
-                    />
-                    <span className="text-sm">Upload File</span>
-                  </label>
-                  <label className="flex items-center">
-                    <input
-                      type="radio"
-                      name="keypairMethod"
-                      value="manual"
-                      checked={keypairInputMethod === "manual"}
-                      onChange={(e) => setKeypairInputMethod(e.target.value as "select" | "upload" | "manual")}
-                      className="mr-2"
-                    />
-                    <span className="text-sm">Manual Input</span>
-                  </label>
-                </div>
-
-                {keypairInputMethod === "select" && (
-                  <select
-                    className="input"
-                    value={formData.keypair_ids[0] || ""}
-                    onChange={(e) => {
-                      setFormData({
-                        ...formData,
-                        keypair_ids: e.target.value ? [e.target.value] : []
-                      });
-                    }}
-                  >
-                    <option value="">Select Key Pair (Optional)</option>
-                    {keypairs.map((keypair) => (
-                      <option key={keypair.id} value={keypair.id}>
-                        {keypair.name}
-                      </option>
-                    ))}
-                  </select>
-                )}
-
-                {keypairInputMethod === "upload" && (
-                  <input
-                    type="file"
-                    className="input"
-                    accept=".pub,.pem,.key"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        const reader = new FileReader();
-                        reader.onload = (event) => {
-                          const content = event.target?.result as string;
-                          setManualPublicKey(content);
-                        };
-                        reader.readAsText(file);
-                      }
-                    }}
-                  />
-                )}
-
-                {keypairInputMethod === "manual" && (
-                  <textarea
-                    className="input font-mono text-xs"
-                    rows={4}
-                    value={manualPublicKey}
-                    onChange={(e) => setManualPublicKey(e.target.value)}
-                    placeholder="ssh-rsa AAAAB3NzaC1yc2E..."
-                  />
-                )}
-              </div>
-              )}
-            </div>
-          )}
-
-          {/* Step 2: User and System Configuration */}
-          {currentStep === 1 && (
-            <div className="space-y-4">
-						<h3 className="font-semibold text-gray-900">
-							{isWindowsCloudImageMode ? "Windows Initialization" : "User and System Configuration"}
-						</h3>
-
-              <div>
-                <label className="label">Hostname</label>
-                <input
-                  type="text"
-                  className="input"
-                  value={formData.hostname}
-                  onChange={(e) =>
-                    setFormData({ ...formData, hostname: e.target.value })
-                  }
-                  placeholder="my-server"
-                />
-              </div>
-
-              <div>
-                <label className="label">Timezone</label>
-                <select
-                  className="input"
-                  value={formData.timezone}
-                  onChange={(e) =>
-                    setFormData({ ...formData, timezone: e.target.value })
-                  }
-                >
-                  <option value="Asia/Shanghai">Asia/Shanghai</option>
-                  <option value="UTC">UTC</option>
-                  <option value="America/New_York">America/New_York</option>
-                  <option value="Europe/London">Europe/London</option>
-                  <option value="Asia/Tokyo">Asia/Tokyo</option>
-                </select>
-              </div>
-
-              <div className="border-t pt-4">
-                <h4 className="font-medium text-gray-900 mb-3">Create User (Optional)</h4>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="label">Username</label>
-                    <input
-                      type="text"
-                      className="input"
-                      value={formData.username}
-                      onChange={(e) =>
-                        setFormData({ ...formData, username: e.target.value })
-                      }
-								placeholder={isWindowsCloudImageMode ? "jimyag" : "ubuntu"}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="label">Password</label>
-                    <input
-                      type="password"
-                      className="input"
-                      value={formData.user_password}
-                      onChange={(e) =>
-                        setFormData({ ...formData, user_password: e.target.value })
-                      }
-                      placeholder="User password"
-                    />
-                  </div>
-                </div>
-
-								<div className={`grid ${isWindowsCloudImageMode ? "grid-cols-1" : "grid-cols-2"} gap-4 mt-4`}>
-                  <div>
-                    <label className="label">Groups</label>
-                    <input
-                      type="text"
-                      className="input"
-                      value={formData.user_groups}
-                      onChange={(e) =>
-                        setFormData({ ...formData, user_groups: e.target.value })
-                      }
-										placeholder={isWindowsCloudImageMode ? "Administrators" : "sudo"}
-                    />
-                  </div>
-
-									{!isWindowsCloudImageMode && <div>
-                    <label className="label">Shell</label>
-                    <select
-                      className="input"
-                      value={formData.user_shell}
-                      onChange={(e) =>
-                        setFormData({ ...formData, user_shell: e.target.value })
-                      }
-                    >
-                      <option value="/bin/bash">/bin/bash</option>
-                      <option value="/bin/sh">/bin/sh</option>
-                      <option value="/bin/zsh">/bin/zsh</option>
-                    </select>
-									</div>}
-                </div>
-
-								{!isWindowsCloudImageMode && <div className="mt-4">
-                  <label className="label">Sudo Permissions</label>
-                  <input
-                    type="text"
-                    className="input"
-                    value={formData.user_sudo}
-                    onChange={(e) =>
-                      setFormData({ ...formData, user_sudo: e.target.value })
-                    }
-                    placeholder="ALL=(ALL) NOPASSWD:ALL"
-                  />
-								</div>}
-              </div>
-
-						{!isWindowsCloudImageMode && <div className="flex items-center">
-                <input
-                  type="checkbox"
-                  id="disable_root"
-                  checked={formData.disable_root}
-                  onChange={(e) =>
-                    setFormData({ ...formData, disable_root: e.target.checked })
-                  }
-                  className="mr-2"
-                />
-                <label htmlFor="disable_root" className="text-sm text-gray-700">
-                  Disable root login
-                </label>
-						</div>}
-
-						{isWindowsCloudImageMode && (
-							<div>
-								<label className="label">Run Commands</label>
-								<textarea
-									className="input font-mono text-xs"
-									rows={5}
-									value={formData.run_cmd.join("\n")}
-									onChange={(e) => {
-										const commands = e.target.value.split("\n").map((command) => command.trim()).filter(Boolean);
-										setFormData({ ...formData, run_cmd: commands });
-									}}
-									placeholder={'One cmd.exe command per line, e.g.:\npowershell.exe -NoProfile -Command "Enable-PSRemoting -Force"'}
-								/>
-							</div>
-						)}
-            </div>
-          )}
-
-          {/* Step 3: Advanced Configuration */}
-          {currentStep === 2 && (
-            <div className="space-y-4">
-              <h3 className="font-semibold text-gray-900">Advanced Configuration</h3>
-
-              <div>
-                <label className="label">Packages to Install</label>
-                <textarea
-                  className="input"
-                  rows={3}
-                  value={formData.packages.join("\n")}
-                  onChange={(e) => {
-                    const pkgs = e.target.value
-                      .split("\n")
-                      .map((s) => s.trim())
-                      .filter(Boolean);
-                    setFormData({ ...formData, packages: pkgs });
-                  }}
-                  placeholder="One package per line, e.g.:&#10;nginx&#10;git&#10;curl"
-                />
-              </div>
-
-              <div>
-                <label className="label">Run Commands</label>
-                <textarea
-                  className="input"
-                  rows={4}
-                  value={formData.run_cmd.join("\n")}
-                  onChange={(e) => {
-                    const cmds = e.target.value
-                      .split("\n")
-                      .map((s) => s.trim())
-                      .filter(Boolean);
-                    setFormData({ ...formData, run_cmd: cmds });
-                  }}
-                  placeholder="One command per line, e.g.:&#10;systemctl enable nginx&#10;systemctl start nginx"
-                />
-              </div>
-
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <p className="text-sm text-blue-800">
-                  <strong>Note:</strong> Advanced configuration is optional. You can skip and create the instance directly.
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Buttons */}
-          <div className="flex justify-between pt-4 border-t">
-            <div>
-              {currentStep > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setCurrentStep(currentStep - 1)}
-                  className="btn-secondary"
-                >
-                  Previous
-                </button>
-              )}
-            </div>
-
-            <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsCreateModalOpen(false);
-                  setCurrentStep(0);
-                }}
-                className="btn-secondary"
-              >
-                Cancel
-              </button>
-
-              {currentStep < maxStep ? (
-                <button
-                  type="button"
-                  onClick={() => setCurrentStep(currentStep + 1)}
-                  className="btn-primary"
-                  disabled={currentStep === 0 && (!formData.node_name || !formData.pool_name || (isWindowsMode && !formData.template_id))}
-                >
-                  Next
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleCreateInstance}
-                  className="btn-primary"
-                  disabled={!formData.node_name || !formData.pool_name || (isWindowsMode && !formData.template_id)}
-                >
-                  Create Instance
-                </button>
-              )}
-            </div>
-          </div>
-        </form>
-      </Modal>
-
-      <ConfirmDialog
-        isOpen={isDeleteDialogOpen}
-        onClose={() => setIsDeleteDialogOpen(false)}
-        onConfirm={handleDeleteConfirm}
-        title="Terminate Instance"
-        message="Are you sure you want to terminate this instance? This action cannot be undone and all data will be permanently lost."
-        confirmText="Terminate"
-        cancelText="Cancel"
-        variant="danger"
-        extraContent={
-          <label className="flex items-center gap-2 text-sm text-gray-700">
-            <input
-              type="checkbox"
-              className="h-4 w-4"
-              checked={deleteVolumes}
-              onChange={(e) => setDeleteVolumes(e.target.checked)}
-            />
-            Also delete associated disks
-          </label>
-        }
-      />
+      {dialog}
     </>
   );
 }

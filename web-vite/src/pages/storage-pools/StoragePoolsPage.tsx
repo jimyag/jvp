@@ -1,520 +1,288 @@
-import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import {
-  Database,
-  RefreshCw,
-  Plus,
-  Play,
-  Square,
-  ExternalLink,
-} from "lucide-react";
-import { apiPost } from "@/lib/api";
+import { useCallback, useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { Database, Info, Play, Plus, RefreshCw, Square } from "lucide-react";
+import PageHeader from "@/components/PageHeader";
+import Table from "@/components/Table";
+import Modal from "@/components/Modal";
+import ConfirmDialog from "@/components/ConfirmDialog";
+import DropdownMenu from "@/components/DropdownMenu";
+import NodeSelect from "@/components/NodeSelect";
+import { Badge, EmptyState, Field, Spinner, StatusBadge, UsageBar } from "@/components/ui";
 import { useToast } from "@/components/ToastContainer";
-import Header from "@/components/Header";
+import { api, errorMessage } from "@/lib/api";
+import { formatBytes, percent } from "@/lib/format";
+import { useScopedNode } from "@/lib/nodes";
+import type { StoragePool } from "@/lib/types";
 
-interface StoragePool {
-  name: string;
-  uuid: string;
-  state: string;
-  type: string;
-  capacity: number;
-  allocation: number;
-  available: number;
-  path: string;
-  volume_count: number;
-}
+const POOL_TYPES = [
+  { value: "dir", label: "Directory", hint: "A directory on the host filesystem." },
+  { value: "fs", label: "Filesystem", hint: "A pre-formatted block device mounted by libvirt." },
+  { value: "netfs", label: "Network filesystem", hint: "An NFS/CIFS export mounted by libvirt." },
+];
 
-interface ListStoragePoolsResponse {
-  pools: StoragePool[];
-}
-
-interface Node {
-  name: string;
-  uuid: string;
-  uri: string;
-  type: string;
-  state: string;
-}
-
-export default function StoragePoolsPage() {
-  const navigate = useNavigate();
-  const [pools, setPools] = useState<StoragePool[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-
-  // Node selection
-  const [nodes, setNodes] = useState<Node[]>([]);
-  const [selectedNode, setSelectedNode] = useState<string>("");
-  const [loadingNodes, setLoadingNodes] = useState(true);
-
-  // Create pool modal
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [createForm, setCreateForm] = useState({
-    name: "",
-    type: "dir",
-    path: "",
-  });
-  const [creating, setCreating] = useState(false);
-
+function CreatePoolModal({ nodeName, onClose, onCreated }: { nodeName: string; onClose: () => void; onCreated: () => void }) {
   const toast = useToast();
+  const [name, setName] = useState("");
+  const [type, setType] = useState("dir");
+  const [path, setPath] = useState("");
+  const [saving, setSaving] = useState(false);
+  const valid = name.trim() && path.trim();
 
-  useEffect(() => {
-    fetchNodes();
-  }, []);
-
-  useEffect(() => {
-    if (selectedNode && !loadingNodes) {
-      fetchPools();
-    }
-  }, [selectedNode]);
-
-  const fetchNodes = async () => {
-    setLoadingNodes(true);
+  const handleSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!valid) return;
+    setSaving(true);
     try {
-      const response = await apiPost<{ nodes: Node[] }>("/api/list-nodes", {});
-      const nodeList = response.nodes || [];
-      setNodes(nodeList);
-
-      // Auto-select node if needed
-      if (nodeList.length > 0 && (!selectedNode || !nodeList.some((n) => n.name === selectedNode))) {
-        // 尝试智能选择有存储池数据的节点
-        let smartNode = nodeList[0].name;
-
-        // 并行检查各节点的存储池情况
-        const poolChecks = await Promise.all(
-          nodeList.map(async (node) => {
-            try {
-              const poolsRes = await apiPost<ListStoragePoolsResponse>(
-                "/api/list-storage-pools",
-                { node_name: node.name }
-              );
-              return {
-                nodeName: node.name,
-                poolCount: (poolsRes.pools || []).length,
-              };
-            } catch {
-              return { nodeName: node.name, poolCount: 0 };
-            }
-          })
-        );
-
-        // 找出有存储池的节点
-        const nodeWithPools = poolChecks.find((p) => p.poolCount > 0);
-        if (nodeWithPools) {
-          smartNode = nodeWithPools.nodeName;
-        }
-
-        setSelectedNode(smartNode);
-      }
-    } catch (error: any) {
-      console.error("Failed to fetch nodes:", error);
-      toast.error(error?.message || "Failed to fetch nodes");
+      await api("/api/create-storage-pool", { node_name: nodeName, name: name.trim(), type, path: path.trim() });
+      toast.success(`Storage pool ${name.trim()} created`);
+      onCreated();
+    } catch (err) {
+      toast.error(errorMessage(err, "Failed to create storage pool"));
     } finally {
-      setLoadingNodes(false);
+      setSaving(false);
     }
   };
-
-  const fetchPools = async () => {
-    if (!selectedNode) {
-      return;
-    }
-
-    setRefreshing(true);
-    try {
-      const response = await apiPost<ListStoragePoolsResponse>(
-        "/api/list-storage-pools",
-        { node_name: selectedNode }
-      );
-      setPools(response.pools || []);
-    } catch (error: any) {
-      console.error("Failed to fetch storage pools:", error);
-      toast.error(error?.message || "Failed to fetch storage pools");
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  };
-
-  const handleCreatePool = async () => {
-    if (!createForm.name || !createForm.path) {
-      toast.error("Please fill in all required fields");
-      return;
-    }
-
-    setCreating(true);
-    try {
-      await apiPost("/api/create-storage-pool", {
-        node_name: selectedNode,
-        name: createForm.name,
-        type: createForm.type,
-        path: createForm.path,
-      });
-      toast.success(`Storage pool ${createForm.name} created successfully`);
-      setShowCreateModal(false);
-      setCreateForm({ name: "", type: "dir", path: "" });
-      await fetchPools();
-    } catch (error: any) {
-      console.error("Failed to create storage pool:", error);
-      toast.error(error?.message || "Failed to create storage pool");
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const handleStartPool = async (poolName: string) => {
-    try {
-      await apiPost("/api/start-storage-pool", {
-        node_name: selectedNode,
-        pool_name: poolName,
-      });
-      toast.success(`Storage pool ${poolName} started successfully`);
-      await fetchPools();
-    } catch (error: any) {
-      console.error("Failed to start storage pool:", error);
-      toast.error(error?.message || "Failed to start storage pool");
-    }
-  };
-
-  const handleStopPool = async (poolName: string) => {
-    if (!confirm(`Are you sure you want to stop storage pool "${poolName}"?`)) {
-      return;
-    }
-
-    try {
-      await apiPost("/api/stop-storage-pool", {
-        node_name: selectedNode,
-        pool_name: poolName,
-      });
-      toast.success(`Storage pool ${poolName} stopped successfully`);
-      await fetchPools();
-    } catch (error: any) {
-      console.error("Failed to stop storage pool:", error);
-      toast.error(error?.message || "Failed to stop storage pool");
-    }
-  };
-
-  const handleRefreshPool = async (poolName: string) => {
-    try {
-      await apiPost("/api/refresh-storage-pool", {
-        node_name: selectedNode,
-        pool_name: poolName,
-      });
-      toast.success(`Storage pool ${poolName} refreshed successfully`);
-      await fetchPools();
-    } catch (error: any) {
-      console.error("Failed to refresh storage pool:", error);
-      toast.error(error?.message || "Failed to refresh storage pool");
-    }
-  };
-
-  const formatBytes = (bytes: number): string => {
-    if (bytes === 0) return "0 B";
-    const k = 1024;
-    const sizes = ["B", "KB", "MB", "GB", "TB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`;
-  };
-
-  const getStateColor = (state: string): string => {
-    switch (state.toLowerCase()) {
-      case "active":
-      case "running":
-        return "text-green-600 bg-green-100";
-      case "inactive":
-        return "text-gray-600 bg-gray-100";
-      case "building":
-        return "text-yellow-600 bg-yellow-100";
-      case "degraded":
-        return "text-orange-600 bg-orange-100";
-      case "inaccessible":
-        return "text-red-600 bg-red-100";
-      default:
-        return "text-gray-600 bg-gray-100";
-    }
-  };
-
-  if (loadingNodes || loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <RefreshCw className="w-8 h-8 animate-spin text-primary mx-auto mb-2" />
-          <p className="text-gray-600">
-            {loadingNodes ? "Loading nodes..." : "Loading storage pools..."}
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  // Show message if no nodes available
-  if (nodes.length === 0) {
-    return (
-      <>
-        <div className="space-y-6">
-          <Header
-            title="Storage Pools"
-            description="Manage libvirt storage pools and volumes"
-          />
-          <div className="text-center py-12 bg-gray-50 rounded-lg border border-gray-200">
-            <Database className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-            <p className="text-gray-600 mb-2">No nodes available</p>
-            <p className="text-sm text-gray-500">
-              Please create a node first to manage storage pools
-            </p>
-          </div>
-        </div>
-      </>
-    );
-  }
 
   return (
-    <>
-      <div className="space-y-6">
-        {/* Header */}
-        <Header
-          title="Storage Pools"
-          description="Manage libvirt storage pools and volumes"
-          action={
-            <div className="flex gap-2">
-              {/* Node Selector */}
-              <select
-                value={selectedNode}
-                onChange={(e) => setSelectedNode(e.target.value)}
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary bg-white"
-              >
-                {nodes.map((node) => (
-                  <option key={node.name} value={node.name}>
-                    {node.name} ({node.type})
-                  </option>
-                ))}
-              </select>
-
-              <button
-                onClick={fetchPools}
-                disabled={refreshing}
-                className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
-              >
-                <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
-                Refresh
-              </button>
-              <button
-                onClick={() => setShowCreateModal(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90"
-              >
-                <Plus className="w-4 h-4" />
-                Create Pool
-              </button>
-            </div>
-          }
-        />
-
-        {/* Storage Pools List */}
-        {pools.length === 0 ? (
-          <div className="text-center py-12 bg-gray-50 rounded-lg border border-gray-200">
-            <Database className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-            <p className="text-gray-600">No storage pools found</p>
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="mt-4 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90"
-            >
-              Create Your First Pool
-            </button>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {pools.map((pool) => {
-              const usagePercent =
-                pool.capacity > 0
-                  ? ((pool.allocation / pool.capacity) * 100).toFixed(1)
-                  : "0";
-
-              return (
-                <div
-                  key={pool.name}
-                  className="bg-white border border-gray-200 rounded-lg overflow-hidden"
-                >
-                  {/* Pool Header */}
-                  <div className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3 flex-1">
-                        <Database className="w-8 h-8 text-primary" />
-                        <div className="flex-1">
-                          <div className="flex items-center gap-3">
-                            <button
-                              onClick={() =>
-                                navigate(
-                                  `/storage-pools/${encodeURIComponent(
-                                    pool.name
-                                  )}?node=${selectedNode}`
-                                )
-                              }
-                              className="text-lg font-semibold text-primary hover:underline"
-                            >
-                              {pool.name}
-                            </button>
-                            <span
-                              className={`px-2 py-1 text-xs font-medium rounded-full ${getStateColor(
-                                pool.state
-                              )}`}
-                            >
-                              {pool.state}
-                            </span>
-                            {pool.type && (
-                              <span className="px-2 py-1 text-xs font-medium text-blue-600 bg-blue-100 rounded-full">
-                                {pool.type}
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-sm text-gray-600 mt-1">{pool.path}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <div className="text-right">
-                          <div className="text-sm font-medium text-gray-900">
-                            {formatBytes(pool.allocation)} / {formatBytes(pool.capacity)}
-                          </div>
-                          <div className="text-xs text-gray-600">
-                            {usagePercent}% used · {formatBytes(pool.available)} free
-                          </div>
-                          <div className="text-xs text-gray-500 mt-0.5">
-                            {pool.volume_count} volumes
-                          </div>
-                        </div>
-
-                        {/* Action Buttons */}
-                        <div className="flex items-center gap-2">
-                          {pool.state.toLowerCase() === "inactive" ? (
-                            <button
-                              onClick={() => handleStartPool(pool.name)}
-                              className="flex items-center gap-1 px-3 py-1.5 text-sm text-green-700 bg-green-50 hover:bg-green-100 rounded-lg"
-                              title="Start"
-                            >
-                              <Play className="w-4 h-4" />
-                              Start
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => handleStopPool(pool.name)}
-                              className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg"
-                              title="Stop"
-                            >
-                              <Square className="w-4 h-4" />
-                              Stop
-                            </button>
-                          )}
-                          <button
-                            onClick={() => handleRefreshPool(pool.name)}
-                            className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg"
-                            title="Refresh"
-                          >
-                            <RefreshCw className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() =>
-                              navigate(
-                                `/storage-pools/${encodeURIComponent(
-                                  pool.name
-                                )}?node=${selectedNode}`
-                              )
-                            }
-                            className="flex items-center gap-1 px-3 py-1.5 text-sm text-primary bg-blue-50 hover:bg-blue-100 rounded-lg"
-                            title="View Details"
-                          >
-                            <ExternalLink className="w-4 h-4" />
-                            Details
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Progress Bar */}
-                    <div className="mt-3 w-full bg-gray-200 rounded-full h-2">
-                      <div
-                        className="bg-primary h-2 rounded-full transition-all"
-                        style={{ width: `${usagePercent}%` }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* Create Pool Modal */}
-      {showCreateModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
-            <h2 className="text-xl font-semibold mb-4">Create Storage Pool</h2>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Pool Name *
-                </label>
-                <input
-                  type="text"
-                  value={createForm.name}
-                  onChange={(e) =>
-                    setCreateForm({ ...createForm, name: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-                  placeholder="e.g., default, images"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Type
-                </label>
-                <select
-                  value={createForm.type}
-                  onChange={(e) =>
-                    setCreateForm({ ...createForm, type: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-                >
-                  <option value="dir">Directory (dir)</option>
-                  <option value="fs">Filesystem (fs)</option>
-                  <option value="netfs">Network Filesystem (netfs)</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Path *
-                </label>
-                <input
-                  type="text"
-                  value={createForm.path}
-                  onChange={(e) =>
-                    setCreateForm({ ...createForm, path: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-                  placeholder="/var/lib/libvirt/images"
-                />
-              </div>
-            </div>
-            <div className="flex gap-2 mt-6">
-              <button
-                onClick={() => {
-                  setShowCreateModal(false);
-                  setCreateForm({ name: "", type: "dir", path: "" });
-                }}
-                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreatePool}
-                disabled={creating}
-                className="flex-1 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50"
-              >
-                {creating ? "Creating..." : "Create"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </>
+    <Modal
+      isOpen
+      onClose={onClose}
+      dismissible={!saving}
+      title="Create storage pool"
+      description={`On node ${nodeName}`}
+      footer={
+        <>
+          <button className="btn-secondary" onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button className="btn-primary" onClick={() => handleSubmit()} disabled={saving || !valid}>
+            {saving && <Spinner size={14} className="text-current" />}
+            Create pool
+          </button>
+        </>
+      }
+    >
+      <form className="space-y-4" onSubmit={handleSubmit}>
+        <Field label="Name" required>
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="images" autoFocus />
+        </Field>
+        <Field label="Type" hint={POOL_TYPES.find((t) => t.value === type)?.hint}>
+          <select className="input" value={type} onChange={(e) => setType(e.target.value)}>
+            {POOL_TYPES.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label} ({t.value})
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Path" required hint="Absolute path on the node. It is created if it does not exist.">
+          <input
+            className="input font-mono text-[13px]"
+            value={path}
+            onChange={(e) => setPath(e.target.value)}
+            placeholder="/var/lib/libvirt/images"
+          />
+        </Field>
+      </form>
+    </Modal>
   );
 }
 
+export default function StoragePoolsPage() {
+  const toast = useToast();
+  const navigate = useNavigate();
+  const { nodes, currentNode, loading: nodesLoading } = useScopedNode();
+  const [pools, setPools] = useState<StoragePool[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [toStop, setToStop] = useState<StoragePool | null>(null);
+
+  const fetchPools = useCallback(
+    async ({ silent = false }: { silent?: boolean } = {}) => {
+      if (!currentNode) return;
+      if (!silent) setRefreshing(true);
+      try {
+        const data = await api<{ pools: StoragePool[] }>("/api/list-storage-pools", { node_name: currentNode });
+        setPools(data.pools || []);
+      } catch (err) {
+        toast.error(errorMessage(err, "Failed to load storage pools"));
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [currentNode, toast]
+  );
+
+  useEffect(() => {
+    if (nodesLoading) return;
+    if (!currentNode) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setPools([]);
+    fetchPools({ silent: true });
+  }, [currentNode, nodesLoading, fetchPools]);
+
+  const poolAction = async (pool: StoragePool, action: "start" | "stop" | "refresh") => {
+    try {
+      await api(`/api/${action}-storage-pool`, { node_name: currentNode, pool_name: pool.name });
+      toast.success(
+        action === "start" ? `Pool ${pool.name} started` : action === "stop" ? `Pool ${pool.name} stopped` : `Pool ${pool.name} rescanned`
+      );
+      fetchPools({ silent: true });
+    } catch (err) {
+      toast.error(errorMessage(err, `Failed to ${action} storage pool`));
+      throw err;
+    }
+  };
+
+  const detailPath = (pool: StoragePool) => `/storage-pools/${encodeURIComponent(pool.name)}?node=${encodeURIComponent(currentNode)}`;
+  const noNodes = !nodesLoading && nodes.length === 0;
+
+  return (
+    <>
+      <PageHeader
+        title="Storage pools"
+        description="Libvirt storage pools that hold instance disks, templates and ISOs."
+        onRefresh={() => fetchPools()}
+        refreshing={refreshing}
+        actions={
+          <>
+            <NodeSelect />
+            <button className="btn-primary" onClick={() => setCreateOpen(true)} disabled={!currentNode}>
+              <Plus size={15} />
+              Create pool
+            </button>
+          </>
+        }
+      />
+
+      {noNodes ? (
+        <div className="card">
+          <EmptyState
+            icon={<Database size={20} />}
+            title="No nodes yet"
+            description="Add a node before managing storage."
+            action={
+              <Link to="/nodes?add=1" className="btn-primary">
+                Add node
+              </Link>
+            }
+          />
+        </div>
+      ) : (
+        <Table
+          rows={pools}
+          rowKey={(p) => p.uuid || p.name}
+          loading={loading}
+          loadingLabel="Loading storage pools…"
+          onRowClick={(p) => navigate(detailPath(p))}
+          empty={
+            <EmptyState
+              icon={<Database size={20} />}
+              title={`No storage pools on ${currentNode}`}
+              description="Create a pool to store instance disks and templates."
+              action={
+                <button className="btn-primary" onClick={() => setCreateOpen(true)}>
+                  <Plus size={15} />
+                  Create pool
+                </button>
+              }
+            />
+          }
+          columns={[
+            {
+              key: "name",
+              header: "Name",
+              render: (p) => (
+                <div className="flex items-center gap-2.5">
+                  <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md bg-subtle text-fg-subtle">
+                    <Database size={15} />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="font-medium">{p.name}</div>
+                    <div className="max-w-[280px] truncate font-mono text-xs text-fg-subtle" title={p.path}>
+                      {p.path}
+                    </div>
+                  </div>
+                </div>
+              ),
+            },
+            { key: "state", header: "Status", render: (p) => <StatusBadge status={p.state} /> },
+            { key: "type", header: "Type", render: (p) => (p.type ? <Badge>{p.type}</Badge> : <span className="text-fg-subtle">—</span>) },
+            {
+              key: "usage",
+              header: "Usage",
+              className: "w-[260px]",
+              render: (p) => {
+                const used = percent(p.allocation, p.capacity);
+                return (
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-xs text-fg-muted">
+                      <span>
+                        {formatBytes(p.allocation)} / {formatBytes(p.capacity)}
+                      </span>
+                      <span className="tabular-nums">{used.toFixed(0)}%</span>
+                    </div>
+                    <UsageBar value={used} size="sm" />
+                  </div>
+                );
+              },
+            },
+            { key: "free", header: "Free", render: (p) => <span className="whitespace-nowrap text-fg-muted">{formatBytes(p.available)}</span> },
+            { key: "volumes", header: "Volumes", align: "right", render: (p) => <span className="tabular-nums">{p.volume_count}</span> },
+            {
+              key: "actions",
+              header: <span className="sr-only">Actions</span>,
+              align: "right",
+              render: (p) => {
+                const active = p.state.toLowerCase() === "active";
+                return (
+                  <div onClick={(e) => e.stopPropagation()}>
+                    <DropdownMenu
+                      items={[
+                        { label: "View volumes", icon: <Info size={14} />, onClick: () => navigate(detailPath(p)) },
+                        { label: "Rescan volumes", icon: <RefreshCw size={14} />, onClick: () => poolAction(p, "refresh").catch(() => undefined), disabled: !active },
+                        active
+                          ? { label: "Stop pool", icon: <Square size={14} />, onClick: () => setToStop(p) }
+                          : { label: "Start pool", icon: <Play size={14} />, onClick: () => poolAction(p, "start").catch(() => undefined) },
+                      ]}
+                    />
+                  </div>
+                );
+              },
+            },
+          ]}
+        />
+      )}
+
+      {createOpen && (
+        <CreatePoolModal
+          nodeName={currentNode}
+          onClose={() => setCreateOpen(false)}
+          onCreated={() => {
+            setCreateOpen(false);
+            fetchPools({ silent: true });
+          }}
+        />
+      )}
+
+      <ConfirmDialog
+        isOpen={Boolean(toStop)}
+        onClose={() => setToStop(null)}
+        onConfirm={() => (toStop ? poolAction(toStop, "stop") : undefined)}
+        title="Stop storage pool?"
+        message={
+          <>
+            Instances using disks in <strong className="text-fg">{toStop?.name}</strong> may fail to start until the pool is started again.
+          </>
+        }
+        confirmText="Stop pool"
+        variant="warning"
+      />
+    </>
+  );
+}

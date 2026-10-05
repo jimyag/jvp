@@ -1,1277 +1,399 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import { useSearchParams } from "react-router-dom";
-import Header from "@/components/Header";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { Download, Layers, Plus, Trash2 } from "lucide-react";
+import PageHeader from "@/components/PageHeader";
 import Table from "@/components/Table";
+import ConfirmDialog from "@/components/ConfirmDialog";
+import DropdownMenu from "@/components/DropdownMenu";
+import NodeSelect from "@/components/NodeSelect";
+import SearchFilter from "@/components/SearchFilter";
+import { Alert, Badge, Checkbox, EmptyState, Spinner } from "@/components/ui";
 import { useToast } from "@/components/ToastContainer";
-import { apiPost } from "@/lib/api";
-import {
-  Package,
-  Server,
-  HardDrive,
-  Tag,
-  Trash2,
-  Plus,
-  RefreshCw,
-} from "lucide-react";
+import { api, errorMessage } from "@/lib/api";
+import { useScopedNode } from "@/lib/nodes";
+import { isRecommendedWindowsCloudImage } from "@/lib/templates";
+import type { DownloadTask, StoragePool, Template } from "@/lib/types";
+import RegisterTemplateModal from "./RegisterTemplateModal";
 
-interface Template {
-  id: string;
-  name: string;
-  description: string;
-  node_name: string;
-  pool_name: string;
-  volume_name: string;
-  size_gb: number;
-  format: string;
-  created_at: string;
-  tags: string[];
-  features?: {
-    cloud_init?: boolean;
-    virtio?: boolean;
-    qemu_guest_agent?: boolean;
-  };
-}
-
-function isRecommendedWindowsCloudImage(template: Template) {
-  const tags = template.tags || [];
-  return (
-    tags.includes("windows") &&
-    tags.includes("cloud-image") &&
-    tags.includes("vnc-clipboard") &&
-    template.features?.cloud_init === true &&
-    template.features?.virtio === true &&
-    template.features?.qemu_guest_agent === true
-  );
-}
-
-interface ListTemplatesResponse {
-  templates: Template[];
-}
-
-interface DownloadTask {
-  id: string;
-  node_name: string;
-  pool_name: string;
-  volume_name: string;
-  status: string;
-  error?: string;
-}
-
-interface RegisterTemplateResponse {
-  template?: Template;
-  download_task?: DownloadTask;
-}
-
-interface GetDownloadTaskResponse {
-  task: DownloadTask;
-}
-
-interface ListDownloadTasksResponse {
-  tasks: DownloadTask[] | null;
-}
-
-interface NodeItem {
-  name: string;
-  state: string;
-}
-
-interface StoragePoolItem {
-  name: string;
-}
-
-// 预设的常用镜像/ISO URL
-const PRESET_DOWNLOADS = [
-  {
-    name: "Ubuntu 26.04 LTS",
-    category: "Linux Cloud Images",
-    url: "https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64.img",
-    os: { name: "Ubuntu", version: "26.04", arch: "x86_64" },
-    features: { cloudInit: true, virtio: true, qga: false },
-  },
-  {
-    name: "Ubuntu 24.04 LTS (Noble)",
-    category: "Linux Cloud Images",
-    url: "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img",
-    os: { name: "Ubuntu", version: "24.04", arch: "x86_64" },
-    features: { cloudInit: true, virtio: true, qga: false },
-  },
-  {
-    name: "Ubuntu 22.04 LTS (Jammy)",
-    category: "Linux Cloud Images",
-    url: "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img",
-    os: { name: "Ubuntu", version: "22.04", arch: "x86_64" },
-    features: { cloudInit: true, virtio: true, qga: false },
-  },
-  {
-    name: "Ubuntu 20.04 LTS (Focal)",
-    category: "Linux Cloud Images",
-    url: "https://cloud-images.ubuntu.com/focal/current/focal-server-cloudimg-amd64.img",
-    os: { name: "Ubuntu", version: "20.04", arch: "x86_64" },
-    features: { cloudInit: true, virtio: true, qga: false },
-  },
-  {
-    name: "Debian 13 (Trixie)",
-    category: "Linux Cloud Images",
-    url: "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-generic-amd64.qcow2",
-    os: { name: "Debian", version: "13", arch: "x86_64" },
-    features: { cloudInit: true, virtio: true, qga: false },
-  },
-  {
-    name: "Debian 12 (Bookworm)",
-    category: "Linux Cloud Images",
-    url: "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2",
-    os: { name: "Debian", version: "12", arch: "x86_64" },
-    features: { cloudInit: true, virtio: true, qga: false },
-  },
-  {
-    name: "Debian 11 (Bullseye)",
-    category: "Linux Cloud Images",
-    url: "https://cloud.debian.org/images/cloud/bullseye/latest/debian-11-generic-amd64.qcow2",
-    os: { name: "Debian", version: "11", arch: "x86_64" },
-    features: { cloudInit: true, virtio: true, qga: false },
-  },
-  {
-    name: "CentOS Stream 10",
-    category: "Linux Cloud Images",
-    url: "https://cloud.centos.org/centos/10-stream/x86_64/images/CentOS-Stream-GenericCloud-10-latest.x86_64.qcow2",
-    os: { name: "CentOS Stream", version: "10", arch: "x86_64" },
-    features: { cloudInit: true, virtio: true, qga: false },
-  },
-  {
-    name: "Rocky Linux 10",
-    category: "Linux Cloud Images",
-    url: "https://dl.rockylinux.org/vault/rocky/10.0/images/x86_64/Rocky-10-GenericCloud-Base.latest.x86_64.qcow2",
-    os: { name: "Rocky Linux", version: "10", arch: "x86_64" },
-    features: { cloudInit: true, virtio: true, qga: false },
-  },
-  {
-    name: "Windows 11 25H2 x64 (includes Pro)",
-    category: "Windows Installation Media",
-    url: "",
-    fileName: "Win11_25H2_English_x64.iso",
-    os: { name: "Windows", version: "11 25H2", arch: "x86_64" },
-    tags: "windows,installer,iso",
-    description:
-      "Microsoft Windows 11 multi-edition x64 installer ISO. Paste the temporary ISO URL generated from the official Microsoft download page.",
-    helpUrl: "https://www.microsoft.com/software-download/windows11",
-    helpText: "Open Microsoft Windows 11 ISO download page",
-    features: { cloudInit: false, virtio: true, qga: false },
-  },
-  {
-    name: "VirtIO Windows Drivers (stable)",
-    category: "Windows Driver Media",
-    url: "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso",
-    fileName: "virtio-win.iso",
-    os: { name: "Windows VirtIO Drivers", version: "stable", arch: "x86_64" },
-    tags: "windows,virtio,driver,iso",
-    description: "Stable virtio-win driver ISO for Windows guests on KVM/QEMU.",
-    helpUrl: "https://github.com/virtio-win/virtio-win-pkg-scripts/blob/master/README.md",
-    helpText: "View virtio-win download notes",
-    features: { cloudInit: false, virtio: true, qga: false },
-  },
-];
-
-const PRESET_DOWNLOAD_CATEGORIES = Array.from(new Set(PRESET_DOWNLOADS.map((img) => img.category)));
-
-const initialRegisterForm = {
-  nodeName: "",
-  poolName: "",
-  volumeName: "",
-  name: "",
-  description: "",
-  tags: "",
-  osName: "",
-  osVersion: "",
-  osArch: "x86_64",
-  cloudInit: true,
-  virtio: true,
-  qga: false,
-  sourceType: "existing_volume",
-  cloudUrl: "",
-  presetImage: "", // 预设镜像选择
-};
+const ALL_POOLS = "";
 
 export default function TemplatesPage() {
   const toast = useToast();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { nodes, currentNode, loading: nodesLoading } = useScopedNode();
+  const poolFilter = searchParams.get("pool") || ALL_POOLS;
+
+  const [pools, setPools] = useState<StoragePool[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [filters, setFilters] = useState({ nodeName: "", poolName: "" });
-  const [registerForm, setRegisterForm] = useState(initialRegisterForm);
-  const [showRegisterModal, setShowRegisterModal] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [templateToDelete, setTemplateToDelete] = useState<Template | null>(null);
+  const [query, setQuery] = useState("");
+  const [registerOpen, setRegisterOpen] = useState(searchParams.get("register") === "1");
+  const [toDelete, setToDelete] = useState<Template | null>(null);
   const [deleteVolume, setDeleteVolume] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [nodes, setNodes] = useState<NodeItem[]>([]);
-  const [loadingNodes, setLoadingNodes] = useState(false);
-  const [filterPools, setFilterPools] = useState<StoragePoolItem[]>([]);
-  const [registerPools, setRegisterPools] = useState<StoragePoolItem[]>([]);
-  const [loadingFilterPools, setLoadingFilterPools] = useState(false);
-  const [loadingRegisterPools, setLoadingRegisterPools] = useState(false);
-  const [downloadTask, setDownloadTask] = useState<DownloadTask | null>(null);
-  const [downloadTasks, setDownloadTasks] = useState<DownloadTask[]>([]);
+  const [tasks, setTasks] = useState<DownloadTask[]>([]);
+  const notifiedRef = useRef(new Set<string>());
 
-  // 用于防止重复初始化
-  const initDoneRef = useRef(false);
+  const setPoolFilter = (pool: string) =>
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (pool) next.set("pool", pool);
+        else next.delete("pool");
+        return next;
+      },
+      { replace: true }
+    );
 
-  // 从 URL 获取参数
-  const urlNode = searchParams.get("node") || "";
-  const urlPool = searchParams.get("pool") || "";
-
-  // 更新 URL（不触发页面刷新）
-  const updateURL = useCallback((node: string, pool: string) => {
-    const params = new URLSearchParams();
-    if (node) params.set("node", node);
-    if (pool) params.set("pool", pool);
-    const newURL = params.toString() ? `/templates?${params.toString()}` : "/templates";
-    window.history.replaceState(null, "", newURL);
-  }, []);
-
-  const fetchTemplates = useCallback(async ({ showLoading = false }: { showLoading?: boolean } = {}) => {
-    if (showLoading) {
-      setLoading(true);
-    } else {
-      setRefreshing(true);
-    }
-    try {
-      const response = await apiPost<ListTemplatesResponse>("/api/list-templates", {
-        node_name: filters.nodeName,
-        pool_name: filters.poolName,
-      });
-      setTemplates(response.templates || []);
-    } catch (error: any) {
-      console.error("Failed to load templates:", error);
-      toast.error(error?.message || "Failed to load templates");
-    } finally {
-      if (showLoading) {
+  const fetchTemplates = useCallback(
+    async ({ silent = false }: { silent?: boolean } = {}) => {
+      if (!currentNode) return;
+      if (!silent) setRefreshing(true);
+      try {
+        const poolData = await api<{ pools: StoragePool[] }>("/api/list-storage-pools", { node_name: currentNode });
+        const poolList = poolData.pools || [];
+        setPools(poolList);
+        // 后端按存储池查询模板，"全部" 时并行查询每个存储池后合并
+        const targets = poolFilter ? poolList.filter((p) => p.name === poolFilter) : poolList;
+        const results = await Promise.all(
+          targets.map((p) =>
+            api<{ templates: Template[] }>("/api/list-templates", { node_name: currentNode, pool_name: p.name })
+              .then((d) => d.templates || [])
+              .catch(() => [] as Template[])
+          )
+        );
+        setTemplates(results.flat());
+      } catch (err) {
+        toast.error(errorMessage(err, "Failed to load templates"));
+      } finally {
         setLoading(false);
-      } else {
         setRefreshing(false);
       }
+    },
+    [currentNode, poolFilter, toast]
+  );
+
+  useEffect(() => {
+    if (nodesLoading) return;
+    if (!currentNode) {
+      setLoading(false);
+      return;
     }
-  }, [filters, toast]);
+    setLoading(true);
+    setTemplates([]);
+    fetchTemplates({ silent: true });
+  }, [currentNode, nodesLoading, fetchTemplates]);
 
-  const initializeData = useCallback(async () => {
-    if (initDoneRef.current) return;
-    initDoneRef.current = true;
+  // 恢复进行中的下载任务
+  useEffect(() => {
+    api<{ tasks: DownloadTask[] | null }>("/api/list-download-tasks")
+      .then((data) => setTasks((data.tasks || []).filter((t) => t.status === "pending" || t.status === "running")))
+      .catch(() => undefined);
+  }, []);
 
-    setLoadingNodes(true);
-    try {
-      // 获取节点列表
-      const nodesResponse = await apiPost<{ nodes: NodeItem[] }>("/api/list-nodes", {});
-      const nodeList = nodesResponse.nodes || [];
-      setNodes(nodeList);
-
-      if (nodeList.length === 0) {
-        setLoadingNodes(false);
-        return;
-      }
-
-      // 确定目标节点
-      let targetNode: string;
-      const urlNodeExists = urlNode && nodeList.some((n) => n.name === urlNode);
-
-      if (urlNodeExists) {
-        targetNode = urlNode;
-      } else {
-        // 智能选择有模板的节点：并行检查每个节点
-        const nodeChecks = await Promise.all(
-          nodeList.map(async (node) => {
-            try {
-              // 先获取该节点的存储池
-              const poolsRes = await apiPost<{ pools: StoragePoolItem[] }>(
-                "/api/list-storage-pools",
-                { node_name: node.name }
-              );
-              const nodePools = poolsRes.pools || [];
-              if (nodePools.length === 0) {
-                return { nodeName: node.name, hasTemplates: false, firstPoolWithData: "" };
-              }
-              // 检查第一个有模板的存储池
-              for (const pool of nodePools) {
-                try {
-                  const templatesRes = await apiPost<ListTemplatesResponse>(
-                    "/api/list-templates",
-                    { node_name: node.name, pool_name: pool.name }
-                  );
-                  if ((templatesRes.templates || []).length > 0) {
-                    return { nodeName: node.name, hasTemplates: true, firstPoolWithData: pool.name };
-                  }
-                } catch {
-                  // 继续检查下一个存储池
-                }
-              }
-              return { nodeName: node.name, hasTemplates: false, firstPoolWithData: nodePools[0]?.name || "" };
-            } catch {
-              return { nodeName: node.name, hasTemplates: false, firstPoolWithData: "" };
-            }
-          })
-        );
-
-        const nodeWithTemplates = nodeChecks.find((c) => c.hasTemplates);
-        if (nodeWithTemplates) {
-          targetNode = nodeWithTemplates.nodeName;
-          // 直接使用已找到的有数据的存储池
-          const poolsResponse = await apiPost<{ pools: StoragePoolItem[] }>(
-            "/api/list-storage-pools",
-            { node_name: targetNode }
-          );
-          setFilterPools(poolsResponse.pools || []);
-          setFilters({ nodeName: targetNode, poolName: nodeWithTemplates.firstPoolWithData });
-          setRegisterForm((prev) => ({ ...prev, nodeName: targetNode }));
-          updateURL(targetNode, nodeWithTemplates.firstPoolWithData);
-          return;
-        }
-        targetNode = nodeList[0]?.name || "";
-      }
-
-      // 获取目标节点的存储池
-      const poolsResponse = await apiPost<{ pools: StoragePoolItem[] }>(
-        "/api/list-storage-pools",
-        { node_name: targetNode }
+  // 统一轮询所有进行中的下载任务
+  const activeTaskIds = tasks.map((t) => t.id).join(",");
+  useEffect(() => {
+    if (!activeTaskIds) return;
+    const timer = setInterval(async () => {
+      const ids = activeTaskIds.split(",");
+      const updates = await Promise.all(
+        ids.map((id) =>
+          api<{ task: DownloadTask }>("/api/get-download-task", { task_id: id })
+            .then((d) => d.task)
+            .catch(() => null)
+        )
       );
-      const pools = poolsResponse.pools || [];
-      setFilterPools(pools);
-
-      if (pools.length === 0) {
-        setFilters({ nodeName: targetNode, poolName: "" });
-        setRegisterForm((prev) => ({ ...prev, nodeName: targetNode }));
-        updateURL(targetNode, "");
-        return;
-      }
-
-      // 确定目标存储池
-      let targetPool: string;
-      const urlPoolExists = urlPool && pools.some((p) => p.name === urlPool);
-
-      if (urlPoolExists) {
-        targetPool = urlPool;
-      } else {
-        // 智能选择有模板的存储池：并行检查每个存储池
-        const templateChecks = await Promise.all(
-          pools.map(async (pool) => {
-            try {
-              const res = await apiPost<ListTemplatesResponse>("/api/list-templates", {
-                node_name: targetNode,
-                pool_name: pool.name,
-              });
-              return {
-                poolName: pool.name,
-                templateCount: (res.templates || []).length,
-              };
-            } catch {
-              return { poolName: pool.name, templateCount: 0 };
-            }
-          })
-        );
-
-        const poolWithTemplates = templateChecks.find((c) => c.templateCount > 0);
-        targetPool = poolWithTemplates?.poolName || pools[0]?.name || "";
-      }
-
-      // 设置状态并更新 URL
-      setFilters({ nodeName: targetNode, poolName: targetPool });
-      setRegisterForm((prev) => ({
-        ...prev,
-        nodeName: targetNode,
-      }));
-      updateURL(targetNode, targetPool);
-    } catch (error: any) {
-      console.error("Failed to initialize:", error);
-      toast.error(error?.message || "Failed to initialize");
-    } finally {
-      setLoadingNodes(false);
-    }
-  }, [urlNode, urlPool, updateURL, toast]);
-
-  // 手动切换节点时调用
-  const handleNodeChange = useCallback(
-    async (nodeName: string) => {
-      if (!nodeName) {
-        setFilterPools([]);
-        setFilters((prev) => ({ ...prev, nodeName: "", poolName: "" }));
-        updateURL("", "");
-        return;
-      }
-
-      setLoadingFilterPools(true);
-      try {
-        // 获取该节点的存储池
-        const poolsResponse = await apiPost<{ pools: StoragePoolItem[] }>(
-          "/api/list-storage-pools",
-          { node_name: nodeName }
-        );
-        const pools = poolsResponse.pools || [];
-        setFilterPools(pools);
-
-        if (pools.length === 0) {
-          setFilters({ nodeName, poolName: "" });
-          updateURL(nodeName, "");
-          return;
-        }
-
-        // 智能选择有模板的存储池：并行检查每个存储池
-        const templateChecks = await Promise.all(
-          pools.map(async (pool) => {
-            try {
-              const res = await apiPost<ListTemplatesResponse>("/api/list-templates", {
-                node_name: nodeName,
-                pool_name: pool.name,
-              });
-              return {
-                poolName: pool.name,
-                templateCount: (res.templates || []).length,
-              };
-            } catch {
-              return { poolName: pool.name, templateCount: 0 };
-            }
-          })
-        );
-
-        const poolWithTemplates = templateChecks.find((c) => c.templateCount > 0);
-        const targetPool = poolWithTemplates?.poolName || pools[0]?.name || "";
-
-        setFilters({ nodeName, poolName: targetPool });
-        updateURL(nodeName, targetPool);
-      } catch (error: any) {
-        console.error("Failed to load storage pools:", error);
-        toast.error(error?.message || "Failed to load storage pools");
-      } finally {
-        setLoadingFilterPools(false);
-      }
-    },
-    [updateURL, toast]
-  );
-
-  // 手动切换存储池时调用
-  const handlePoolChange = useCallback(
-    (poolName: string) => {
-      setFilters((prev) => {
-        updateURL(prev.nodeName, poolName);
-        return { ...prev, poolName };
-      });
-    },
-    [updateURL]
-  );
-
-  const fetchRegisterPools = useCallback(
-    async (nodeName: string) => {
-      if (!nodeName) {
-        setRegisterPools([]);
-        setRegisterForm((prev) => ({ ...prev, poolName: "" }));
-        return;
-      }
-      setLoadingRegisterPools(true);
-      try {
-        const response = await apiPost<{ pools: StoragePoolItem[] }>(
-          "/api/list-storage-pools",
-          {
-            node_name: nodeName,
-          }
-        );
-        const pools = response.pools || [];
-        setRegisterPools(pools);
-        setRegisterForm((prev) => ({
-          ...prev,
-          poolName:
-            prev.poolName && pools.some((pool) => pool.name === prev.poolName)
-              ? prev.poolName
-              : pools[0]?.name || "",
-        }));
-      } catch (error: any) {
-        console.error("Failed to load storage pools:", error);
-        toast.error(error?.message || "Failed to load storage pools");
-      } finally {
-        setLoadingRegisterPools(false);
-      }
-    },
-    [toast]
-  );
-
-  // 初始化（只执行一次）
-  useEffect(() => {
-    initializeData();
-  }, [initializeData]);
-
-  // 当 filters 变化时获取模板列表
-  useEffect(() => {
-    if (filters.nodeName && filters.poolName) {
-      fetchTemplates({ showLoading: true });
-    }
-  }, [filters, fetchTemplates]);
-
-  useEffect(() => {
-    fetchRegisterPools(registerForm.nodeName);
-  }, [registerForm.nodeName, fetchRegisterPools]);
-
-  const formattedDate = (value?: string) => {
-    if (!value) return "N/A";
-    try {
-      return new Date(value).toLocaleString();
-    } catch {
-      return value;
-    }
-  };
-
-  const openRegisterModal = () => {
-    setRegisterForm((prev) => ({
-      ...initialRegisterForm,
-      nodeName: prev.nodeName || nodes[0]?.name || "",
-      poolName: prev.poolName,
-    }));
-    setShowRegisterModal(true);
-  };
-
-  const pollDownloadTask = useCallback(async (taskId: string) => {
-    try {
-      const response = await apiPost<GetDownloadTaskResponse>("/api/get-download-task", {
-        task_id: taskId,
-      });
-
-      const task = response.task;
-      setDownloadTask(task);
-      setDownloadTasks((prev) => {
-        const exists = prev.some((t) => t.id === task.id);
-        if (exists) {
-          return prev.map((t) => (t.id === task.id ? task : t));
-        }
-        return [...prev, task];
-      });
-
-      if (task.status === "completed") {
-        toast.success(`Download completed! Template "${task.volume_name}" registered successfully.`);
-        setDownloadTask(null);
-        setShowRegisterModal(false);
-        setDownloadTasks((prev) => prev.filter((t) => t.id !== taskId));
-        fetchTemplates();
-        setRegisterForm({
-          ...initialRegisterForm,
-          nodeName: registerForm.nodeName,
-          poolName: registerForm.poolName,
-        });
-      } else if (task.status === "failed") {
-        toast.error(`Download failed: ${task.error || "Unknown error"}`);
-        setDownloadTask(null);
-        setDownloadTasks((prev) => prev.filter((t) => t.id !== taskId));
-      } else {
-        setTimeout(() => pollDownloadTask(taskId), 5000);
-      }
-    } catch (error: any) {
-      console.error("Failed to poll download task:", error);
-      setDownloadTasks((prev) => prev.filter((t) => t.id !== taskId));
-      setDownloadTask(null);
-    }
-  }, [fetchTemplates, registerForm.nodeName, registerForm.poolName, toast]);
-
-  const fetchAndResumeDownloadTasks = useCallback(async () => {
-    try {
-      const response = await apiPost<ListDownloadTasksResponse>("/api/list-download-tasks", {});
-      const tasks = response.tasks || [];
-      setDownloadTasks(tasks);
-
-      for (const task of tasks) {
-        if (task.status === "pending" || task.status === "running") {
-          pollDownloadTask(task.id);
+      let finished = false;
+      for (const task of updates) {
+        if (!task || notifiedRef.current.has(task.id)) continue;
+        if (task.status === "completed") {
+          notifiedRef.current.add(task.id);
+          toast.success(`${task.volume_name} downloaded and registered`);
+          finished = true;
+        } else if (task.status === "failed") {
+          notifiedRef.current.add(task.id);
+          toast.error(`Download of ${task.volume_name} failed: ${task.error || "unknown error"}`);
+          finished = true;
         }
       }
-    } catch (error: any) {
-      console.error("Failed to fetch download tasks:", error);
-    }
-  }, [pollDownloadTask]);
-
-  useEffect(() => {
-    fetchAndResumeDownloadTasks();
-  }, [fetchAndResumeDownloadTasks]);
-
-  const handleRegisterTemplate = async () => {
-    if (!registerForm.name || !registerForm.volumeName) {
-      toast.error("Template name and volume name are required");
-      return;
-    }
-    if (!registerForm.nodeName || !registerForm.poolName) {
-      toast.error("Node and storage pool selection is required");
-      return;
-    }
-    if (
-      registerForm.sourceType === "cloud_image" &&
-      !registerForm.cloudUrl.trim()
-    ) {
-      toast.error("Download URL is required for image or ISO downloads");
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      const source =
-        registerForm.sourceType === "cloud_image"
-          ? {
-              type: "url",
-              url: registerForm.cloudUrl.trim(),
-            }
-          : undefined;
-
-      const payload = {
-        node_name: registerForm.nodeName,
-        pool_name: registerForm.poolName,
-        volume_name: registerForm.volumeName,
-        name: registerForm.name,
-        description: registerForm.description,
-        tags: registerForm.tags
-          .split(",")
-          .map((tag) => tag.trim())
-          .filter(Boolean),
-        os: {
-          name: registerForm.osName,
-          version: registerForm.osVersion,
-          arch: registerForm.osArch,
-        },
-        features: {
-          cloud_init: registerForm.cloudInit,
-          virtio: registerForm.virtio,
-          qemu_guest_agent: registerForm.qga,
-        },
-        source,
-      };
-
-      const response = await apiPost<RegisterTemplateResponse>(
-        "/api/register-template",
-        payload
+      setTasks((prev) =>
+        prev
+          .map((t) => updates.find((u) => u?.id === t.id) || t)
+          .filter((t) => t.status === "pending" || t.status === "running")
       );
+      if (finished) fetchTemplates({ silent: true });
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [activeTaskIds, fetchTemplates, toast]);
 
-      if (response?.download_task) {
-        const task = response.download_task;
-        setDownloadTask(task);
-        setDownloadTasks((prev) => [...prev, task]);
-        toast.info("Download started. This may take a few minutes...");
-        setTimeout(() => pollDownloadTask(task.id), 5000);
-      } else if (response?.template) {
-        setTemplates((prev) => [response.template!, ...prev]);
-        toast.success(`Template ${registerForm.name} registered`);
-        setShowRegisterModal(false);
-        setRegisterForm({
-          ...initialRegisterForm,
-          nodeName: registerForm.nodeName,
-          poolName: registerForm.poolName,
-        });
-      } else {
-        fetchTemplates();
-        toast.success(`Template ${registerForm.name} registered`);
-        setShowRegisterModal(false);
-      }
-    } catch (error: any) {
-      console.error("Failed to register template:", error);
-      toast.error(error?.message || "Failed to register template");
-    } finally {
-      setSubmitting(false);
+  const closeRegister = () => {
+    setRegisterOpen(false);
+    if (searchParams.get("register")) {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete("register");
+          return next;
+        },
+        { replace: true }
+      );
     }
   };
 
-  const confirmDeleteTemplate = (template: Template) => {
-    setTemplateToDelete(template);
-    setDeleteVolume(false);
-  };
-
-  const handleDeleteTemplate = async () => {
-    if (!templateToDelete) return;
-    setDeleting(true);
+  const handleDelete = async () => {
+    if (!toDelete) return;
     try {
-      await apiPost("/api/delete-template", {
-        template_id: templateToDelete.id,
-        node_name: templateToDelete.node_name,
-        pool_name: templateToDelete.pool_name,
+      await api("/api/delete-template", {
+        template_id: toDelete.id,
+        node_name: toDelete.node_name,
+        pool_name: toDelete.pool_name,
         delete_volume: deleteVolume,
       });
-      toast.success(`Template ${templateToDelete.name} deleted`);
-      setTemplateToDelete(null);
-      fetchTemplates();
-    } catch (error: any) {
-      console.error("Failed to delete template:", error);
-      toast.error(error?.message || "Failed to delete template");
-    } finally {
-      setDeleting(false);
+      toast.success(`Template ${toDelete.name} deleted`);
+      fetchTemplates({ silent: true });
+    } catch (err) {
+      toast.error(errorMessage(err, "Failed to delete template"));
+      throw err;
     }
   };
 
-  const columns = [
-    {
-      key: "name",
-      label: "Template",
-      render: (_: unknown, row: Template) => (
-        <div className="flex flex-col">
-          <div className="flex items-center gap-2">
-            <Package className="w-4 h-4 text-blue-600" />
-            <span className="font-medium">{row.name}</span>
-            {isRecommendedWindowsCloudImage(row) && (
-              <span className="inline-flex px-2 py-0.5 rounded-full bg-green-50 text-green-700 text-xs">
-                Recommended Cloud Image
-              </span>
-            )}
-          </div>
-          <p className="text-xs text-gray-500 mt-1">{row.description || "No description"}</p>
-        </div>
-      ),
-    },
-    {
-      key: "node_name",
-      label: "Node",
-      render: (value: unknown) => (
-        <div className="flex items-center gap-2">
-          <Server className="w-4 h-4 text-gray-500" />
-          <span className="font-mono text-sm">{String(value || "local")}</span>
-        </div>
-      ),
-    },
-    {
-      key: "pool_name",
-      label: "Storage",
-      render: (_: unknown, row: Template) => (
-        <div>
-          <div className="flex items-center gap-2">
-            <HardDrive className="w-4 h-4 text-gray-500" />
-            <span className="font-mono text-sm">{row.pool_name}</span>
-          </div>
-          <p className="text-xs text-gray-500 mt-1">{row.volume_name}</p>
-        </div>
-      ),
-    },
-    {
-      key: "size_gb",
-      label: "Size",
-      render: (value: unknown, row: Template) => (
-        <div>
-          <div className="font-mono text-sm">{Number(value || 0)} GB</div>
-          <p className="text-xs text-gray-500">{row.format?.toUpperCase()}</p>
-        </div>
-      ),
-    },
-    {
-      key: "tags",
-      label: "Tags",
-      render: (value: unknown) => {
-        const tags = (value as string[]) || [];
-        if (!tags.length) {
-          return <span className="text-xs text-gray-400">No tags</span>;
-        }
-        return (
-          <div className="flex flex-wrap gap-1">
-            {tags.map((tag) => (
-              <span
-                key={tag}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 text-xs"
-              >
-                <Tag className="w-3 h-3" />
-                {tag}
-              </span>
-            ))}
-          </div>
-        );
-      },
-    },
-    {
-      key: "created_at",
-      label: "Created",
-      render: (value: unknown) => (
-        <span className="text-sm text-gray-600">{formattedDate(String(value || ""))}</span>
-      ),
-    },
-    {
-      key: "actions",
-      label: "",
-      render: (_: unknown, row: Template) => (
-        <button
-          onClick={() => confirmDeleteTemplate(row)}
-          className="btn-danger text-xs flex items-center gap-1"
-        >
-          <Trash2 className="w-3 h-3" />
-          Delete
-        </button>
-      ),
-    },
-  ];
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return templates
+      .filter(
+        (t) =>
+          !q ||
+          t.name.toLowerCase().includes(q) ||
+          t.description?.toLowerCase().includes(q) ||
+          t.os?.name?.toLowerCase().includes(q) ||
+          t.tags?.some((tag) => tag.toLowerCase().includes(q))
+      )
+      .sort((a, b) => Number(isRecommendedWindowsCloudImage(b)) - Number(isRecommendedWindowsCloudImage(a)) || a.name.localeCompare(b.name));
+  }, [templates, query]);
+
+  const noNodes = !nodesLoading && nodes.length === 0;
 
   return (
     <>
-      <div className="space-y-6">
-        <Header
-          title="Templates"
-          description="Register storage volumes as reusable VM templates"
-          onRefresh={() => fetchTemplates()}
-          refreshLoading={refreshing}
-          action={
-            <button className="btn-primary flex items-center gap-2" onClick={openRegisterModal}>
-              <Plus className="w-4 h-4" />
-              Register Template
+      <PageHeader
+        title="Templates"
+        description="Disk images and ISOs that new instances are created from."
+        onRefresh={() => fetchTemplates()}
+        refreshing={refreshing}
+        actions={
+          <>
+            <NodeSelect />
+            <button className="btn-primary" onClick={() => setRegisterOpen(true)} disabled={!currentNode}>
+              <Plus size={15} />
+              Register template
             </button>
-          }
-        />
+          </>
+        }
+      />
 
-        {downloadTasks.length > 0 && (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <h3 className="text-sm font-medium text-blue-800 mb-2 flex items-center gap-2">
-              <RefreshCw className="w-4 h-4 animate-spin" />
-              Active Downloads ({downloadTasks.length})
-            </h3>
-            <div className="space-y-2">
-              {downloadTasks.map((task) => (
-                <div key={task.id} className="flex items-center gap-3 text-sm">
-                  <span className="text-blue-600 font-mono">{task.volume_name}</span>
-                  <span className="text-blue-500">→</span>
-                  <span className="text-blue-600">{task.node_name}/{task.pool_name}</span>
-                  <span className="text-xs text-blue-500 capitalize">({task.status})</span>
-                </div>
-              ))}
+      {tasks.length > 0 && (
+        <div className="card mb-4 divide-y divide-line">
+          {tasks.map((task) => (
+            <div key={task.id} className="flex items-center gap-3 px-4 py-3 text-sm">
+              <Spinner className="text-accent" />
+              <Download size={14} className="text-fg-subtle" />
+              <span className="font-mono text-[13px]">{task.volume_name}</span>
+              <span className="text-fg-subtle">
+                → {task.node_name} / {task.pool_name}
+              </span>
+              <Badge tone="info" className="ml-auto capitalize">
+                {task.status === "pending" ? "Queued" : "Downloading"}
+              </Badge>
             </div>
-          </div>
-        )}
-
-        {templates.some(isRecommendedWindowsCloudImage) && (
-          <div className="border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-            For automated Windows provisioning, use the template marked <strong>Recommended Cloud Image</strong>. Windows installer ISO is intended for manual installation only.
-          </div>
-        )}
-
-        <div className="card space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="text-sm text-gray-600">Node Filter</label>
-              <select
-                value={filters.nodeName}
-                onChange={(e) => handleNodeChange(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                disabled={loadingNodes}
-              >
-                {nodes.map((node) => (
-                  <option key={node.name} value={node.name}>
-                    {node.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="text-sm text-gray-600">Pool Filter</label>
-              <select
-                value={filters.poolName}
-                onChange={(e) => handlePoolChange(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                disabled={!filters.nodeName || loadingFilterPools}
-              >
-                {filterPools.map((pool) => (
-                  <option key={pool.name} value={pool.name}>
-                    {pool.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <p className="text-xs text-gray-500 flex items-center gap-2">
-            <RefreshCw className="w-4 h-4" />
-            Leave filters blank to list templates across all nodes.
-          </p>
+          ))}
         </div>
+      )}
 
-        {loading && templates.length === 0 ? (
-          <div className="flex items-center justify-center h-64">
-            <div className="text-center">
-              <RefreshCw className="w-8 h-8 animate-spin text-primary mx-auto mb-2" />
-              <p className="text-gray-600">Loading templates...</p>
-            </div>
+      {noNodes ? (
+        <div className="card">
+          <EmptyState
+            icon={<Layers size={20} />}
+            title="No nodes yet"
+            description="Add a node before registering templates."
+            action={
+              <Link to="/nodes?add=1" className="btn-primary">
+                Add node
+              </Link>
+            }
+          />
+        </div>
+      ) : (
+        <>
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <select className="input sm:w-56" value={poolFilter} onChange={(e) => setPoolFilter(e.target.value)} aria-label="Storage pool">
+              <option value={ALL_POOLS}>All storage pools</option>
+              {pools.map((p) => (
+                <option key={p.name} value={p.name}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <SearchFilter value={query} onChange={setQuery} placeholder="Search name, OS or tag" className="sm:w-80" />
           </div>
-        ) : (
-          <Table data={templates} columns={columns} keyField="id" emptyMessage="No templates" />
-        )}
-      </div>
 
-      {showRegisterModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4">
-            <div className="p-6 space-y-5">
-              <h2 className="text-xl font-semibold">Register Template</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Node <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={registerForm.nodeName}
-                    onChange={(e) =>
-                      setRegisterForm({
-                        ...registerForm,
-                        nodeName: e.target.value,
-                        poolName: "",
-                      })
-                    }
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
-                    disabled={nodes.length === 0 || loadingNodes}
-                  >
-                    {nodes.length === 0 && <option value="">No nodes available</option>}
-                    {nodes.map((node) => (
-                      <option key={node.name} value={node.name}>
-                        {node.name} ({node.state})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Storage Pool <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={registerForm.poolName}
-                    onChange={(e) =>
-                      setRegisterForm({ ...registerForm, poolName: e.target.value })
-                    }
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
-                    disabled={registerPools.length === 0 || loadingRegisterPools}
-                  >
-                    {registerPools.length === 0 && (
-                      <option value="">No pools available</option>
-                    )}
-                    {registerPools.map((pool) => (
-                      <option key={pool.name} value={pool.name}>
-                      {pool.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Volume Name <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={registerForm.volumeName}
-                    onChange={(e) =>
-                      setRegisterForm({ ...registerForm, volumeName: e.target.value })
-                    }
-                    placeholder="existing volume, e.g., ubuntu.qcow2"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 font-mono text-sm"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    The volume must already exist inside the selected pool.
-                  </p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Source Type
-                  </label>
-                  <select
-                    value={registerForm.sourceType}
-                    onChange={(e) =>
-                      setRegisterForm({ ...registerForm, sourceType: e.target.value })
-                    }
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="existing_volume">Existing Volume</option>
-                    <option value="cloud_image">Image/ISO (URL)</option>
-                  </select>
-                </div>
-                {registerForm.sourceType === "cloud_image" && (
-                  <>
-                    <div className="md:col-span-2">
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Select Preset Image or ISO
-                      </label>
-                      <select
-                        value={registerForm.presetImage}
-                        onChange={(e) => {
-                          const selected = e.target.value;
-                          if (selected === "custom") {
-                            setRegisterForm({
-                              ...registerForm,
-                              presetImage: "custom",
-                              cloudUrl: "",
-                            });
-                          } else if (selected) {
-                            const preset = PRESET_DOWNLOADS.find((img) => img.name === selected);
-                            if (preset) {
-                              // 从 URL 提取文件名作为默认 volume name
-                              const urlParts = preset.url.split("/");
-                              const fileName = urlParts[urlParts.length - 1];
-                              setRegisterForm({
-                                ...registerForm,
-                                presetImage: selected,
-                                cloudUrl: preset.url,
-                                volumeName: registerForm.volumeName || preset.fileName || fileName,
-                                name: registerForm.name || preset.name,
-                                description: registerForm.description || preset.description || "",
-                                tags: registerForm.tags || preset.tags || "",
-                                osName: preset.os.name,
-                                osVersion: preset.os.version,
-                                osArch: preset.os.arch,
-                                cloudInit: preset.features.cloudInit,
-                                virtio: preset.features.virtio,
-                                qga: preset.features.qga,
-                              });
-                            }
-                          } else {
-                            setRegisterForm({
-                              ...registerForm,
-                              presetImage: "",
-                              cloudUrl: "",
-                            });
-                          }
-                        }}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
-                      >
-                        <option value="">-- Select a preset image --</option>
-                        {PRESET_DOWNLOAD_CATEGORIES.map((category) => (
-                          <optgroup key={category} label={category}>
-                            {PRESET_DOWNLOADS.filter((img) => img.category === category).map((img) => (
-                              <option key={img.name} value={img.name}>
-                                {img.name}
-                              </option>
-                            ))}
-                          </optgroup>
-                        ))}
-                        <option value="custom">Custom URL...</option>
-                      </select>
-                      {(() => {
-                        const selectedPreset = PRESET_DOWNLOADS.find((img) => img.name === registerForm.presetImage);
-                        if (!selectedPreset?.helpUrl) return null;
-                        return (
-                          <p className="text-xs text-gray-500 mt-1">
-                            <a
-                              href={selectedPreset.helpUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-blue-600 hover:text-blue-800 underline"
-                            >
-                              {selectedPreset.helpText || "Open download page"}
-                            </a>
-                            {selectedPreset.url
-                              ? " for upstream download details."
-                              : " and paste the generated ISO URL below."}
-                          </p>
-                        );
-                      })()}
+          {templates.some(isRecommendedWindowsCloudImage) && (
+            <Alert tone="info" className="mb-4">
+              For automated Windows instances, use the template marked <strong className="text-fg">Recommended</strong>. Windows installer ISOs
+              are for manual installation.
+            </Alert>
+          )}
+
+          <Table
+            rows={filtered}
+            rowKey={(t) => `${t.pool_name}/${t.id}`}
+            loading={loading}
+            loadingLabel="Loading templates…"
+            empty={
+              templates.length ? (
+                <EmptyState title="No matching templates" />
+              ) : (
+                <EmptyState
+                  icon={<Layers size={20} />}
+                  title="No templates yet"
+                  description="Download an Ubuntu, Debian or Rocky cloud image, or register a volume you already have."
+                  action={
+                    <button className="btn-primary" onClick={() => setRegisterOpen(true)}>
+                      <Plus size={15} />
+                      Register template
+                    </button>
+                  }
+                />
+              )
+            }
+            columns={[
+              {
+                key: "name",
+                header: "Template",
+                render: (t) => (
+                  <div className="flex items-start gap-2.5">
+                    <div className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md bg-subtle text-fg-subtle">
+                      <Layers size={15} />
                     </div>
-                    <div className="md:col-span-2">
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Download URL <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        value={registerForm.cloudUrl}
-                        onChange={(e) =>
-                          setRegisterForm({
-                            ...registerForm,
-                            cloudUrl: e.target.value,
-                            presetImage: "custom",
-                          })
-                        }
-                        placeholder="https://cloud-images.example.com/image.qcow2"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 font-mono text-sm"
-                        readOnly={
-                          registerForm.presetImage !== "" &&
-                          registerForm.presetImage !== "custom" &&
-                          Boolean(PRESET_DOWNLOADS.find((img) => img.name === registerForm.presetImage)?.url)
-                        }
-                      />
-                      <p className="text-xs text-gray-500 mt-1">
-                        {registerForm.presetImage &&
-                        registerForm.presetImage !== "custom" &&
-                        PRESET_DOWNLOADS.find((img) => img.name === registerForm.presetImage)?.url
-                          ? "URL auto-filled from selected preset. Select 'Custom URL...' to enter manually."
-                          : "Enter the direct download URL for this image or ISO."}
-                      </p>
-                    </div>
-                  </>
-                )}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Template Name <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={registerForm.name}
-                    onChange={(e) =>
-                      setRegisterForm({ ...registerForm, name: e.target.value })
-                    }
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Tags
-                  </label>
-                  <input
-                    type="text"
-                    value={registerForm.tags}
-                    onChange={(e) =>
-                      setRegisterForm({ ...registerForm, tags: e.target.value })
-                    }
-                    placeholder="comma separated"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Description
-                  </label>
-                  <textarea
-                    value={registerForm.description}
-                    onChange={(e) =>
-                      setRegisterForm({ ...registerForm, description: e.target.value })
-                    }
-                    rows={3}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    OS Name
-                  </label>
-                  <input
-                    type="text"
-                    value={registerForm.osName}
-                    onChange={(e) =>
-                      setRegisterForm({ ...registerForm, osName: e.target.value })
-                    }
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    OS Version
-                  </label>
-                  <input
-                    type="text"
-                    value={registerForm.osVersion}
-                    onChange={(e) =>
-                      setRegisterForm({ ...registerForm, osVersion: e.target.value })
-                    }
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Architecture
-                  </label>
-                  <input
-                    type="text"
-                    value={registerForm.osArch}
-                    onChange={(e) =>
-                      setRegisterForm({ ...registerForm, osArch: e.target.value })
-                    }
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-700">
-                    Features
-                  </label>
-                  <label className="flex items-center gap-2 text-sm text-gray-600">
-                    <input
-                      type="checkbox"
-                      checked={registerForm.cloudInit}
-                      onChange={(e) =>
-                        setRegisterForm({ ...registerForm, cloudInit: e.target.checked })
-                      }
-                    />
-					Cloud-init / Cloudbase-Init ready
-                  </label>
-                  <label className="flex items-center gap-2 text-sm text-gray-600">
-                    <input
-                      type="checkbox"
-                      checked={registerForm.virtio}
-                      onChange={(e) =>
-                        setRegisterForm({ ...registerForm, virtio: e.target.checked })
-                      }
-                    />
-                    Virtio drivers
-                  </label>
-                  <label className="flex items-center gap-2 text-sm text-gray-600">
-                    <input
-                      type="checkbox"
-                      checked={registerForm.qga}
-                      onChange={(e) =>
-                        setRegisterForm({ ...registerForm, qga: e.target.checked })
-                      }
-                    />
-                    QEMU guest agent
-                  </label>
-                </div>
-              </div>
-
-              {downloadTask && (
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  <div className="flex items-center gap-3">
-                    <RefreshCw className="w-5 h-5 animate-spin text-blue-600" />
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-blue-800">
-                        {downloadTask.status === "pending" && "Preparing download..."}
-                        {downloadTask.status === "running" && "Downloading image..."}
-                      </p>
-                      <p className="text-xs text-blue-600 mt-1">
-                        {downloadTask.volume_name} - This may take several minutes
-                      </p>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="font-medium">{t.name}</span>
+                        {isRecommendedWindowsCloudImage(t) && <Badge tone="success">Recommended</Badge>}
+                      </div>
+                      {t.description && <div className="max-w-xs truncate text-xs text-fg-muted">{t.description}</div>}
+                      {!!t.tags?.length && (
+                        <div className="mt-0.5 max-w-xs truncate text-xs text-fg-subtle" title={t.tags.join(", ")}>
+                          {t.tags.map((tag) => `#${tag}`).join(" ")}
+                        </div>
+                      )}
                     </div>
                   </div>
-                </div>
-              )}
-
-              <div className="flex gap-3 pt-4">
-                <button
-                  className="btn-secondary flex-1"
-                  onClick={() => setShowRegisterModal(false)}
-                  disabled={submitting || !!downloadTask}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="btn-primary flex-1"
-                  onClick={handleRegisterTemplate}
-                  disabled={submitting || !!downloadTask}
-                >
-                  {submitting ? "Starting..." : downloadTask ? "Downloading..." : "Register Template"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+                ),
+              },
+              {
+                key: "os",
+                header: "OS",
+                render: (t) =>
+                  t.os?.name ? (
+                    <span className="whitespace-nowrap">
+                      {t.os.name} {t.os.version}
+                      {t.os.arch && <span className="ml-1 text-xs text-fg-subtle">{t.os.arch}</span>}
+                    </span>
+                  ) : (
+                    <span className="text-fg-subtle">—</span>
+                  ),
+              },
+              {
+                key: "location",
+                header: "Location",
+                render: (t) => (
+                  <div className="min-w-0">
+                    <div className="text-fg-muted">{t.pool_name}</div>
+                    <div className="max-w-[180px] truncate font-mono text-xs text-fg-subtle" title={t.volume_name}>
+                      {t.volume_name}
+                    </div>
+                  </div>
+                ),
+              },
+              {
+                key: "size",
+                header: "Size",
+                render: (t) => (
+                  <span className="whitespace-nowrap">
+                    {t.size_gb} GB <span className="text-xs uppercase text-fg-subtle">{t.format}</span>
+                  </span>
+                ),
+              },
+              {
+                key: "features",
+                header: "Features",
+                render: (t) => (
+                  <div className="flex gap-1">
+                    {t.features?.cloud_init && <Badge tone="accent">cloud-init</Badge>}
+                    {t.features?.virtio && <Badge>virtio</Badge>}
+                    {t.features?.qemu_guest_agent && <Badge>qga</Badge>}
+                    {!t.features?.cloud_init && !t.features?.virtio && !t.features?.qemu_guest_agent && <span className="text-fg-subtle">—</span>}
+                  </div>
+                ),
+              },
+              {
+                key: "actions",
+                header: <span className="sr-only">Actions</span>,
+                align: "right",
+                render: (t) => (
+                  <DropdownMenu
+                    items={[
+                      {
+                        label: "Delete template",
+                        icon: <Trash2 size={14} />,
+                        danger: true,
+                        onClick: () => {
+                          setDeleteVolume(false);
+                          setToDelete(t);
+                        },
+                      },
+                    ]}
+                  />
+                ),
+              },
+            ]}
+          />
+        </>
       )}
 
-      {templateToDelete && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
-            <div className="p-6 space-y-4">
-              <h2 className="text-xl font-semibold text-red-600">Delete Template</h2>
-              <p className="text-sm text-gray-600">
-                Are you sure you want to delete template{" "}
-                <span className="font-semibold">{templateToDelete.name}</span>? This action cannot
-                be undone.
-              </p>
-              <label className="flex items-center gap-2 text-sm text-gray-600">
-                <input
-                  type="checkbox"
-                  checked={deleteVolume}
-                  onChange={(e) => setDeleteVolume(e.target.checked)}
-                />
-                Also delete backing volume ({templateToDelete.volume_name})
-              </label>
-              <div className="flex gap-3 pt-2">
-                <button
-                  className="btn-secondary flex-1"
-                  onClick={() => setTemplateToDelete(null)}
-                  disabled={deleting}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="btn-danger flex-1"
-                  onClick={handleDeleteTemplate}
-                  disabled={deleting}
-                >
-                  {deleting ? "Deleting..." : "Delete"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+      {registerOpen && currentNode && (
+        <RegisterTemplateModal
+          nodes={nodes}
+          defaultNode={currentNode}
+          defaultPool={poolFilter || undefined}
+          onClose={closeRegister}
+          onRegistered={({ task }) => {
+            closeRegister();
+            if (task) setTasks((prev) => [...prev.filter((t) => t.id !== task.id), task]);
+            fetchTemplates({ silent: true });
+          }}
+        />
       )}
+
+      <ConfirmDialog
+        isOpen={Boolean(toDelete)}
+        onClose={() => setToDelete(null)}
+        onConfirm={handleDelete}
+        title="Delete template?"
+        message={
+          <>
+            <strong className="text-fg">{toDelete?.name}</strong> will no longer be available for new instances.
+          </>
+        }
+        confirmText="Delete template"
+      >
+        <Checkbox
+          checked={deleteVolume}
+          onChange={setDeleteVolume}
+          label={`Also delete the volume ${toDelete?.volume_name || ""}`}
+          description="Instances created from this template use it as their backing disk and will break if it is deleted."
+        />
+      </ConfirmDialog>
     </>
   );
 }

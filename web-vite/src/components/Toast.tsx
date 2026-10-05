@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { CheckCircle, XCircle, AlertCircle, Info, X } from "lucide-react";
+import { useEffect, useRef } from "react";
+import { AlertTriangle, CheckCircle2, Info, X, XCircle } from "lucide-react";
 
 export type ToastType = "success" | "error" | "warning" | "info";
 
@@ -10,65 +10,45 @@ interface ToastProps {
   duration?: number;
 }
 
-export default function Toast({
-  type,
-  message,
-  onClose,
-  duration = 5000,
-}: ToastProps) {
+const styles = {
+  success: { icon: CheckCircle2, color: "text-success" },
+  error: { icon: XCircle, color: "text-danger" },
+  warning: { icon: AlertTriangle, color: "text-warning" },
+  info: { icon: Info, color: "text-info" },
+};
+
+export default function Toast({ type, message, onClose, duration }: ToastProps) {
+  // 错误信息停留更久，方便阅读
+  const timeout = duration ?? (type === "error" ? 8000 : 4000);
+
+  const onCloseRef = useRef(onClose);
   useEffect(() => {
-    if (duration > 0) {
-      const timer = setTimeout(() => {
-        onClose();
-      }, duration);
-      return () => clearTimeout(timer);
-    }
-  }, [duration, onClose]);
+    onCloseRef.current = onClose;
+  });
 
-  const getTypeStyles = () => {
-    switch (type) {
-      case "success":
-        return {
-          bg: "bg-green-50 border-green-200",
-          icon: <CheckCircle className="text-green-600" size={20} />,
-          text: "text-green-800",
-        };
-      case "error":
-        return {
-          bg: "bg-red-50 border-red-200",
-          icon: <XCircle className="text-red-600" size={20} />,
-          text: "text-red-800",
-        };
-      case "warning":
-        return {
-          bg: "bg-orange-50 border-orange-200",
-          icon: <AlertCircle className="text-orange-600" size={20} />,
-          text: "text-orange-800",
-        };
-      case "info":
-        return {
-          bg: "bg-blue-50 border-blue-200",
-          icon: <Info className="text-blue-600" size={20} />,
-          text: "text-blue-800",
-        };
-    }
-  };
+  useEffect(() => {
+    if (timeout <= 0) return;
+    const timer = setTimeout(() => onCloseRef.current(), timeout);
+    return () => clearTimeout(timer);
+  }, [timeout]);
 
-  const styles = getTypeStyles();
+  const { icon: Icon, color } = styles[type];
 
   return (
     <div
-      className={`flex items-start gap-3 p-4 rounded-lg border ${styles.bg} shadow-lg animate-slideIn`}
+      role={type === "error" ? "alert" : "status"}
+      className="pointer-events-auto flex w-full items-start gap-3 rounded-lg border border-line bg-surface px-3.5 py-3 shadow-pop animate-slide-up"
     >
-      <div className="flex-shrink-0">{styles.icon}</div>
-      <p className={`flex-1 text-sm font-medium ${styles.text}`}>{message}</p>
+      <Icon size={18} className={`mt-px flex-shrink-0 ${color}`} />
+      <p className="min-w-0 flex-1 break-words text-sm text-fg">{message}</p>
       <button
+        type="button"
         onClick={onClose}
-        className={`flex-shrink-0 ${styles.text} hover:opacity-70 transition-opacity`}
+        className="-mr-1 flex-shrink-0 rounded p-0.5 text-fg-subtle transition-colors hover:bg-subtle hover:text-fg"
+        aria-label="Dismiss"
       >
-        <X size={16} />
+        <X size={14} />
       </button>
     </div>
   );
 }
-

@@ -1,97 +1,191 @@
-import { Link, useLocation } from "react-router-dom";
-import { Server, Key, Menu, X, Database, Package, Boxes, Camera, Network } from "lucide-react";
 import { useState } from "react";
+import { NavLink } from "react-router-dom";
+import {
+  Camera,
+  Database,
+  Github,
+  KeyRound,
+  Layers,
+  LayoutDashboard,
+  Menu,
+  Monitor,
+  Moon,
+  Network,
+  Server,
+  ServerCog,
+  Sun,
+  X,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import { getThemePreference, setThemePreference } from "@/lib/theme";
+import type { ThemePreference } from "@/lib/theme";
 
-const navigation = [
-  { name: "Nodes", href: "/nodes", icon: Boxes },
-  { name: "Instances", href: "/instances", icon: Server },
-  { name: "Networks", href: "/networks", icon: Network },
-  { name: "Storage Pools", href: "/storage-pools", icon: Database },
-  { name: "Templates", href: "/templates", icon: Package },
-  { name: "Snapshots", href: "/snapshots", icon: Camera },
-  { name: "Key Pairs", href: "/keypairs", icon: Key },
+interface NavItem {
+  name: string;
+  href: string;
+  icon: LucideIcon;
+  end?: boolean;
+}
+
+const navigation: { title?: string; items: NavItem[] }[] = [
+  { items: [{ name: "Overview", href: "/", icon: LayoutDashboard, end: true }] },
+  {
+    title: "Compute",
+    items: [
+      { name: "Instances", href: "/instances", icon: Server },
+      { name: "Snapshots", href: "/snapshots", icon: Camera },
+      { name: "Templates", href: "/templates", icon: Layers },
+      { name: "Key pairs", href: "/keypairs", icon: KeyRound },
+    ],
+  },
+  {
+    title: "Infrastructure",
+    items: [
+      { name: "Nodes", href: "/nodes", icon: ServerCog },
+      { name: "Networks", href: "/networks", icon: Network },
+      { name: "Storage", href: "/storage-pools", icon: Database },
+    ],
+  },
 ];
 
+function Logo() {
+  return (
+    <div className="flex items-center gap-2.5">
+      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-accent-fg shadow-card">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <rect x="4" y="4" width="16" height="4.5" rx="1.2" />
+          <rect x="4" y="10" width="16" height="4.5" rx="1.2" opacity="0.8" />
+          <rect x="4" y="16" width="16" height="4" rx="1.2" opacity="0.6" />
+        </svg>
+      </div>
+      <div className="leading-tight">
+        <div className="text-[15px] font-semibold tracking-tight text-fg">JVP</div>
+        <div className="text-[11px] text-fg-subtle">Virtualization Platform</div>
+      </div>
+    </div>
+  );
+}
+
+const themeOptions: { value: ThemePreference; icon: LucideIcon; label: string }[] = [
+  { value: "light", icon: Sun, label: "Light" },
+  { value: "system", icon: Monitor, label: "System" },
+  { value: "dark", icon: Moon, label: "Dark" },
+];
+
+function ThemeSwitcher() {
+  const [theme, setTheme] = useState<ThemePreference>(getThemePreference);
+  return (
+    <div className="flex rounded-md bg-subtle p-0.5 ring-1 ring-inset ring-line" role="radiogroup" aria-label="Theme">
+      {themeOptions.map(({ value, icon: Icon, label }) => (
+        <button
+          key={value}
+          type="button"
+          role="radio"
+          aria-checked={theme === value}
+          title={label}
+          onClick={() => {
+            setTheme(value);
+            setThemePreference(value);
+          }}
+          className={`flex h-6 w-7 items-center justify-center rounded-[5px] transition-colors ${
+            theme === value ? "bg-surface text-fg shadow-card ring-1 ring-line" : "text-fg-subtle hover:text-fg"
+          }`}
+        >
+          <Icon size={13} />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex h-14 items-center px-4">
+        <Logo />
+      </div>
+
+      <nav className="flex-1 space-y-5 overflow-y-auto px-3 py-3">
+        {navigation.map((group, index) => (
+          <div key={group.title || index}>
+            {group.title && (
+              <div className="mb-1.5 px-2 text-[11px] font-medium uppercase tracking-wider text-fg-subtle">{group.title}</div>
+            )}
+            <div className="space-y-0.5">
+              {group.items.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <NavLink
+                    key={item.href}
+                    to={item.href}
+                    end={item.end}
+                    onClick={onNavigate}
+                    className={({ isActive }) =>
+                      `group flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm font-medium transition-colors ${
+                        isActive ? "bg-accent-soft text-accent" : "text-fg-muted hover:bg-subtle hover:text-fg"
+                      }`
+                    }
+                  >
+                    <Icon size={16} className="flex-shrink-0" />
+                    {item.name}
+                  </NavLink>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </nav>
+
+      <div className="flex items-center justify-between border-t border-line px-4 py-3">
+        <a
+          href="https://github.com/jimyag/jvp"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1.5 text-xs text-fg-subtle transition-colors hover:text-fg"
+        >
+          <Github size={14} />
+          GitHub
+        </a>
+        <ThemeSwitcher />
+      </div>
+    </div>
+  );
+}
+
 export default function Sidebar() {
-  const location = useLocation();
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [open, setOpen] = useState(false);
 
   return (
     <>
-      {/* Mobile menu button */}
-      <button
-        onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-        className="lg:hidden fixed top-4 left-4 z-50 p-2 bg-primary text-white rounded-lg"
-      >
-        {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
-      </button>
+      {/* Mobile top bar */}
+      <div className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-line bg-surface/90 px-4 backdrop-blur lg:hidden">
+        <button type="button" className="btn-icon -ml-1" onClick={() => setOpen(true)} aria-label="Open navigation">
+          <Menu size={20} />
+        </button>
+        <Logo />
+      </div>
 
-      {/* Sidebar */}
-      <aside
-        className={`
-          fixed lg:sticky top-0 left-0 h-screen w-64 bg-primary text-white
-          transition-transform duration-300 ease-in-out z-40
-          ${isMobileMenuOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}
-        `}
-      >
-        <div className="flex flex-col h-full">
-          {/* Logo */}
-          <div className="p-6 border-b border-gray-700">
-            <h1 className="text-2xl font-bold tracking-tight">JVP</h1>
-            <p className="text-sm text-gray-400 mt-1">Virtualization Platform</p>
-          </div>
-
-          {/* Navigation */}
-          <nav className="flex-1 p-4 space-y-2">
-            {navigation.map((item) => {
-              const Icon = item.icon;
-              const isActive = location.pathname.startsWith(item.href);
-
-              return (
-                <Link
-                  key={item.name}
-                  to={item.href}
-                  onClick={() => setIsMobileMenuOpen(false)}
-                  className={`
-                    flex items-center gap-3 px-4 py-3 rounded-lg font-medium
-                    transition-all duration-200
-                    ${
-                      isActive
-                        ? "bg-accent text-white"
-                        : "text-gray-300 hover:bg-primary-light hover:text-white"
-                    }
-                  `}
-                >
-                  <Icon size={20} />
-                  <span>{item.name}</span>
-                </Link>
-              );
-            })}
-          </nav>
-
-          {/* Footer */}
-          <div className="p-4 border-t border-gray-700">
-            <p className="text-xs text-gray-400">
-              © {new Date().getFullYear()} JVP Platform
-            </p>
-            <a
-              href="https://github.com/jimyag/jvp"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs text-gray-500 hover:text-gray-300 mt-1 inline-block"
-            >
-              GitHub
-            </a>
-          </div>
-        </div>
+      {/* Desktop sidebar */}
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 border-r border-line bg-surface lg:block">
+        <SidebarContent />
       </aside>
 
-      {/* Overlay for mobile */}
-      {isMobileMenuOpen && (
-        <div
-          className="fixed inset-0 bg-black bg-opacity-50 z-30 lg:hidden"
-          onClick={() => setIsMobileMenuOpen(false)}
-        />
+      {/* Mobile drawer */}
+      {open && (
+        <div className="fixed inset-0 z-50 lg:hidden">
+          <div className="absolute inset-0 animate-fade-in bg-black/40" onClick={() => setOpen(false)} />
+          <aside className="absolute inset-y-0 left-0 w-64 border-r border-line bg-surface shadow-pop animate-slide-up">
+            <button
+              type="button"
+              className="btn-icon absolute right-2 top-3"
+              onClick={() => setOpen(false)}
+              aria-label="Close navigation"
+            >
+              <X size={18} />
+            </button>
+            <SidebarContent onNavigate={() => setOpen(false)} />
+          </aside>
+        </div>
       )}
     </>
   );

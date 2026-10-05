@@ -1,747 +1,549 @@
-import { useState, useEffect, useMemo } from "react";
-import { useParams, useNavigate, useLocation } from "react-router-dom";
-import Header from "@/components/Header";
-import StatusBadge from "@/components/StatusBadge";
+import { useCallback, useEffect, useState } from "react";
+import type { ReactNode } from "react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Check, Cpu, Database, MemoryStick, Network, Power, PowerOff, Server, ServerCog, X } from "lucide-react";
+import PageHeader from "@/components/PageHeader";
+import Table from "@/components/Table";
+import type { Column } from "@/components/Table";
+import { Badge, Card, CopyButton, DescriptionList, EmptyState, LoadingState, StatCard, StatusBadge, Tabs, UsageBar } from "@/components/ui";
 import { useToast } from "@/components/ToastContainer";
-import { apiPost } from "@/lib/api";
-import {
-  ArrowLeft,
-  Server,
-  Cpu,
-  MemoryStick,
-  HardDrive,
-  Network,
-  Usb,
-  MonitorCheck,
-  Power,
-  PowerOff,
-  RefreshCw,
-  Box,
-} from "lucide-react";
-
-interface Node {
-  name: string;
-  uuid: string;
-  uri: string;
-  type: string;
-  state: string;
-}
-
-interface CPUInfo {
-  cores: number;
-  threads: number;
-  model: string;
-  vendor: string;
-  frequency: number;
-  arch: string;
-  cache_size: number;
-  flags: string[];
-}
-
-interface MemoryInfo {
-  total: number;
-  available: number;
-  used: number;
-  usage_percent: number;
-  swap_total: number;
-  swap_used: number;
-}
+import { api, errorMessage } from "@/lib/api";
+import { formatBytes, formatMemoryMB } from "@/lib/format";
+import { useNodes } from "@/lib/nodes";
+import type { Node } from "@/lib/types";
 
 interface NodeSummary {
-  cpu: CPUInfo;
-  memory: MemoryInfo;
-  numa: any;
-  hugepages: any;
-  virtualization: any;
+  cpu: {
+    cores: number;
+    threads: number;
+    model: string;
+    vendor: string;
+    frequency: number;
+    arch: string;
+    cache_size: number;
+    flags: string[];
+  };
+  memory: {
+    total: number;
+    available: number;
+    used: number;
+    usage_percent: number;
+    swap_total: number;
+    swap_used: number;
+  };
+  numa?: { node_count: number };
+  hugepages?: { enabled: boolean; page_sizes?: { size: string; total: number; free: number; used: number }[] };
+  virtualization?: { vtx: boolean; ept: boolean; iommu: boolean; nested_virt: boolean };
+}
+
+interface PCIDevice {
+  address: string;
+  vendor: string;
+  device: string;
+  class?: string;
+  driver?: string;
+  iommu_group: number;
+  memory?: number;
+}
+
+interface USBDevice {
+  bus: number;
+  device: number;
+  vendor_id: string;
+  product_id: string;
+  vendor: string;
+  product: string;
+}
+
+interface NetInterface {
+  name: string;
+  mac: string;
+  speed?: string;
+  state?: string;
+  ip?: string[];
+  bound_to?: string;
+}
+
+interface PhysicalDisk {
+  name: string;
+  type: string;
+  size: number;
+  model?: string;
+  serial?: string;
+  interface?: string;
+  smart?: { health?: string; temperature?: number };
+}
+
+interface NodeVM {
+  uuid: string;
+  name: string;
+  state: string;
+  cpus: number;
+  memory: number; // KB
+}
+
+type TabId = "overview" | "pci" | "gpu" | "usb" | "net" | "disks" | "vms";
+
+const tabEndpoints: Record<Exclude<TabId, "overview">, { endpoint: string; key: string }> = {
+  pci: { endpoint: "/api/describe-node-pci", key: "devices" },
+  gpu: { endpoint: "/api/describe-node-gpu", key: "devices" },
+  usb: { endpoint: "/api/describe-node-usb", key: "devices" },
+  net: { endpoint: "/api/describe-node-net", key: "interfaces" },
+  disks: { endpoint: "/api/describe-node-disks", key: "disks" },
+  vms: { endpoint: "/api/describe-node-vms", key: "vms" },
+};
+
+function Feature({ enabled, label }: { enabled?: boolean; label: string }) {
+  return (
+    <div className="flex items-center gap-2.5 rounded-md border border-line px-3 py-2.5">
+      <span
+        className={`flex h-5 w-5 items-center justify-center rounded-full ${enabled ? "bg-success-soft text-success" : "bg-subtle text-fg-subtle"}`}
+      >
+        {enabled ? <Check size={12} strokeWidth={3} /> : <X size={12} strokeWidth={3} />}
+      </span>
+      <span className={`text-sm ${enabled ? "text-fg" : "text-fg-muted"}`}>{label}</span>
+    </div>
+  );
+}
+
+function DeviceTable<T>({
+  rows,
+  columns,
+  emptyLabel,
+  rowKey,
+}: {
+  rows: T[];
+  columns: Column<T>[];
+  emptyLabel: string;
+  rowKey: (row: T, index: number) => string;
+}) {
+  return <Table rows={rows} columns={columns} rowKey={rowKey} empty={<EmptyState title={emptyLabel} />} />;
 }
 
 export default function NodeDetailPage() {
-  const params = useParams();
-  const location = useLocation();
-  const navigate = useNavigate();
-  const rawNodeName = params.name as string;
-  const nodeName = useMemo(() => {
-    const segments = location.pathname.split("/").filter(Boolean);
-    const urlNode = segments[1];
-    const isPlaceholder = rawNodeName === "placeholder-node";
-    return isPlaceholder && urlNode ? urlNode : rawNodeName;
-  }, [location.pathname, rawNodeName]);
   const toast = useToast();
+  const { name: nodeName = "" } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = (searchParams.get("tab") as TabId) || "overview";
+  const { refresh: refreshNodes, setCurrentNode } = useNodes();
 
   const [node, setNode] = useState<Node | null>(null);
   const [summary, setSummary] = useState<NodeSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [summaryError, setSummaryError] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
-  const [showDevices, setShowDevices] = useState<string | null>(null);
-  const [devicesData, setDevicesData] = useState<any>(null);
-  const [devicesLoading, setDevicesLoading] = useState(false);
+  const [deviceData, setDeviceData] = useState<Partial<Record<TabId, unknown[]>>>({});
+  const [deviceLoading, setDeviceLoading] = useState(false);
 
-  useEffect(() => {
-    fetchNodeDetails();
-    fetchNodeSummary();
-  }, [nodeName]);
+  const setTab = (next: TabId) =>
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        if (next === "overview") p.delete("tab");
+        else p.set("tab", next);
+        return p;
+      },
+      { replace: true }
+    );
 
-  const fetchNodeDetails = async () => {
+  const load = useCallback(async () => {
     try {
-      const data = await apiPost<Node>("/api/describe-node", {
-        name: nodeName,
-      });
+      const data = await api<Node>("/api/describe-node", { name: nodeName });
       setNode(data);
-    } catch (error: any) {
-      console.error("Failed to fetch node:", error);
-      toast.error(error?.message || "Failed to fetch node details");
+    } catch (err) {
+      setNode(null);
+      toast.error(errorMessage(err, "Failed to load node"));
+      setLoading(false);
+      return;
     }
-  };
-
-  const fetchNodeSummary = async () => {
     try {
-      const data = await apiPost<NodeSummary>("/api/describe-node-summary", {
-        name: nodeName,
-      });
+      const data = await api<NodeSummary>("/api/describe-node-summary", { name: nodeName });
       setSummary(data);
-    } catch (error: any) {
-      console.error("Failed to fetch node summary:", error);
-      toast.error(error?.message || "Failed to fetch node summary");
+      setSummaryError("");
+    } catch (err) {
+      setSummary(null);
+      setSummaryError(errorMessage(err, "Failed to load hardware summary"));
     } finally {
       setLoading(false);
     }
-  };
+  }, [nodeName, toast]);
 
-  const handleEnableNode = async () => {
-    setActionLoading(true);
-    try {
-      await apiPost("/api/enable-node", { name: nodeName });
-      toast.success("Node enabled successfully");
-      await fetchNodeDetails();
-    } catch (error: any) {
-      console.error("Failed to enable node:", error);
-      toast.error(error?.message || "Failed to enable node");
-    } finally {
-      setActionLoading(false);
-    }
-  };
+  useEffect(() => {
+    setLoading(true);
+    setDeviceData({});
+    load();
+  }, [load]);
 
-  const handleDisableNode = async () => {
-    setActionLoading(true);
-    try {
-      await apiPost("/api/disable-node", { name: nodeName });
-      toast.success("Node disabled successfully");
-      await fetchNodeDetails();
-    } catch (error: any) {
-      console.error("Failed to disable node:", error);
-      toast.error(error?.message || "Failed to disable node");
-    } finally {
-      setActionLoading(false);
-    }
-  };
+  const loadDevices = useCallback(
+    async (target: TabId, force = false) => {
+      if (target === "overview") return;
+      if (!force && deviceData[target]) return;
+      const { endpoint, key } = tabEndpoints[target];
+      setDeviceLoading(true);
+      try {
+        const data = await api<Record<string, unknown[]>>(endpoint, { name: nodeName });
+        setDeviceData((prev) => ({ ...prev, [target]: data[key] || [] }));
+      } catch (err) {
+        toast.error(errorMessage(err, "Failed to load devices"));
+        setDeviceData((prev) => ({ ...prev, [target]: [] }));
+      } finally {
+        setDeviceLoading(false);
+      }
+    },
+    [deviceData, nodeName, toast]
+  );
+
+  useEffect(() => {
+    loadDevices(tab);
+  }, [tab, loadDevices]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
+    await load();
+    if (tab !== "overview") await loadDevices(tab, true);
+    setRefreshing(false);
+  };
+
+  const setEnabled = async (enabled: boolean) => {
+    setActionLoading(true);
     try {
-      await Promise.all([fetchNodeDetails(), fetchNodeSummary()]);
+      await api(enabled ? "/api/enable-node" : "/api/disable-node", { name: nodeName });
+      toast.success(enabled ? "Node enabled" : "Node is now in maintenance mode");
+      await load();
+      refreshNodes();
+    } catch (err) {
+      toast.error(errorMessage(err, "Failed to update node"));
     } finally {
-      setRefreshing(false);
+      setActionLoading(false);
     }
   };
 
-  const handleViewDevices = async (deviceType: string) => {
-    setShowDevices(deviceType);
-    setDevicesLoading(true);
+  if (loading && !node) return <LoadingState label="Loading node…" />;
 
-    try {
-      let endpoint = "";
-      switch (deviceType) {
-        case "pci":
-          endpoint = "/api/describe-node-pci";
-          break;
-        case "usb":
-          endpoint = "/api/describe-node-usb";
-          break;
-        case "net":
-          endpoint = "/api/describe-node-net";
-          break;
-        case "disks":
-          endpoint = "/api/describe-node-disks";
-          break;
-        case "gpu":
-          endpoint = "/api/describe-node-gpu";
-          break;
-        case "vms":
-          endpoint = "/api/describe-node-vms";
-          break;
-      }
-
-      const data = await apiPost(endpoint, { name: nodeName });
-      setDevicesData(data);
-    } catch (error: any) {
-      console.error(`Failed to fetch ${deviceType} devices:`, error);
-      toast.error(error?.message || `Failed to fetch ${deviceType} devices`);
-    } finally {
-      setDevicesLoading(false);
-    }
-  };
-
-  const formatBytes = (bytes: number): string => {
-    const gb = bytes / (1024 * 1024 * 1024);
-    return `${gb.toFixed(2)} GB`;
-  };
-
-  const getStateColor = (state: string) => {
-    switch (state) {
-      case "online":
-        return "green";
-      case "offline":
-        return "red";
-      case "maintenance":
-        return "yellow";
-      default:
-        return "gray";
-    }
-  };
-
-  if (loading && !node) {
+  if (!node) {
     return (
-      <div className="flex justify-center items-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      <div className="card">
+        <EmptyState
+          icon={<ServerCog size={20} />}
+          title="Node not found"
+          description={`No node named "${nodeName}" is registered.`}
+          action={
+            <Link to="/nodes" className="btn-primary">
+              Back to nodes
+            </Link>
+          }
+        />
       </div>
     );
   }
 
-  if (!node) {
-    return (
-      <>
-        <div className="text-center py-12">
-          <Server size={48} className="mx-auto text-gray-400 mb-4" />
-          <p className="text-gray-500">Node not found</p>
-          <button onClick={() => navigate("/nodes")} className="btn-primary mt-4">
-            Back to Nodes
-          </button>
+  const rows = (deviceData[tab] || []) as never[];
+  const scoped = (path: string) => `${path}?node=${encodeURIComponent(node.name)}`;
+
+  let tabContent: ReactNode = null;
+  if (tab !== "overview" && deviceLoading && !deviceData[tab]) {
+    tabContent = <LoadingState label="Loading…" className="card" />;
+  } else if (tab === "pci" || tab === "gpu") {
+    tabContent = (
+      <DeviceTable<PCIDevice>
+        rows={rows}
+        rowKey={(d) => d.address}
+        emptyLabel={tab === "gpu" ? "No GPUs found" : "No PCI devices found"}
+        columns={[
+          { key: "address", header: "Address", render: (d) => <span className="font-mono text-xs">{d.address}</span> },
+          {
+            key: "device",
+            header: "Device",
+            render: (d) => (
+              <div>
+                <div className="font-medium">{d.device || "Unknown device"}</div>
+                <div className="text-xs text-fg-muted">{d.vendor}</div>
+              </div>
+            ),
+          },
+          ...(tab === "gpu"
+            ? [{ key: "memory", header: "Memory", render: (d: PCIDevice) => (d.memory ? formatMemoryMB(d.memory) : "—") }]
+            : [{ key: "class", header: "Class", render: (d: PCIDevice) => <span className="text-fg-muted">{d.class || "—"}</span> }]),
+          { key: "driver", header: "Driver", render: (d) => <span className="font-mono text-xs text-fg-muted">{d.driver || "—"}</span> },
+          {
+            key: "iommu",
+            header: "IOMMU group",
+            render: (d) => (d.iommu_group >= 0 ? <Badge tone="info">{d.iommu_group}</Badge> : <span className="text-fg-subtle">—</span>),
+          },
+        ]}
+      />
+    );
+  } else if (tab === "usb") {
+    tabContent = (
+      <DeviceTable<USBDevice>
+        rows={rows}
+        rowKey={(d, i) => `${d.bus}-${d.device}-${i}`}
+        emptyLabel="No USB devices found"
+        columns={[
+          {
+            key: "product",
+            header: "Device",
+            render: (d) => (
+              <div>
+                <div className="font-medium">{d.product || "Unknown device"}</div>
+                <div className="text-xs text-fg-muted">{d.vendor}</div>
+              </div>
+            ),
+          },
+          {
+            key: "ids",
+            header: "Vendor:Product",
+            render: (d) => (
+              <span className="font-mono text-xs">
+                {d.vendor_id || "????"}:{d.product_id || "????"}
+              </span>
+            ),
+          },
+          { key: "bus", header: "Bus / Device", render: (d) => <span className="tabular-nums text-fg-muted">{d.bus} / {d.device}</span> },
+        ]}
+      />
+    );
+  } else if (tab === "net") {
+    tabContent = (
+      <DeviceTable<NetInterface>
+        rows={rows}
+        rowKey={(d) => d.name}
+        emptyLabel="No network interfaces found"
+        columns={[
+          { key: "name", header: "Interface", render: (d) => <span className="font-mono font-medium">{d.name}</span> },
+          { key: "state", header: "State", render: (d) => <StatusBadge status={d.state || "unknown"} /> },
+          { key: "mac", header: "MAC", render: (d) => <span className="font-mono text-xs text-fg-muted">{d.mac || "—"}</span> },
+          {
+            key: "ip",
+            header: "Addresses",
+            render: (d) =>
+              d.ip?.length ? (
+                <div className="space-y-0.5 font-mono text-xs">
+                  {d.ip.map((ip) => (
+                    <div key={ip}>{ip}</div>
+                  ))}
+                </div>
+              ) : (
+                <span className="text-fg-subtle">—</span>
+              ),
+          },
+          { key: "speed", header: "Speed", render: (d) => <span className="text-fg-muted">{d.speed || "—"}</span> },
+          { key: "bridge", header: "Bridge", render: (d) => (d.bound_to ? <Badge>{d.bound_to}</Badge> : <span className="text-fg-subtle">—</span>) },
+        ]}
+      />
+    );
+  } else if (tab === "disks") {
+    tabContent = (
+      <DeviceTable<PhysicalDisk>
+        rows={rows}
+        rowKey={(d) => d.name}
+        emptyLabel="No physical disks found"
+        columns={[
+          {
+            key: "name",
+            header: "Disk",
+            render: (d) => (
+              <div>
+                <div className="font-mono font-medium">{d.name}</div>
+                {d.model && <div className="text-xs text-fg-muted">{d.model}</div>}
+              </div>
+            ),
+          },
+          {
+            key: "type",
+            header: "Type",
+            render: (d) => <Badge tone={d.type === "NVMe" ? "accent" : d.type === "SSD" ? "info" : "neutral"}>{d.type || "—"}</Badge>,
+          },
+          { key: "size", header: "Size", render: (d) => (d.size > 0 ? formatBytes(d.size) : "—") },
+          { key: "serial", header: "Serial", render: (d) => <span className="font-mono text-xs text-fg-muted">{d.serial || "—"}</span> },
+          {
+            key: "health",
+            header: "Health",
+            render: (d) =>
+              d.smart?.health ? (
+                <span className="text-fg-muted">
+                  {d.smart.health}
+                  {d.smart.temperature ? ` · ${d.smart.temperature}°C` : ""}
+                </span>
+              ) : (
+                <span className="text-fg-subtle">—</span>
+              ),
+          },
+        ]}
+      />
+    );
+  } else if (tab === "vms") {
+    tabContent = (
+      <DeviceTable<NodeVM>
+        rows={rows}
+        rowKey={(d) => d.uuid}
+        emptyLabel="No virtual machines on this node"
+        columns={[
+          {
+            key: "name",
+            header: "Name",
+            render: (d) => (
+              <Link
+                to={`/instances/${encodeURIComponent(node.name)}/${encodeURIComponent(d.name)}`}
+                className="font-medium text-fg hover:text-accent"
+              >
+                {d.name}
+              </Link>
+            ),
+          },
+          { key: "state", header: "State", render: (d) => <StatusBadge status={d.state} /> },
+          { key: "cpus", header: "vCPUs", render: (d) => (d.cpus > 0 ? d.cpus : "—") },
+          { key: "memory", header: "Memory", render: (d) => (d.memory > 0 ? formatBytes(d.memory * 1024) : "—") },
+          { key: "uuid", header: "UUID", render: (d) => <span className="font-mono text-xs text-fg-subtle">{d.uuid}</span> },
+        ]}
+      />
+    );
+  } else if (tab === "overview") {
+    tabContent = (
+      <div className="space-y-6">
+        {summary && (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <StatCard label="CPU" icon={<Cpu size={16} />} value={`${summary.cpu.threads || summary.cpu.cores} threads`} hint={`${summary.cpu.cores} cores · ${summary.cpu.arch}`} />
+            <StatCard
+              label="Memory"
+              icon={<MemoryStick size={16} />}
+              value={formatBytes(summary.memory.used)}
+              hint={`of ${formatBytes(summary.memory.total)} · ${summary.memory.usage_percent.toFixed(0)}% used`}
+            >
+              <UsageBar value={summary.memory.usage_percent} size="sm" />
+            </StatCard>
+            <StatCard
+              label="Swap"
+              icon={<Database size={16} />}
+              value={formatBytes(summary.memory.swap_used)}
+              hint={`of ${formatBytes(summary.memory.swap_total)}`}
+            />
+            <StatCard label="NUMA nodes" icon={<Server size={16} />} value={summary.numa?.node_count ?? "—"} hint={summary.hugepages?.enabled ? "Huge pages enabled" : "Huge pages disabled"} />
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+          <Card title="Node">
+            <DescriptionList
+              items={[
+                { label: "Name", value: node.name },
+                { label: "Status", value: <StatusBadge status={node.state} /> },
+                { label: "Type", value: <span className="capitalize">{node.type}</span> },
+                { label: "UUID", value: node.uuid, mono: true, copy: node.uuid },
+                { label: "Libvirt URI", value: node.uri, mono: true, copy: node.uri, span: true },
+              ]}
+            />
+          </Card>
+
+          {summary ? (
+            <Card title="Processor">
+              <DescriptionList
+                items={[
+                  { label: "Model", value: summary.cpu.model, span: true },
+                  { label: "Vendor", value: summary.cpu.vendor },
+                  { label: "Frequency", value: summary.cpu.frequency ? `${summary.cpu.frequency} MHz` : undefined },
+                  { label: "Cache", value: summary.cpu.cache_size ? `${summary.cpu.cache_size} KB` : undefined },
+                  { label: "Architecture", value: summary.cpu.arch },
+                ]}
+              />
+            </Card>
+          ) : (
+            <Card title="Hardware">
+              <p className="text-sm text-fg-muted">{summaryError || "Hardware information is not available."}</p>
+            </Card>
+          )}
         </div>
-      </>
+
+        {summary?.virtualization && (
+          <Card title="Virtualization features">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <Feature enabled={summary.virtualization.vtx} label="VT-x / AMD-V" />
+              <Feature enabled={summary.virtualization.ept} label="EPT / NPT" />
+              <Feature enabled={summary.virtualization.iommu} label="IOMMU" />
+              <Feature enabled={summary.virtualization.nested_virt} label="Nested virtualization" />
+            </div>
+          </Card>
+        )}
+
+        {summary?.cpu.flags?.length ? (
+          <Card title="CPU flags" description={`${summary.cpu.flags.length} flags`}>
+            <div className="flex max-h-40 flex-wrap gap-1 overflow-y-auto">
+              {summary.cpu.flags.map((flag) => (
+                <span key={flag} className="code">
+                  {flag}
+                </span>
+              ))}
+            </div>
+          </Card>
+        ) : null}
+      </div>
     );
   }
 
   return (
     <>
-      <Header
-        title={`Node: ${node.name}`}
-        description={`Details and hardware information for node ${node.name}`}
-        action={
-          <div className="flex gap-2">
-            <button
-              onClick={handleRefresh}
-              disabled={refreshing}
-              className="btn-secondary flex items-center gap-2"
-            >
-              <RefreshCw size={16} className={refreshing ? "animate-spin" : ""} />
-              Refresh
-            </button>
-            <button
-              onClick={() => navigate("/nodes")}
-              className="btn-secondary flex items-center gap-2"
-            >
-              <ArrowLeft size={16} />
-              Back
-            </button>
-          </div>
+      <PageHeader
+        breadcrumbs={[{ label: "Nodes", to: "/nodes" }, { label: node.name }]}
+        title={node.name}
+        icon={<ServerCog size={18} />}
+        meta={
+          <>
+            <StatusBadge status={node.state} />
+            <Badge className="capitalize">{node.type}</Badge>
+            <span className="flex items-center gap-1 font-mono text-xs text-fg-subtle">
+              {node.uri}
+              <CopyButton text={node.uri} />
+            </span>
+          </>
+        }
+        onRefresh={handleRefresh}
+        refreshing={refreshing}
+        actions={
+          <>
+            <Link to={scoped("/instances")} className="btn-secondary" onClick={() => setCurrentNode(node.name)}>
+              <Server size={14} />
+              Instances
+            </Link>
+            <Link to={scoped("/networks")} className="btn-secondary" onClick={() => setCurrentNode(node.name)}>
+              <Network size={14} />
+              Networks
+            </Link>
+            <Link to={scoped("/storage-pools")} className="btn-secondary" onClick={() => setCurrentNode(node.name)}>
+              <Database size={14} />
+              Storage
+            </Link>
+            {node.state === "maintenance" ? (
+              <button className="btn-primary" onClick={() => setEnabled(true)} disabled={actionLoading}>
+                <Power size={14} />
+                Enable
+              </button>
+            ) : (
+              <button className="btn-secondary" onClick={() => setEnabled(false)} disabled={actionLoading}>
+                <PowerOff size={14} />
+                Maintenance
+              </button>
+            )}
+          </>
         }
       />
 
-      {/* Node Basic Info */}
-      <div className="card mb-4">
-        <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-          <Server size={20} />
-          Node Information
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="text-sm font-medium text-gray-600">Name</label>
-            <p className="text-gray-900 font-medium">{node.name}</p>
-          </div>
-          <div>
-            <label className="text-sm font-medium text-gray-600">UUID</label>
-            <p className="text-gray-900 font-mono text-sm">{node.uuid}</p>
-          </div>
-          <div>
-            <label className="text-sm font-medium text-gray-600">Type</label>
-            <div className="mt-1">
-              <StatusBadge status={node.type} color="blue" text={node.type} />
-            </div>
-          </div>
-          <div>
-            <label className="text-sm font-medium text-gray-600">State</label>
-            <div className="mt-1">
-              <StatusBadge
-                status={node.state}
-                color={getStateColor(node.state)}
-                text={node.state}
-              />
-            </div>
-          </div>
-          <div className="md:col-span-2">
-            <label className="text-sm font-medium text-gray-600">URI</label>
-            <p className="text-gray-900 font-mono text-sm">{node.uri}</p>
-          </div>
-        </div>
+      <Tabs
+        className="mb-6"
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { id: "overview", label: "Overview" },
+          { id: "vms", label: "Virtual machines", count: deviceData.vms?.length },
+          { id: "net", label: "Network", count: deviceData.net?.length },
+          { id: "disks", label: "Disks", count: deviceData.disks?.length },
+          { id: "pci", label: "PCI", count: deviceData.pci?.length },
+          { id: "gpu", label: "GPU", count: deviceData.gpu?.length },
+          { id: "usb", label: "USB", count: deviceData.usb?.length },
+        ]}
+      />
 
-        {/* Node Actions */}
-        <div className="mt-6 pt-6 border-t flex gap-2">
-          <button
-            onClick={handleEnableNode}
-            disabled={actionLoading || node.state === "online"}
-            className="btn-primary flex items-center gap-2"
-          >
-            <Power size={16} />
-            Enable Node
-          </button>
-          <button
-            onClick={handleDisableNode}
-            disabled={actionLoading || node.state === "maintenance"}
-            className="btn-secondary flex items-center gap-2"
-          >
-            <PowerOff size={16} />
-            Disable Node
-          </button>
-        </div>
-      </div>
-
-      {/* Hardware Summary */}
-      {summary && (
-        <>
-          {/* CPU Info */}
-          <div className="card mb-4">
-            <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-              <Cpu size={20} />
-              CPU Information
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className="text-sm font-medium text-gray-600">Model</label>
-                <p className="text-gray-900">{summary.cpu.model}</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-600">Vendor</label>
-                <p className="text-gray-900">{summary.cpu.vendor}</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-600">Architecture</label>
-                <p className="text-gray-900">{summary.cpu.arch}</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-600">Cores</label>
-                <p className="text-gray-900">{summary.cpu.cores}</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-600">Threads</label>
-                <p className="text-gray-900">{summary.cpu.threads}</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-600">Frequency</label>
-                <p className="text-gray-900">{summary.cpu.frequency} MHz</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-600">Cache Size</label>
-                <p className="text-gray-900">{summary.cpu.cache_size} KB</p>
-              </div>
-              <div className="md:col-span-2">
-                <label className="text-sm font-medium text-gray-600">Flags</label>
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {summary.cpu.flags.slice(0, 10).map((flag) => (
-                    <span
-                      key={flag}
-                      className="px-2 py-0.5 bg-gray-100 text-gray-700 text-xs rounded"
-                    >
-                      {flag}
-                    </span>
-                  ))}
-                  {summary.cpu.flags.length > 10 && (
-                    <span className="px-2 py-0.5 bg-gray-100 text-gray-500 text-xs rounded">
-                      +{summary.cpu.flags.length - 10} more
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Memory Info */}
-          <div className="card mb-4">
-            <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-              <MemoryStick size={20} />
-              Memory Information
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className="text-sm font-medium text-gray-600">Total Memory</label>
-                <p className="text-gray-900">{formatBytes(summary.memory.total)}</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-600">Available</label>
-                <p className="text-gray-900">{formatBytes(summary.memory.available)}</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-600">Used</label>
-                <p className="text-gray-900">{formatBytes(summary.memory.used)}</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-600">Usage</label>
-                <div className="mt-1">
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 bg-gray-200 rounded-full h-2">
-                      <div
-                        className="bg-blue-600 h-2 rounded-full"
-                        style={{ width: `${summary.memory.usage_percent}%` }}
-                      ></div>
-                    </div>
-                    <span className="text-sm text-gray-700">
-                      {summary.memory.usage_percent.toFixed(1)}%
-                    </span>
-                  </div>
-                </div>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-600">Swap Total</label>
-                <p className="text-gray-900">{formatBytes(summary.memory.swap_total)}</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-600">Swap Used</label>
-                <p className="text-gray-900">{formatBytes(summary.memory.swap_used)}</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Virtualization Info */}
-          {summary.virtualization && (
-            <div className="card mb-4">
-              <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                <MonitorCheck size={20} />
-                Virtualization Features
-              </h2>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="flex items-center gap-2">
-                  <div
-                    className={`w-3 h-3 rounded-full ${
-                      summary.virtualization.vtx ? "bg-green-500" : "bg-gray-300"
-                    }`}
-                  ></div>
-                  <span className="text-sm">VT-x / AMD-V</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div
-                    className={`w-3 h-3 rounded-full ${
-                      summary.virtualization.ept ? "bg-green-500" : "bg-gray-300"
-                    }`}
-                  ></div>
-                  <span className="text-sm">EPT / NPT</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div
-                    className={`w-3 h-3 rounded-full ${
-                      summary.virtualization.iommu ? "bg-green-500" : "bg-gray-300"
-                    }`}
-                  ></div>
-                  <span className="text-sm">IOMMU</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div
-                    className={`w-3 h-3 rounded-full ${
-                      summary.virtualization.nested_virt ? "bg-green-500" : "bg-gray-300"
-                    }`}
-                  ></div>
-                  <span className="text-sm">Nested Virt</span>
-                </div>
-              </div>
-            </div>
-          )}
-        </>
-      )}
-
-      {/* Quick Links */}
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
-        <button
-          onClick={() => handleViewDevices("pci")}
-          className="card hover:shadow-md transition-shadow p-4 flex flex-col items-center text-center"
-        >
-          <Cpu size={24} className="text-blue-600 mb-2" />
-          <span className="font-medium">PCI Devices</span>
-          <span className="text-xs text-gray-500 mt-1">View PCI devices</span>
-        </button>
-        <button
-          onClick={() => handleViewDevices("gpu")}
-          className="card hover:shadow-md transition-shadow p-4 flex flex-col items-center text-center"
-        >
-          <MonitorCheck size={24} className="text-indigo-600 mb-2" />
-          <span className="font-medium">GPU Devices</span>
-          <span className="text-xs text-gray-500 mt-1">View GPU devices</span>
-        </button>
-        <button
-          onClick={() => handleViewDevices("usb")}
-          className="card hover:shadow-md transition-shadow p-4 flex flex-col items-center text-center"
-        >
-          <Usb size={24} className="text-purple-600 mb-2" />
-          <span className="font-medium">USB Devices</span>
-          <span className="text-xs text-gray-500 mt-1">View USB devices</span>
-        </button>
-        <button
-          onClick={() => handleViewDevices("net")}
-          className="card hover:shadow-md transition-shadow p-4 flex flex-col items-center text-center"
-        >
-          <Network size={24} className="text-green-600 mb-2" />
-          <span className="font-medium">Network</span>
-          <span className="text-xs text-gray-500 mt-1">View network interfaces</span>
-        </button>
-        <button
-          onClick={() => handleViewDevices("disks")}
-          className="card hover:shadow-md transition-shadow p-4 flex flex-col items-center text-center"
-        >
-          <HardDrive size={24} className="text-orange-600 mb-2" />
-          <span className="font-medium">Disks</span>
-          <span className="text-xs text-gray-500 mt-1">View physical disks</span>
-        </button>
-        <button
-          onClick={() => handleViewDevices("vms")}
-          className="card hover:shadow-md transition-shadow p-4 flex flex-col items-center text-center"
-        >
-          <Box size={24} className="text-pink-600 mb-2" />
-          <span className="font-medium">Virtual Machines</span>
-          <span className="text-xs text-gray-500 mt-1">View VMs on node</span>
-        </button>
-      </div>
-
-      {/* Devices Modal */}
-      {showDevices && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[80vh] overflow-hidden flex flex-col">
-            <div className="p-6 border-b flex justify-between items-center">
-              <h2 className="text-xl font-semibold">
-                {showDevices === "pci" && "PCI Devices"}
-                {showDevices === "gpu" && "GPU Devices"}
-                {showDevices === "usb" && "USB Devices"}
-                {showDevices === "net" && "Network Interfaces"}
-                {showDevices === "disks" && "Physical Disks"}
-                {showDevices === "vms" && "Virtual Machines"}
-              </h2>
-              <button
-                onClick={() => {
-                  setShowDevices(null);
-                  setDevicesData(null);
-                }}
-                className="text-gray-400 hover:text-gray-600"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="p-6 overflow-y-auto">
-              {devicesLoading ? (
-                <div className="flex justify-center py-12">
-                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {showDevices === "pci" && devicesData?.devices && (
-                    <div>
-                      {devicesData.devices.length === 0 ? (
-                        <p className="text-gray-500 text-center py-8">No PCI devices found</p>
-                      ) : (
-                        <div className="space-y-2">
-                          {devicesData.devices.map((device: any, idx: number) => (
-                            <div key={idx} className="border rounded p-3">
-                              <div className="flex justify-between items-start">
-                                <div>
-                                  <div className="font-mono text-sm font-medium">{device.address}</div>
-                                  <div className="text-sm text-gray-700 mt-1">{device.device}</div>
-                                  <div className="text-xs text-gray-500 mt-1">{device.vendor}</div>
-                                </div>
-                                {device.iommu_group >= 0 && (
-                                  <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded">
-                                    IOMMU: {device.iommu_group}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {showDevices === "usb" && devicesData?.devices && (
-                    <div>
-                      {devicesData.devices.length === 0 ? (
-                        <p className="text-gray-500 text-center py-8">No USB devices found</p>
-                      ) : (
-                        <div className="space-y-2">
-                          {devicesData.devices.map((device: any, idx: number) => (
-                            <div key={idx} className="border rounded p-3">
-                              <div className="font-medium">{device.product || "Unknown Device"}</div>
-                              <div className="text-sm text-gray-600 mt-1">{device.vendor}</div>
-                              <div className="flex gap-4 mt-2 text-xs text-gray-500">
-                                {device.vendor_id && <span>Vendor: {device.vendor_id}</span>}
-                                {device.product_id && <span>Product: {device.product_id}</span>}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {showDevices === "net" && devicesData?.interfaces && (
-                    <div>
-                      {devicesData.interfaces.length === 0 ? (
-                        <p className="text-gray-500 text-center py-8">No network interfaces found</p>
-                      ) : (
-                        <div className="space-y-2">
-                          {devicesData.interfaces.map((iface: any, idx: number) => (
-                            <div key={idx} className="border rounded p-3">
-                              <div className="flex justify-between items-start">
-                                <div>
-                                  <div className="font-medium">{iface.name}</div>
-                                  <div className="text-sm text-gray-600 mt-1 font-mono">{iface.mac}</div>
-                                </div>
-                                <div className="flex gap-2">
-                                  {iface.state && (
-                                    <span className={`px-2 py-1 text-xs rounded ${
-                                      iface.state === 'up' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
-                                    }`}>
-                                      {iface.state}
-                                    </span>
-                                  )}
-                                  {iface.speed && (
-                                    <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded">
-                                      {iface.speed}
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {showDevices === "disks" && devicesData?.disks && (
-                    <div>
-                      {devicesData.disks.length === 0 ? (
-                        <p className="text-gray-500 text-center py-8">No disks found</p>
-                      ) : (
-                        <div className="space-y-2">
-                          {devicesData.disks.map((disk: any, idx: number) => (
-                            <div key={idx} className="border rounded p-3">
-                              <div className="flex justify-between items-start">
-                                <div className="flex-1">
-                                  <div className="font-medium font-mono">{disk.name}</div>
-                                  {disk.model && (
-                                    <div className="text-sm text-gray-700 mt-1">{disk.model}</div>
-                                  )}
-                                  <div className="flex gap-4 mt-2 text-xs text-gray-500">
-                                    {disk.serial && <span>Serial: {disk.serial}</span>}
-                                    {disk.size > 0 && (
-                                      <span>Size: {(disk.size / (1024 * 1024 * 1024)).toFixed(2)} GB</span>
-                                    )}
-                                  </div>
-                                </div>
-                                <span className={`px-2 py-1 text-xs rounded ${
-                                  disk.type === 'NVMe' ? 'bg-purple-100 text-purple-800' :
-                                  disk.type === 'SSD' ? 'bg-blue-100 text-blue-800' :
-                                  'bg-gray-100 text-gray-600'
-                                }`}>
-                                  {disk.type}
-                                </span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {showDevices === "gpu" && devicesData?.devices && (
-                    <div>
-                      {devicesData.devices.length === 0 ? (
-                        <p className="text-gray-500 text-center py-8">No GPU devices found</p>
-                      ) : (
-                        <div className="space-y-2">
-                          {devicesData.devices.map((device: any, idx: number) => (
-                            <div key={idx} className="border rounded p-3">
-                              <div className="flex justify-between items-start">
-                                <div className="flex-1">
-                                  <div className="font-mono text-sm font-medium">{device.address}</div>
-                                  <div className="text-sm text-gray-700 mt-1">{device.device}</div>
-                                  <div className="text-xs text-gray-500 mt-1">{device.vendor}</div>
-                                  {device.memory > 0 && (
-                                    <div className="text-xs text-gray-500 mt-1">
-                                      Memory: {(device.memory / (1024 * 1024)).toFixed(0)} MB
-                                    </div>
-                                  )}
-                                </div>
-                                <div className="flex flex-col gap-1">
-                                  <span className="px-2 py-1 bg-indigo-100 text-indigo-800 text-xs rounded">
-                                    GPU
-                                  </span>
-                                  {device.iommu_group >= 0 && (
-                                    <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded">
-                                      IOMMU: {device.iommu_group}
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {showDevices === "vms" && devicesData?.vms && (
-                    <div>
-                      {devicesData.vms.length === 0 ? (
-                        <p className="text-gray-500 text-center py-8">No virtual machines found</p>
-                      ) : (
-                        <div className="space-y-2">
-                          {devicesData.vms.map((vm: any, idx: number) => (
-                            <div key={idx} className="border rounded p-3">
-                              <div className="flex justify-between items-start">
-                                <div className="flex-1">
-                                  <div className="font-medium">{vm.name}</div>
-                                  <div className="text-xs text-gray-500 mt-1 font-mono">
-                                    UUID: {vm.uuid}
-                                  </div>
-                                  {vm.cpus > 0 && (
-                                    <div className="text-xs text-gray-600 mt-2">
-                                      vCPUs: {vm.cpus}
-                                    </div>
-                                  )}
-                                  {vm.memory > 0 && (
-                                    <div className="text-xs text-gray-600">
-                                      Memory: {(vm.memory / 1024 / 1024).toFixed(2)} GB
-                                    </div>
-                                  )}
-                                </div>
-                                <span className={`px-2 py-1 text-xs rounded ${
-                                  vm.state === 'running' ? 'bg-green-100 text-green-800' :
-                                  vm.state === 'paused' ? 'bg-yellow-100 text-yellow-800' :
-                                  vm.state === 'shutoff' ? 'bg-gray-100 text-gray-600' :
-                                  'bg-red-100 text-red-800'
-                                }`}>
-                                  {vm.state}
-                                </span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      {tabContent}
     </>
   );
 }

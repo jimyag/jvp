@@ -1,16 +1,21 @@
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Info } from "lucide-react";
+import { useState } from "react";
 import type { ReactNode } from "react";
+import Modal from "./Modal";
+import { Spinner } from "./ui";
 
 interface ConfirmDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: () => void;
+  /** 支持异步操作：执行期间按钮显示加载状态，成功后自动关闭；抛出异常时保持打开 */
+  onConfirm: () => void | Promise<void>;
   title: string;
-  message: string;
+  message: ReactNode;
   confirmText?: string;
   cancelText?: string;
   variant?: "danger" | "warning" | "info";
-  extraContent?: ReactNode;
+  children?: ReactNode;
+  confirmDisabled?: boolean;
 }
 
 export default function ConfirmDialog({
@@ -22,78 +27,65 @@ export default function ConfirmDialog({
   confirmText = "Confirm",
   cancelText = "Cancel",
   variant = "danger",
-  extraContent,
+  children,
+  confirmDisabled,
 }: ConfirmDialogProps) {
-  if (!isOpen) return null;
+  const [busy, setBusy] = useState(false);
 
-  const handleConfirm = () => {
-    onConfirm();
-    onClose();
-  };
-
-  const getVariantStyles = () => {
-    switch (variant) {
-      case "danger":
-        return {
-          icon: "text-red-600",
-          button: "bg-red-600 hover:bg-red-700 text-white",
-        };
-      case "warning":
-        return {
-          icon: "text-orange-600",
-          button: "bg-orange-600 hover:bg-orange-700 text-white",
-        };
-      case "info":
-        return {
-          icon: "text-blue-600",
-          button: "bg-blue-600 hover:bg-blue-700 text-white",
-        };
+  const handleConfirm = async () => {
+    setBusy(true);
+    try {
+      await onConfirm();
+      onClose();
+    } catch {
+      // 由调用方负责提示错误，这里保持对话框打开
+    } finally {
+      setBusy(false);
     }
   };
 
-  const styles = getVariantStyles();
+  const iconBox =
+    variant === "danger"
+      ? "bg-danger-soft text-danger"
+      : variant === "warning"
+        ? "bg-warning-soft text-warning"
+        : "bg-accent-soft text-accent";
+  const confirmClass = variant === "danger" ? "btn-danger" : "btn-primary";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      {/* Backdrop */}
-      <div
-        className="fixed inset-0 bg-black bg-opacity-50 transition-opacity"
-        onClick={onClose}
-      />
-
-      {/* Dialog */}
-      <div className="relative bg-white rounded-lg shadow-xl max-w-md w-full p-6 animate-fadeIn">
-        <div className="flex items-start gap-4">
-          <div className={`flex-shrink-0 ${styles.icon}`}>
-            <AlertTriangle size={24} />
-          </div>
-
-          <div className="flex-1">
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">
-              {title}
-            </h3>
-            <p className="text-sm text-gray-600">{message}</p>
-            {extraContent && <div className="mt-3">{extraContent}</div>}
-          </div>
-        </div>
-
-        <div className="flex justify-end gap-3 mt-6">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-          >
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={title}
+      size="sm"
+      dismissible={!busy}
+      footer={
+        <>
+          <button type="button" className="btn-secondary" onClick={onClose} disabled={busy}>
             {cancelText}
           </button>
           <button
             type="button"
+            className={confirmClass}
             onClick={handleConfirm}
-            className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${styles.button}`}
+            disabled={busy || confirmDisabled}
+            autoFocus
           >
+            {busy && <Spinner size={14} className="text-current" />}
             {confirmText}
           </button>
+        </>
+      }
+    >
+      <div className="flex gap-3.5">
+        <div className={`flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full ${iconBox}`}>
+          {variant === "info" ? <Info size={18} /> : <AlertTriangle size={18} />}
+        </div>
+        <div className="min-w-0 flex-1 pt-1.5 text-sm text-fg-muted">
+          <div>{message}</div>
+          {children && <div className="mt-4">{children}</div>}
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

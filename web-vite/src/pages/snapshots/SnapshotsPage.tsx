@@ -1,630 +1,330 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import Header from "@/components/Header";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Camera, Copy, History, Plus, Trash2 } from "lucide-react";
+import PageHeader from "@/components/PageHeader";
 import Table from "@/components/Table";
-import Modal from "@/components/Modal";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import DropdownMenu from "@/components/DropdownMenu";
+import NodeSelect from "@/components/NodeSelect";
+import { Badge, EmptyState, StatusBadge } from "@/components/ui";
 import { useToast } from "@/components/ToastContainer";
-import { RefreshCw, Plus, History, Trash2 } from "lucide-react";
-
-interface Node {
-  name: string;
-  uri: string;
-  status: string;
-}
-
-interface Instance {
-  id: string;
-  name: string;
-  node_name: string;
-}
-
-interface Snapshot {
-  id: string;
-  name: string;
-  vm_name: string;
-  node_name: string;
-  created_at?: string;
-  state?: string;
-  parent?: string;
-  memory?: boolean;
-  disk_only?: boolean;
-  description?: string;
-  disks?: { target?: string; path?: string; format?: string }[];
-}
+import { api, errorMessage } from "@/lib/api";
+import { formatDate, formatRelative } from "@/lib/format";
+import { useScopedNode } from "@/lib/nodes";
+import type { Instance, Snapshot } from "@/lib/types";
+import { CloneSnapshotModal, CreateSnapshotModal } from "./SnapshotModals";
 
 export default function SnapshotsPage() {
   const toast = useToast();
-  const [searchParams] = useSearchParams();
-  const [nodes, setNodes] = useState<Node[]>([]);
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { nodes, currentNode, loading: nodesLoading } = useScopedNode();
+  const vmParam = searchParams.get("vm") || "";
+
   const [instances, setInstances] = useState<Instance[]>([]);
+  const [instancesLoading, setInstancesLoading] = useState(true);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
-  const [selectedNode, setSelectedNode] = useState("");
-  const [selectedVM, setSelectedVM] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [snapshotsLoading, setSnapshotsLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [createModalOpen, setCreateModalOpen] = useState(false);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [revertDialogOpen, setRevertDialogOpen] = useState(false);
-  const [targetSnapshot, setTargetSnapshot] = useState<Snapshot | null>(null);
-  const [createForm, setCreateForm] = useState({
-    snapshot_name: "",
-    description: "",
-    with_memory: false,
-  });
+  const [createOpen, setCreateOpen] = useState(false);
+  const [cloneTarget, setCloneTarget] = useState<Snapshot | null>(null);
+  const [action, setAction] = useState<{ type: "revert" | "delete"; snapshot: Snapshot } | null>(null);
 
-  const initDoneRef = useRef(false);
-  const lastUrlParamsRef = useRef("");
+  const setVM = useCallback(
+    (vm: string) =>
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (vm) next.set("vm", vm);
+          else next.delete("vm");
+          return next;
+        },
+        { replace: true }
+      ),
+    [setSearchParams]
+  );
 
-  const updateURL = (node: string, vm: string) => {
-    const params = new URLSearchParams();
-    if (node) params.set("node", node);
-    if (vm) params.set("vm", vm);
-    const newURL = params.toString() ? `/snapshots?${params.toString()}` : "/snapshots";
-    window.history.replaceState(null, "", newURL);
-  };
-
-  const urlNode = searchParams.get("node") || "";
-  const urlVM = searchParams.get("vm") || "";
-  const currentUrlParams = `${urlNode}|${urlVM}`;
-
-  // 初始化：首次加载时自动加载 node 和 VM
+  // 加载当前节点的实例
   useEffect(() => {
-    // 如果 URL 参数没有变化，跳过
-    if (lastUrlParamsRef.current === currentUrlParams && initDoneRef.current) {
+    if (nodesLoading) return;
+    if (!currentNode) {
+      setInstancesLoading(false);
       return;
     }
-
-    // 记录当前 URL 参数
-    lastUrlParamsRef.current = currentUrlParams;
-    initDoneRef.current = true;
-
-    // 初始化数据（如果没有 URL 参数，会自动选择第一个 node 和 VM）
-    initializeData(urlNode, urlVM);
-  }, [urlNode, urlVM, currentUrlParams]);
-
-  const initializeData = async (urlNode: string, urlVM: string) => {
-    try {
-      // 获取节点列表
-      const nodesRes = await fetch("/api/list-nodes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-
-      if (!nodesRes.ok) {
-        toast.error("Failed to load nodes");
-        return;
-      }
-      const nodesData = await nodesRes.json();
-      const nodeList = nodesData.nodes || [];
-      setNodes(nodeList);
-
-      if (nodeList.length === 0) {
-        return;
-      }
-
-      // 选择节点
-      const nodeExists = urlNode && nodeList.some((n: Node) => n.name === urlNode);
-      const targetNode = nodeExists ? urlNode : nodeList[0].name;
-      setSelectedNode(targetNode);
-
-      // 获取该节点的实例
-      const instancesRes = await fetch("/api/describe-instances", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ node_name: targetNode }),
-      });
-      if (!instancesRes.ok) {
-        toast.error("Failed to load instances");
-        return;
-      }
-      const instancesData = await instancesRes.json();
-      const instanceList: Instance[] = instancesData.instances || [];
-      setInstances(instanceList);
-
-      if (instanceList.length === 0) {
-        updateURL(targetNode, "");
-        return;
-      }
-
-      let targetVM: string;
-      if (urlVM) {
-        // URL 指定了 VM
-        const matchedInstance = instanceList.find((i) => i.id === urlVM || i.name === urlVM);
-        if (matchedInstance) {
-          targetVM = matchedInstance.id;
-        } else {
-          console.warn(`VM ${urlVM} not found in node ${targetNode}`);
-          targetVM = urlVM;
-          setSelectedVM(targetVM);
-          setSnapshots([]);
-          updateURL(targetNode, targetVM);
-          return;
-        }
-      } else {
-        // 智能选择有快照的 VM：并行检查所有 VM 的快照
-        const snapshotChecks = await Promise.all(
-          instanceList.map(async (instance) => {
-            try {
-              const res = await fetch("/api/list-snapshots", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ node_name: targetNode, vm_name: instance.id }),
-              });
-              if (res.ok) {
-                const data = await res.json();
-                return {
-                  vmId: instance.id,
-                  snapshotCount: (data.snapshots || []).length,
-                };
-              }
-              return { vmId: instance.id, snapshotCount: 0 };
-            } catch {
-              return { vmId: instance.id, snapshotCount: 0 };
-            }
-          })
-        );
-
-        // 优先选择有快照的 VM，否则选第一个
-        const vmWithSnapshots = snapshotChecks.find((c) => c.snapshotCount > 0);
-        targetVM = vmWithSnapshots?.vmId || instanceList[0].id;
-      }
-
-      setSelectedVM(targetVM);
-      fetchSnapshots(targetNode, targetVM, { showLoading: true });
-      updateURL(targetNode, targetVM);
-    } catch (err) {
-      console.error(err);
-      toast.error("Failed to initialize");
-    }
-  };
-
-  const handleNodeChange = async (nodeName: string) => {
-    setSelectedNode(nodeName);
-    setSelectedVM("");
-    setInstances([]);
-    setSnapshots([]);
-
-    try {
-      const res = await fetch("/api/describe-instances", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ node_name: nodeName }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const list: Instance[] = data.instances || [];
+    let cancelled = false;
+    setInstancesLoading(true);
+    api<{ instances: Instance[] }>("/api/describe-instances", { node_name: currentNode })
+      .then((data) => {
+        if (cancelled) return;
+        const list = (data.instances || []).sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
         setInstances(list);
-        if (list.length > 0) {
-          // 智能选择有快照的 VM：并行检查所有 VM 的快照
-          const snapshotChecks = await Promise.all(
-            list.map(async (instance) => {
-              try {
-                const snapRes = await fetch("/api/list-snapshots", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ node_name: nodeName, vm_name: instance.id }),
-                });
-                if (snapRes.ok) {
-                  const snapData = await snapRes.json();
-                  return {
-                    vmId: instance.id,
-                    snapshotCount: (snapData.snapshots || []).length,
-                  };
-                }
-                return { vmId: instance.id, snapshotCount: 0 };
-              } catch {
-                return { vmId: instance.id, snapshotCount: 0 };
-              }
-            })
-          );
+      })
+      .catch((err) => !cancelled && toast.error(errorMessage(err, "Failed to load instances")))
+      .finally(() => !cancelled && setInstancesLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [currentNode, nodesLoading, toast]);
 
-          // 优先选择有快照的 VM，否则选第一个
-          const vmWithSnapshots = snapshotChecks.find((c) => c.snapshotCount > 0);
-          const targetVM = vmWithSnapshots?.vmId || list[0].id;
+  const selected = useMemo(() => instances.find((i) => i.id === vmParam || i.name === vmParam), [instances, vmParam]);
 
-          setSelectedVM(targetVM);
-          fetchSnapshots(nodeName, targetVM, { showLoading: true });
-          updateURL(nodeName, targetVM);
-        } else {
-          updateURL(nodeName, "");
-        }
-      } else {
-        toast.error("Failed to load instances");
-      }
-    } catch (err) {
-      console.error(err);
-      toast.error("Failed to load instances");
-    }
-  };
+  // URL 中的实例不在当前节点时，默认选择第一个实例
+  useEffect(() => {
+    if (instancesLoading) return;
+    if (!selected && instances.length > 0) setVM(instances[0].id);
+    if (instances.length === 0 && vmParam) setVM("");
+  }, [instancesLoading, instances, selected, vmParam, setVM]);
 
-  const handleVMChange = (vmId: string) => {
-    setSelectedVM(vmId);
-    if (selectedNode && vmId) {
-      fetchSnapshots(selectedNode, vmId, { showLoading: true });
-      updateURL(selectedNode, vmId);
-    }
-  };
-
-  const fetchSnapshots = async (nodeName: string, vmName: string, { showLoading = false }: { showLoading?: boolean } = {}) => {
-    if (showLoading) {
-      setLoading(true);
-    } else {
-      setRefreshing(true);
-    }
-    try {
-      const res = await fetch("/api/list-snapshots", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ node_name: nodeName, vm_name: vmName }),
-      });
-      if (res.ok) {
-        const data = await res.json();
+  const fetchSnapshots = useCallback(
+    async ({ silent = false }: { silent?: boolean } = {}) => {
+      if (!currentNode || !selected) return;
+      if (silent) setSnapshotsLoading(true);
+      else setRefreshing(true);
+      try {
+        const data = await api<{ snapshots: Snapshot[] }>("/api/list-snapshots", { node_name: currentNode, vm_name: selected.id });
         setSnapshots(data.snapshots || []);
-      } else {
-        toast.error("Failed to load snapshots");
-      }
-    } catch (err) {
-      console.error(err);
-      toast.error("Failed to load snapshots");
-    } finally {
-      if (showLoading) {
-        setLoading(false);
-      } else {
+      } catch (err) {
+        toast.error(errorMessage(err, "Failed to load snapshots"));
+      } finally {
+        setSnapshotsLoading(false);
         setRefreshing(false);
       }
-    }
-  };
-
-  const handleCreateSnapshot = async () => {
-    if (!selectedNode || !selectedVM) {
-      toast.info("Select node and VM first");
-      return;
-    }
-    setCreating(true);
-    try {
-      const res = await fetch("/api/create-snapshot", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          node_name: selectedNode,
-          vm_name: selectedVM,
-          snapshot_name: createForm.snapshot_name || undefined,
-          description: createForm.description || undefined,
-          with_memory: createForm.with_memory,
-        }),
-      });
-      if (res.ok) {
-        toast.success("Snapshot created");
-        setCreateModalOpen(false);
-        setCreateForm({ snapshot_name: "", description: "", with_memory: false });
-        fetchSnapshots(selectedNode, selectedVM);
-      } else {
-        const data = await res.json().catch(() => ({}));
-        toast.error(data?.message || "Create snapshot failed");
-      }
-    } catch (err) {
-      console.error(err);
-      toast.error("Create snapshot failed");
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const handleDeleteSnapshot = async () => {
-    if (!targetSnapshot) return;
-    try {
-      const res = await fetch("/api/delete-snapshot", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          node_name: selectedNode,
-          vm_name: selectedVM,
-          snapshot_name: targetSnapshot.name,
-        }),
-      });
-      if (res.ok) {
-        toast.success("Snapshot deleted");
-        fetchSnapshots(selectedNode, selectedVM);
-      } else {
-        const data = await res.json().catch(() => ({}));
-        toast.error(data?.message || "Delete snapshot failed");
-      }
-    } catch (err) {
-      console.error(err);
-      toast.error("Delete snapshot failed");
-    } finally {
-      setTargetSnapshot(null);
-    }
-  };
-
-  const handleRevertSnapshot = async () => {
-    if (!targetSnapshot) return;
-    try {
-      const res = await fetch("/api/revert-snapshot", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          node_name: selectedNode,
-          vm_name: selectedVM,
-          snapshot_name: targetSnapshot.name,
-          start_after_revert: true,
-        }),
-      });
-      if (res.ok) {
-        toast.success("Reverted to snapshot");
-      } else {
-        const data = await res.json().catch(() => ({}));
-        toast.error(data?.message || "Revert snapshot failed");
-      }
-    } catch (err) {
-      console.error(err);
-      toast.error("Revert snapshot failed");
-    } finally {
-      setTargetSnapshot(null);
-    }
-  };
-
-  const columns = useMemo(
-    () => [
-      { key: "name", label: "Snapshot" },
-      { key: "created_at", label: "Created At" },
-      {
-        key: "state",
-        label: "State",
-        render: (value: unknown) => (
-          <span className="px-2 py-1 rounded-full text-xs bg-blue-50 text-blue-700">
-            {String(value || "unknown")}
-          </span>
-        ),
-      },
-      {
-        key: "memory",
-        label: "Memory",
-        render: (value: unknown, row: Snapshot) => (
-          <span className="text-sm text-gray-800">
-            {value ? "Include memory" : row.disk_only ? "Disk only" : "Disk"}
-          </span>
-        ),
-      },
-      {
-        key: "description",
-        label: "Description",
-        render: (value: unknown) => <span className="text-sm text-gray-700">{value ? String(value) : "-"}</span>,
-      },
-      {
-        key: "disks",
-        label: "Disks",
-        render: (_: unknown, row: Snapshot) => (
-          <div className="flex flex-col text-xs text-gray-800">
-            {row.disks && row.disks.length > 0
-              ? row.disks.map((d) => (
-                  <span key={`${d.target}-${d.path || d.format || Math.random()}`}>
-                    {d.target}: {d.path || "n/a"} {d.format ? `(${d.format})` : ""}
-                  </span>
-                ))
-              : <span>-</span>}
-          </div>
-        ),
-      },
-      {
-        key: "parent",
-        label: "Parent",
-        render: (value: unknown) => <span>{value ? String(value) : "-"}</span>,
-      },
-      {
-        key: "actions",
-        label: "Actions",
-        render: (_: unknown, row: Snapshot) => (
-          <div className="flex gap-2">
-            <button
-              onClick={() => {
-                setTargetSnapshot(row);
-                setRevertDialogOpen(true);
-              }}
-              className="btn-secondary flex items-center gap-1"
-            >
-              <History size={16} />
-              Revert
-            </button>
-            <button
-              onClick={() => {
-                setTargetSnapshot(row);
-                setDeleteDialogOpen(true);
-              }}
-              className="btn-danger flex items-center gap-1"
-            >
-              <Trash2 size={16} />
-              Delete
-            </button>
-          </div>
-        ),
-      },
-    ],
-    []
+    },
+    [currentNode, selected, toast]
   );
+
+  useEffect(() => {
+    setSnapshots([]);
+    fetchSnapshots({ silent: true });
+  }, [fetchSnapshots]);
+
+  const handleAction = async () => {
+    if (!action || !selected) return;
+    const { type, snapshot } = action;
+    try {
+      if (type === "revert") {
+        await api("/api/revert-snapshot", {
+          node_name: currentNode,
+          vm_name: selected.id,
+          snapshot_name: snapshot.name,
+          start_after_revert: true,
+        });
+        toast.success(`${selected.name || selected.id} reverted to ${snapshot.name}`);
+      } else {
+        await api("/api/delete-snapshot", { node_name: currentNode, vm_name: selected.id, snapshot_name: snapshot.name });
+        toast.success(`Snapshot ${snapshot.name} deleted`);
+      }
+      fetchSnapshots({ silent: true });
+    } catch (err) {
+      toast.error(errorMessage(err, `Failed to ${type} snapshot`));
+      throw err;
+    }
+  };
+
+  const noNodes = !nodesLoading && nodes.length === 0;
+  const noInstances = !instancesLoading && instances.length === 0;
 
   return (
     <>
-      <Header
+      <PageHeader
         title="Snapshots"
-        description="Manage VM snapshots (external overlays stored under _snapshots_)."
-        action={
-          <div className="flex gap-3">
-            <button
-              onClick={() => fetchSnapshots(selectedNode, selectedVM)}
-              className="btn-secondary flex items-center gap-2"
-              disabled={!selectedNode || !selectedVM || refreshing}
-            >
-              <RefreshCw size={16} className={refreshing ? "animate-spin" : ""} />
-              Refresh
+        description="Point-in-time restore points for instance disks."
+        onRefresh={() => fetchSnapshots()}
+        refreshing={refreshing}
+        actions={
+          <>
+            <NodeSelect />
+            <button className="btn-primary" onClick={() => setCreateOpen(true)} disabled={!selected}>
+              <Plus size={15} />
+              Create snapshot
             </button>
-            <button
-              onClick={() => setCreateModalOpen(true)}
-              className="btn-primary flex items-center gap-2"
-              disabled={!selectedNode || !selectedVM}
-            >
-              <Plus size={16} />
-              Create Snapshot
-            </button>
-          </div>
+          </>
         }
       />
 
-      <div className="card mb-4">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Node
-            </label>
-            <select
-              className="input"
-              value={selectedNode}
-              onChange={(e) => handleNodeChange(e.target.value)}
-              disabled={nodes.length === 0}
-            >
-              {nodes.length === 0 ? (
-                <option value="">Loading nodes...</option>
-              ) : (
-                nodes.map((node) => (
-                  <option key={node.name} value={node.name}>
-                    {node.name}
-                  </option>
-                ))
-              )}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              VM
-            </label>
-            <select
-              className="input"
-              value={selectedVM}
-              onChange={(e) => handleVMChange(e.target.value)}
-              disabled={instances.length === 0 || !selectedNode}
-            >
-              {instances.length === 0 ? (
-                <option value="">{selectedNode ? "Loading VMs..." : "Select a node first"}</option>
-              ) : (
-                instances.map((vm) => (
-                  <option key={vm.id} value={vm.id}>
-                    {vm.name || vm.id}
-                  </option>
-                ))
-              )}
-            </select>
-          </div>
-          <div className="flex items-end">
-            <p className="text-sm text-gray-600">
-              Select node and VM to view snapshots.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {loading && snapshots.length === 0 ? (
-        <div className="card text-center py-12">
-          <p className="text-gray-500">Loading snapshots...</p>
+      {noNodes || noInstances ? (
+        <div className="card">
+          <EmptyState
+            icon={<Camera size={20} />}
+            title={noNodes ? "No nodes yet" : `No instances on ${currentNode}`}
+            description="Snapshots are taken from instances. Create an instance first."
+            action={
+              <Link to={noNodes ? "/nodes?add=1" : "/instances?create=1"} className="btn-primary">
+                {noNodes ? "Add node" : "Create instance"}
+              </Link>
+            }
+          />
         </div>
       ) : (
-        <Table
-          columns={columns}
-          data={snapshots}
-          emptyMessage={selectedVM ? "No snapshots found" : "Select a VM to view snapshots"}
-          keyField="id"
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[260px_minmax(0,1fr)]">
+          <aside className="card h-fit overflow-hidden">
+            <div className="border-b border-line px-4 py-3 text-xs font-medium text-fg-subtle">Instances on {currentNode}</div>
+            <div className="max-h-[60vh] overflow-y-auto p-1.5">
+              {instancesLoading ? (
+                <div className="px-3 py-6 text-center text-sm text-fg-subtle">Loading…</div>
+              ) : (
+                instances.map((i) => {
+                  const active = selected?.id === i.id;
+                  return (
+                    <button
+                      key={i.id}
+                      type="button"
+                      onClick={() => setVM(i.id)}
+                      className={`flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-sm transition-colors ${
+                        active ? "bg-accent-soft text-accent" : "text-fg hover:bg-subtle"
+                      }`}
+                    >
+                      <span className="truncate font-medium">{i.name || i.id}</span>
+                      <span className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${i.state === "running" ? "bg-success" : "bg-fg-subtle/50"}`} />
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </aside>
+
+          <div className="min-w-0">
+            {selected && (
+              <div className="mb-3 flex items-center gap-2 text-sm">
+                <Link
+                  to={`/instances/${encodeURIComponent(currentNode)}/${encodeURIComponent(selected.id)}`}
+                  className="font-medium text-fg hover:text-accent"
+                >
+                  {selected.name || selected.id}
+                </Link>
+                <StatusBadge status={selected.state} />
+              </div>
+            )}
+            <Table
+              rows={snapshots}
+              loading={snapshotsLoading || instancesLoading}
+              loadingLabel="Loading snapshots…"
+              rowKey={(s) => s.id || s.name}
+              empty={
+                <EmptyState
+                  icon={<Camera size={20} />}
+                  title="No snapshots yet"
+                  description="Take a snapshot before upgrades or risky changes so you can roll back."
+                  action={
+                    <button className="btn-primary" onClick={() => setCreateOpen(true)} disabled={!selected}>
+                      <Plus size={15} />
+                      Create snapshot
+                    </button>
+                  }
+                />
+              }
+              columns={[
+                {
+                  key: "name",
+                  header: "Snapshot",
+                  render: (s) => (
+                    <div>
+                      <div className="font-medium">{s.name}</div>
+                      {s.description && <div className="max-w-sm truncate text-xs text-fg-muted">{s.description}</div>}
+                    </div>
+                  ),
+                },
+                {
+                  key: "created",
+                  header: "Created",
+                  render: (s) => (
+                    <span className="whitespace-nowrap text-fg-muted" title={formatDate(s.created_at)}>
+                      {formatRelative(s.created_at)}
+                    </span>
+                  ),
+                },
+                {
+                  key: "type",
+                  header: "Type",
+                  render: (s) => <Badge tone={s.memory ? "accent" : "neutral"}>{s.memory ? "Disk + memory" : "Disk only"}</Badge>,
+                },
+                {
+                  key: "disks",
+                  header: "Disks",
+                  render: (s) =>
+                    s.disks?.length ? (
+                      <div className="space-y-0.5 font-mono text-xs text-fg-muted">
+                        {s.disks.map((d, idx) => (
+                          <div key={`${d.target}-${idx}`} className="max-w-[260px] truncate" title={d.path}>
+                            {d.target}
+                            {d.format ? ` · ${d.format}` : ""}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-fg-subtle">—</span>
+                    ),
+                },
+                { key: "parent", header: "Parent", render: (s) => <span className="text-fg-muted">{s.parent || "—"}</span> },
+                {
+                  key: "actions",
+                  header: <span className="sr-only">Actions</span>,
+                  align: "right",
+                  render: (s) => (
+                    <div className="flex items-center justify-end gap-1">
+                      <button className="btn-ghost btn-sm" onClick={() => setAction({ type: "revert", snapshot: s })}>
+                        <History size={13} />
+                        Revert
+                      </button>
+                      <DropdownMenu
+                        items={[
+                          { label: "Clone to new instance", icon: <Copy size={14} />, onClick: () => setCloneTarget(s) },
+                          { divider: true, label: "divider" },
+                          { label: "Delete snapshot", icon: <Trash2 size={14} />, danger: true, onClick: () => setAction({ type: "delete", snapshot: s }) },
+                        ]}
+                      />
+                    </div>
+                  ),
+                },
+              ]}
+            />
+          </div>
+        </div>
+      )}
+
+      {createOpen && selected && (
+        <CreateSnapshotModal
+          nodeName={currentNode}
+          instance={selected}
+          onClose={() => setCreateOpen(false)}
+          onCreated={() => {
+            setCreateOpen(false);
+            fetchSnapshots({ silent: true });
+          }}
+        />
+      )}
+      {cloneTarget && selected && (
+        <CloneSnapshotModal
+          nodeName={currentNode}
+          instance={selected}
+          snapshotName={cloneTarget.name}
+          onClose={() => setCloneTarget(null)}
+          onCloned={(created) => {
+            setCloneTarget(null);
+            if (created?.id) navigate(`/instances/${encodeURIComponent(currentNode)}/${encodeURIComponent(created.id)}`);
+          }}
         />
       )}
 
-      <Modal
-        isOpen={createModalOpen}
-        onClose={() => setCreateModalOpen(false)}
-        title="Create Snapshot"
-      >
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Snapshot Name (optional)
-            </label>
-            <input
-              type="text"
-              className="input"
-              value={createForm.snapshot_name}
-              onChange={(e) =>
-                setCreateForm((prev) => ({ ...prev, snapshot_name: e.target.value }))
-              }
-              placeholder="snap-001"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Description
-            </label>
-            <textarea
-              className="input"
-              rows={3}
-              value={createForm.description}
-              onChange={(e) =>
-                setCreateForm((prev) => ({ ...prev, description: e.target.value }))
-              }
-              placeholder="Optional note about this snapshot"
-            />
-          </div>
-          <label className="inline-flex items-center gap-2 text-sm text-gray-700">
-            <input
-              type="checkbox"
-              className="rounded border-gray-300"
-              checked={createForm.with_memory}
-              onChange={(e) =>
-                setCreateForm((prev) => ({ ...prev, with_memory: e.target.checked }))
-              }
-            />
-            Include memory (may be slower and larger)
-          </label>
-          <div className="flex justify-end gap-3 pt-2">
-            <button
-              className="btn-secondary"
-              onClick={() => setCreateModalOpen(false)}
-            >
-              Cancel
-            </button>
-            <button
-              className="btn-primary"
-              onClick={handleCreateSnapshot}
-              disabled={creating}
-            >
-              {creating ? "Creating..." : "Create"}
-            </button>
-          </div>
-        </div>
-      </Modal>
-
       <ConfirmDialog
-        isOpen={deleteDialogOpen}
-        onClose={() => {
-          setDeleteDialogOpen(false);
-          setTargetSnapshot(null);
-        }}
-        onConfirm={handleDeleteSnapshot}
-        title="Delete snapshot"
-        message={`Delete snapshot ${targetSnapshot?.name || ""}? This removes the snapshot overlay.`}
-        confirmText="Delete"
-        variant="danger"
-      />
-
-      <ConfirmDialog
-        isOpen={revertDialogOpen}
-        onClose={() => {
-          setRevertDialogOpen(false);
-          setTargetSnapshot(null);
-        }}
-        onConfirm={handleRevertSnapshot}
-        title="Revert to snapshot"
-        message={`Revert VM ${selectedVM} to snapshot ${targetSnapshot?.name || ""}? VM will restart after revert.`}
-        confirmText="Revert"
-        variant="warning"
+        isOpen={Boolean(action)}
+        onClose={() => setAction(null)}
+        onConfirm={handleAction}
+        title={action?.type === "revert" ? "Revert to snapshot?" : "Delete snapshot?"}
+        message={
+          action?.type === "revert" ? (
+            <>
+              {selected?.name || selected?.id} will be restored to <strong className="text-fg">{action.snapshot.name}</strong> and restarted.
+              Changes made after the snapshot will be lost.
+            </>
+          ) : (
+            <>
+              Snapshot <strong className="text-fg">{action?.snapshot.name}</strong> will be permanently deleted.
+            </>
+          )
+        }
+        confirmText={action?.type === "revert" ? "Revert" : "Delete"}
+        variant={action?.type === "revert" ? "warning" : "danger"}
       />
     </>
   );

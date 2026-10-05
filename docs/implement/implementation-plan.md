@@ -384,6 +384,25 @@ StoragePoolService → VolumeService
 
 #### 6.1 前端用户体验增强
 
+##### 6.1.0 前端 UI 重设计 ✅ **已完成 (2026-10-05)**
+- [x] 统一设计系统：语义化颜色、按钮 / 表单 / 卡片样式，去掉大写按钮和悬停缩放
+- [x] 公共组件：PageHeader（面包屑）、Table、Modal（Esc 关闭、弹窗栈）、ConfirmDialog（异步确认）、DropdownMenu、Tabs、SegmentedControl、Badge / StatusBadge 等（`src/components/`）
+- [x] 侧边栏按 Compute / Infrastructure 分组，新增 Overview 总览页
+- [x] 全局节点选择器（`src/lib/nodes.tsx`）：各页面共享当前节点并同步到 URL `?node=`，取代各页面各自的"智能选节点"批量探测请求
+- [x] 实例：列表按状态筛选、行内操作 + 更多菜单；详情页拆分为 Overview / Disks / Network / Snapshots 标签页；创建向导重构为 Source → Resources → Access → Review，并支持设置实例名称
+- [x] 控制台：VNC 内嵌在页面中（支持全屏 / 新窗口），串口终端自适应容器大小
+- [x] 节点详情改为标签页展示硬件设备；存储池、模板、快照、密钥对、网络页面统一为表格 + 操作菜单
+- [x] 所有 `window.confirm` 替换为 ConfirmDialog；后端 ErrorResponse 的错误信息直接展示给用户
+- [x] 控制台页面按需加载，主包体积从 ~770 KB 降至 ~450 KB
+
+技术实现：
+- `src/lib/api.ts` 统一 POST 请求并解析 `apierror.ErrorResponse`（`errors[0].message`）
+- `src/lib/types.ts` 集中维护前端实体类型，`src/lib/templates.ts` 复用模板分类逻辑
+- 修复的问题：删除密钥对字段名错误（`keypairID`）、创建密钥对算法字段（`algorithm`）、导入公钥后取 `keypair.id`、私钥下载文件名为空、快照克隆存储池按磁盘路径匹配（不再硬编码 default/boot）、GPU 显存单位、存储池状态大小写判断
+- 驱动 ISO 分类先使用 `isISO` 确认介质类型，再匹配驱动关键词，避免名称包含 VirtIO、driver 或 guest-tools 的普通磁盘镜像被创建向导隐藏
+- 真实 libvirt 验证：通过创建向导创建 Ubuntu 24.04 实例，验证粘贴公钥导入、SSH 登录、cloud-init 无错误完成、8 GB 系统盘扩容、VNC 及串口登录提示；Windows 创建和快照克隆仍待验证
+- 删除模板时提示：实例磁盘以模板卷作为 backing file，删除卷会导致实例不可用
+
 ##### 6.1.1 国际化（i18n）
 - [ ] 集成国际化框架（react-i18next 或类似）
 - [ ] 支持多语言切换（中文、英文等）
@@ -397,25 +416,25 @@ StoragePoolService → VolumeService
 - 支持动态语言切换
 - 浏览器语言自动检测
 
-##### 6.1.2 深色/浅色主题切换
-- [ ] 主题系统设计（CSS Variables / Tailwind Dark Mode）
-- [ ] 主题切换组件
-- [ ] 深色模式样式适配
-- [ ] 主题偏好持久化存储
-- [ ] 系统主题自动检测
+##### 6.1.2 深色/浅色主题切换 ✅ **已完成 (2026-10-05)**
+- [x] 主题系统设计（CSS Variables / Tailwind Dark Mode）
+- [x] 主题切换组件
+- [x] 深色模式样式适配
+- [x] 主题偏好持久化存储
+- [x] 系统主题自动检测
 
 技术实现：
-- 使用 Tailwind CSS 的 dark mode 功能
-- CSS Variables 定义主题颜色
-- localStorage 存储用户偏好
-- 支持跟随系统主题
+- `src/index.css` 中用 RGB CSS Variables 定义语义化颜色（canvas / surface / fg / accent / success 等），`.dark` 覆盖为深色值
+- `tailwind.config.js` 使用 `darkMode: "class"`，颜色全部映射到 CSS Variables，页面无需写 `dark:` 前缀
+- `src/lib/theme.ts` 管理 system / light / dark 偏好（localStorage `jvp.theme`），`index.html` 内联脚本在首帧前应用主题避免闪烁
+- 侧边栏底部提供主题切换器
 
 ##### 6.1.3 用户引导与帮助
 - [ ] 首次使用引导（Onboarding）
 - [ ] 功能提示（Tooltips）
 - [ ] 帮助文档集成
-- [ ] 快速开始向导
-- [ ] 空状态引导
+- [x] 快速开始向导（Overview 页快捷入口 + 创建实例分步向导）
+- [x] 空状态引导
 
 功能点：
 - 首次访问时的功能导览

@@ -3,69 +3,141 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --canvas: 247 248 250;
+    --surface: 255 255 255;
+    --subtle: 241 243 246;
+    --line: 228 231 236;
+    --line-strong: 205 210 218;
+    --fg: 17 20 27;
+    --fg-muted: 82 90 104;
+    --fg-subtle: 134 142 156;
+    --accent: 59 91 219;
+    --accent-hover: 47 75 196;
+    --accent-soft: 235 240 254;
+    --accent-fg: 255 255 255;
+    --success: 21 128 61;
+    --success-soft: 228 246 234;
+    --warning: 180 83 9;
+    --warning-soft: 254 243 219;
+    --danger: 205 37 37;
+    --danger-soft: 254 232 232;
+    --info: 3 105 161;
+    --info-soft: 224 242 254;
+    color-scheme: light;
+  }
+
+  .dark {
+    --canvas: 11 12 15;
+    --surface: 19 21 25;
+    --subtle: 28 31 37;
+    --line: 39 43 51;
+    --line-strong: 58 63 74;
+    --fg: 234 236 240;
+    --fg-muted: 160 167 180;
+    --fg-subtle: 112 119 133;
+    --accent: 110 140 245;
+    --accent-hover: 132 158 248;
+    --accent-soft: 30 38 66;
+    --accent-fg: 255 255 255;
+    --success: 74 205 128;
+    --success-soft: 18 46 31;
+    --warning: 240 170 70;
+    --warning-soft: 52 37 14;
+    --danger: 245 105 105;
+    --danger-soft: 58 22 24;
+    --info: 96 185 240;
+    --info-soft: 16 40 58;
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
   body {
-    @apply bg-background text-primary antialiased;
+    @apply bg-canvas text-fg antialiased text-sm;
+    font-feature-settings: "cv11", "ss01";
+  }
+
+  ::selection {
+    @apply bg-accent/20;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent/50 ring-offset-1 ring-offset-surface;
+  }
+
+  input[type="checkbox"],
+  input[type="radio"] {
+    @apply h-4 w-4 cursor-pointer accent-[rgb(var(--accent))];
   }
 }
 
 @layer components {
+  /* Buttons */
   .btn {
-    @apply px-6 py-2.5 font-medium uppercase text-sm border-2 transition-all duration-200 hover:scale-[1.02];
+    @apply inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md border px-3 h-9 text-sm font-medium
+      transition-colors duration-150 select-none
+      disabled:cursor-not-allowed disabled:opacity-50;
   }
-
   .btn-primary {
-    @apply btn bg-accent text-white border-accent hover:bg-accent-dark hover:border-accent-dark;
+    @apply btn border-transparent bg-accent text-accent-fg shadow-card hover:bg-accent-hover;
   }
-
   .btn-secondary {
-    @apply btn bg-white text-primary border-primary hover:bg-primary hover:text-white;
+    @apply btn border-line bg-surface text-fg shadow-card hover:bg-subtle;
   }
-
+  .btn-ghost {
+    @apply btn border-transparent bg-transparent text-fg-muted hover:bg-subtle hover:text-fg;
+  }
   .btn-danger {
-    @apply btn bg-coral text-white border-coral hover:bg-red-600 hover:border-red-600;
+    @apply btn border-transparent bg-danger text-white shadow-card hover:bg-danger/90;
+  }
+  .btn-danger-ghost {
+    @apply btn border-transparent bg-transparent text-danger hover:bg-danger-soft;
+  }
+  /* 尺寸修饰需要放在各变体之后，才能覆盖 .btn 的默认高度 */
+  .btn-sm {
+    @apply h-7 px-2.5 text-xs gap-1;
+  }
+  .btn-icon {
+    @apply inline-flex h-8 w-8 items-center justify-center rounded-md text-fg-muted transition-colors
+      hover:bg-subtle hover:text-fg disabled:cursor-not-allowed disabled:opacity-40;
   }
 
-  .card {
-    @apply bg-background-card border border-gray-200 rounded-lg p-6 transition-all duration-200 hover:shadow-lg;
-  }
-
+  /* Forms */
   .input {
-    @apply w-full px-4 py-2.5 border-2 border-gray-300 rounded focus:outline-none focus:border-accent transition-colors;
+    @apply block w-full h-9 rounded-md border border-line bg-surface px-3 text-sm text-fg shadow-card
+      placeholder:text-fg-subtle transition-colors
+      focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20
+      disabled:cursor-not-allowed disabled:bg-subtle disabled:text-fg-subtle;
   }
-
+  textarea.input {
+    @apply h-auto py-2 leading-relaxed;
+  }
+  select.input {
+    @apply appearance-none bg-no-repeat pr-8;
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%23868e9c' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+    background-position: right 0.5rem center;
+    background-size: 1.25em 1.25em;
+  }
   .label {
-    @apply block text-sm font-medium text-primary mb-2;
+    @apply mb-1.5 block text-[13px] font-medium text-fg;
   }
-}
-
-@layer utilities {
-  .animate-fadeIn {
-    animation: fadeIn 0.2s ease-in-out;
+  .hint {
+    @apply mt-1.5 text-xs text-fg-subtle;
   }
 
-  .animate-slideIn {
-    animation: slideIn 0.3s ease-out;
+  /* Surfaces */
+  .card {
+    @apply rounded-lg border border-line bg-surface shadow-card;
   }
-
-  @keyframes fadeIn {
-    from {
-      opacity: 0;
-      transform: scale(0.95);
-    }
-    to {
-      opacity: 1;
-      transform: scale(1);
-    }
+  .code {
+    @apply rounded bg-subtle px-1.5 py-0.5 font-mono text-[12px] text-fg;
   }
-
-  @keyframes slideIn {
-    from {
-      opacity: 0;
-      transform: translateX(100%);
-    }
-    to {
-      opacity: 1;
-      transform: translateX(0);
-    }
+  .link {
+    @apply text-accent hover:underline underline-offset-2;
   }
 }
