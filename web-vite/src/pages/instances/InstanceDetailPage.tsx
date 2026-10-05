@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
+  AlertTriangle,
   Camera,
   Copy,
   Cpu,
@@ -211,6 +212,7 @@ export default function InstanceDetailPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [notFound, setNotFound] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [snapshotsLoading, setSnapshotsLoading] = useState(true);
 
@@ -231,7 +233,8 @@ export default function InstanceDetailPage() {
     );
 
   const fetchInstance = useCallback(
-    async ({ silent = false }: { silent?: boolean } = {}) => {
+    // silent: 不显示刷新动画；background: 轮询请求，失败时不打扰用户
+    async ({ silent = false, background = false }: { silent?: boolean; background?: boolean } = {}) => {
       if (!silent) setRefreshing(true);
       try {
         const data = await api<{ instances: Instance[] }>("/api/describe-instances", {
@@ -241,8 +244,13 @@ export default function InstanceDetailPage() {
         const found = data.instances?.[0] || null;
         setInstance(found);
         setNotFound(!found);
+        setLoadError(null);
       } catch (err) {
-        if (!silent) toast.error(errorMessage(err, "Failed to load instance"));
+        if (!background) {
+          const message = errorMessage(err, "Failed to load instance");
+          setLoadError(message);
+          toast.error(message);
+        }
       } finally {
         setLoading(false);
         setRefreshing(false);
@@ -271,7 +279,7 @@ export default function InstanceDetailPage() {
 
   useEffect(() => {
     const timer = setInterval(() => {
-      if (document.visibilityState === "visible") fetchInstance({ silent: true });
+      if (document.visibilityState === "visible") fetchInstance({ silent: true, background: true });
     }, 15000);
     return () => clearInterval(timer);
   }, [fetchInstance]);
@@ -282,8 +290,8 @@ export default function InstanceDetailPage() {
         navigate(`/instances?node=${encodeURIComponent(nodeName)}`);
         return;
       }
-      fetchInstance({ silent: true });
-      setTimeout(() => fetchInstance({ silent: true }), 2500);
+      fetchInstance({ silent: true, background: true });
+      setTimeout(() => fetchInstance({ silent: true, background: true }), 2500);
     },
   });
 
@@ -332,6 +340,28 @@ export default function InstanceDetailPage() {
 
   if (loading && !instance) {
     return <LoadingState label="Loading instance…" />;
+  }
+
+  if (loadError && !instance) {
+    return (
+      <div className="card">
+        <EmptyState
+          icon={<AlertTriangle size={20} />}
+          title="Unable to load instance"
+          description={loadError}
+          action={
+            <div className="flex gap-2">
+              <Link to={listPath} className="btn-secondary">
+                Back to instances
+              </Link>
+              <button className="btn-primary" onClick={() => fetchInstance()}>
+                Try again
+              </button>
+            </div>
+          }
+        />
+      </div>
+    );
   }
 
   if (notFound || !instance) {

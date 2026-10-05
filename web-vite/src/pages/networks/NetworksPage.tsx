@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Cable, Network, Play, Plus, Square, Trash2 } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
@@ -283,22 +283,28 @@ export default function NetworksPage() {
       { replace: true }
     );
 
+  // 只采用最新一次请求的结果，避免切换节点后旧节点的响应覆盖列表
+  const requestRef = useRef(0);
   const fetchAll = useCallback(
     async ({ silent = false }: { silent?: boolean } = {}) => {
       if (!currentNode) return;
+      const requestId = ++requestRef.current;
       if (!silent) setRefreshing(true);
       try {
         const [netData, brData] = await Promise.all([
           api<{ networks: LibvirtNetwork[] }>("/api/list-networks", { node_name: currentNode }),
           api<{ bridges: HostBridge[] }>("/api/list-bridges", { node_name: currentNode }),
         ]);
+        if (requestId !== requestRef.current) return;
         setNetworks(netData.networks || []);
         setBridges(brData.bridges || []);
       } catch (err) {
-        toast.error(errorMessage(err, "Failed to load networks"));
+        if (requestId === requestRef.current) toast.error(errorMessage(err, "Failed to load networks"));
       } finally {
-        setLoading(false);
-        setRefreshing(false);
+        if (requestId === requestRef.current) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     },
     [currentNode, toast]

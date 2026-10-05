@@ -181,6 +181,7 @@ export default function CreateInstanceModal({ nodes, defaultNode, onClose, onCre
 
   const [stepIndex, setStepIndex] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  const [importedKey, setImportedKey] = useState<{ publicKey: string; id: string } | null>(null);
 
   const isWindows = osType === "windows";
   const isWindowsCloud = isWindows && windowsMode === "cloud_image";
@@ -325,11 +326,18 @@ export default function CreateInstanceModal({ nodes, defaultNode, onClose, onCre
         if (keyMethod === "existing" && keypairId) {
           keypairIds = [keypairId];
         } else if (keyMethod === "paste" && publicKey.trim()) {
-          const imported = await api<{ keypair: KeyPair }>("/api/import-keypair", {
-            name: `${name.trim() || "instance"}-${Date.now()}`,
-            public_key: publicKey.trim(),
-          });
-          if (imported.keypair?.id) keypairIds = [imported.keypair.id];
+          // 创建失败重试时复用已导入的密钥，避免重复导入同一个公钥
+          const trimmed = publicKey.trim();
+          let id = importedKey?.publicKey === trimmed ? importedKey.id : "";
+          if (!id) {
+            const imported = await api<{ keypair: KeyPair }>("/api/import-keypair", {
+              name: `${name.trim() || "instance"}-${Date.now()}`,
+              public_key: trimmed,
+            });
+            id = imported.keypair?.id || "";
+            if (id) setImportedKey({ publicKey: trimmed, id });
+          }
+          if (id) keypairIds = [id];
         }
       }
 

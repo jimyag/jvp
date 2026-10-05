@@ -26,6 +26,7 @@ export default function OverviewPage() {
   useEffect(() => {
     if (nodesLoading) return;
     let cancelled = false;
+    setLoading(true);
     Promise.all(
       nodes.map(async (node): Promise<NodeOverview> => {
         if (node.state !== "online") return { node, instances: [], pools: [] };
@@ -51,8 +52,11 @@ export default function OverviewPage() {
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    await refreshNodes();
-    setRefreshing(false);
+    try {
+      await refreshNodes();
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const totals = useMemo(() => {

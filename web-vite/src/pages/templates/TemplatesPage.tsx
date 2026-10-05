@@ -45,14 +45,34 @@ export default function TemplatesPage() {
       { replace: true }
     );
 
+  // 只采用最新一次请求的结果，避免切换节点或存储池后旧响应覆盖列表
+  const requestRef = useRef(0);
   const fetchTemplates = useCallback(
     async ({ silent = false }: { silent?: boolean } = {}) => {
       if (!currentNode) return;
+      const requestId = ++requestRef.current;
+      let redirected = false;
+      const isLatest = () => requestId === requestRef.current && !redirected;
       if (!silent) setRefreshing(true);
       try {
         const poolData = await api<{ pools: StoragePool[] }>("/api/list-storage-pools", { node_name: currentNode });
+        if (!isLatest()) return;
         const poolList = poolData.pools || [];
         setPools(poolList);
+        // URL 中的存储池不属于当前节点（例如刚切换节点）时，回退到全部存储池
+        if (poolFilter && !poolList.some((p) => p.name === poolFilter)) {
+          setSearchParams(
+            (prev) => {
+              const next = new URLSearchParams(prev);
+              next.delete("pool");
+              return next;
+            },
+            { replace: true }
+          );
+          // 由 poolFilter 变化触发的下一次请求负责加载列表和收尾状态
+          redirected = true;
+          return;
+        }
         // 后端按存储池查询模板，"全部" 时并行查询每个存储池后合并
         const targets = poolFilter ? poolList.filter((p) => p.name === poolFilter) : poolList;
         const results = await Promise.all(
@@ -62,15 +82,17 @@ export default function TemplatesPage() {
               .catch(() => [] as Template[])
           )
         );
-        setTemplates(results.flat());
+        if (isLatest()) setTemplates(results.flat());
       } catch (err) {
-        toast.error(errorMessage(err, "Failed to load templates"));
+        if (isLatest()) toast.error(errorMessage(err, "Failed to load templates"));
       } finally {
-        setLoading(false);
-        setRefreshing(false);
+        if (isLatest()) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     },
-    [currentNode, poolFilter, toast]
+    [currentNode, poolFilter, setSearchParams, toast]
   );
 
   useEffect(() => {

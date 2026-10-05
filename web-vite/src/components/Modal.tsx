@@ -1,5 +1,5 @@
 import { X } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 
@@ -26,6 +26,24 @@ const sizeClasses = {
 // 打开中的弹窗栈：Esc 只关闭最上层的弹窗
 const modalStack: symbol[] = [];
 
+// 记录最近两次获得焦点的元素：弹窗内 autoFocus 会先于 effect 执行，
+// 此时需要回退到更早的那个元素作为关闭后恢复焦点的目标
+let previousFocus: HTMLElement | null = null;
+let currentFocus: HTMLElement | null = null;
+if (typeof document !== "undefined") {
+  document.addEventListener("focusin", (e) => {
+    previousFocus = currentFocus;
+    currentFocus = e.target as HTMLElement;
+  });
+}
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), iframe, [tabindex]:not([tabindex="-1"])';
+
+function focusableIn(root: HTMLElement): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => el.offsetParent !== null || el === document.activeElement);
+}
+
 export default function Modal({
   isOpen,
   onClose,
@@ -37,6 +55,8 @@ export default function Modal({
   dismissible = true,
   bodyClassName = "px-6 py-5",
 }: ModalProps) {
+  const titleId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   const dismissibleRef = useRef(dismissible);
 
@@ -51,10 +71,38 @@ export default function Modal({
     modalStack.push(id);
     document.body.style.overflow = "hidden";
 
+    const panel = panelRef.current;
+    const active = document.activeElement as HTMLElement | null;
+    const restoreTarget = panel && active && panel.contains(active) ? previousFocus : active;
+    if (panel && !panel.contains(document.activeElement)) {
+      (focusableIn(panel)[0] || panel).focus();
+    }
+
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && dismissibleRef.current && modalStack[modalStack.length - 1] === id) {
+      if (modalStack[modalStack.length - 1] !== id) return;
+      if (e.key === "Escape" && dismissibleRef.current) {
         e.stopPropagation();
         onCloseRef.current();
+        return;
+      }
+      // 焦点限制在弹窗内
+      if (e.key === "Tab" && panel) {
+        const items = focusableIn(panel);
+        if (items.length === 0) {
+          e.preventDefault();
+          panel.focus();
+          return;
+        }
+        const first = items[0];
+        const last = items[items.length - 1];
+        const current = document.activeElement;
+        if (e.shiftKey && (current === first || !panel.contains(current))) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && (current === last || !panel.contains(current))) {
+          e.preventDefault();
+          first.focus();
+        }
       }
     };
     window.addEventListener("keydown", handleKey);
@@ -65,23 +113,26 @@ export default function Modal({
       if (modalStack.length === 0) {
         document.body.style.overflow = "";
       }
+      if (restoreTarget?.isConnected) restoreTarget.focus();
     };
   }, [isOpen]);
 
   if (!isOpen) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6" role="dialog" aria-modal="true">
+    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6" role="dialog" aria-modal="true" aria-labelledby={titleId}>
       <div
         className="fixed inset-0 animate-fade-in bg-black/40 backdrop-blur-[2px]"
         onClick={() => dismissible && onClose()}
       />
       <div
-        className={`relative flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-xl border border-line bg-surface shadow-pop animate-pop-in sm:rounded-xl ${sizeClasses[size]}`}
+        ref={panelRef}
+        tabIndex={-1}
+        className={`relative flex max-h-[92vh] outline-none w-full flex-col overflow-hidden rounded-t-xl border border-line bg-surface shadow-pop animate-pop-in sm:rounded-xl ${sizeClasses[size]}`}
       >
         <div className="flex items-start justify-between gap-4 border-b border-line px-6 py-4">
           <div className="min-w-0">
-            <h2 className="text-base font-semibold text-fg">{title}</h2>
+            <h2 id={titleId} className="text-base font-semibold text-fg">{title}</h2>
             {description && <p className="mt-0.5 text-sm text-fg-muted">{description}</p>}
           </div>
           <button

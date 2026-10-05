@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Database, Info, Play, Plus, RefreshCw, Square } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
@@ -14,11 +14,8 @@ import { formatBytes, percent } from "@/lib/format";
 import { useScopedNode } from "@/lib/nodes";
 import type { StoragePool } from "@/lib/types";
 
-const POOL_TYPES = [
-  { value: "dir", label: "Directory", hint: "A directory on the host filesystem." },
-  { value: "fs", label: "Filesystem", hint: "A pre-formatted block device mounted by libvirt." },
-  { value: "netfs", label: "Network filesystem", hint: "An NFS/CIFS export mounted by libvirt." },
-];
+// 后端创建存储池时只接收目标路径，fs / netfs 需要的源设备、源主机等字段尚未支持，因此只提供 dir
+const POOL_TYPES = [{ value: "dir", label: "Directory", hint: "A directory on the host filesystem." }];
 
 function CreatePoolModal({ nodeName, onClose, onCreated }: { nodeName: string; onClose: () => void; onCreated: () => void }) {
   const toast = useToast();
@@ -98,18 +95,23 @@ export default function StoragePoolsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [toStop, setToStop] = useState<StoragePool | null>(null);
 
+  // 只采用最新一次请求的结果，避免切换节点后旧节点的响应覆盖列表
+  const requestRef = useRef(0);
   const fetchPools = useCallback(
     async ({ silent = false }: { silent?: boolean } = {}) => {
       if (!currentNode) return;
+      const requestId = ++requestRef.current;
       if (!silent) setRefreshing(true);
       try {
         const data = await api<{ pools: StoragePool[] }>("/api/list-storage-pools", { node_name: currentNode });
-        setPools(data.pools || []);
+        if (requestId === requestRef.current) setPools(data.pools || []);
       } catch (err) {
-        toast.error(errorMessage(err, "Failed to load storage pools"));
+        if (requestId === requestRef.current) toast.error(errorMessage(err, "Failed to load storage pools"));
       } finally {
-        setLoading(false);
-        setRefreshing(false);
+        if (requestId === requestRef.current) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     },
     [currentNode, toast]

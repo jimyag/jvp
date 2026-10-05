@@ -167,7 +167,11 @@ export default function RegisterTemplateModal({ nodes, defaultNode, defaultPool,
         setPools(list);
         setPoolName((prev) => (prev && list.some((p) => p.name === prev) ? prev : list[0]?.name || ""));
       })
-      .catch(() => !cancelled && setPools([]));
+      .catch(() => {
+        if (cancelled) return;
+        setPools([]);
+        setPoolName("");
+      });
     return () => {
       cancelled = true;
     };
@@ -176,6 +180,9 @@ export default function RegisterTemplateModal({ nodes, defaultNode, defaultPool,
   useEffect(() => {
     if (source !== "volume" || !nodeName || !poolName) return;
     let cancelled = false;
+    // 切换节点或存储池后清空已选卷，避免提交时卷名与存储池不匹配
+    setVolumeName("");
+    setVolumes([]);
     setLoadingVolumes(true);
     api<{ volumes: Volume[] }>("/api/list-volumes", { node_name: nodeName, pool_name: poolName })
       .then((data) => !cancelled && setVolumes((data.volumes || []).sort((a, b) => a.name.localeCompare(b.name))))

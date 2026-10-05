@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Camera, Copy, History, Plus, Trash2 } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
@@ -53,6 +53,8 @@ export default function SnapshotsPage() {
     }
     let cancelled = false;
     setInstancesLoading(true);
+    // 清空上一个节点的实例，避免用旧实例 ID 查询新节点的快照
+    setInstances([]);
     api<{ instances: Instance[] }>("/api/describe-instances", { node_name: currentNode })
       .then((data) => {
         if (cancelled) return;
@@ -75,19 +77,24 @@ export default function SnapshotsPage() {
     if (instances.length === 0 && vmParam) setVM("");
   }, [instancesLoading, instances, selected, vmParam, setVM]);
 
+  // 只采用最新一次请求的结果，避免切换实例后旧实例的快照覆盖列表
+  const requestRef = useRef(0);
   const fetchSnapshots = useCallback(
     async ({ silent = false }: { silent?: boolean } = {}) => {
       if (!currentNode || !selected) return;
+      const requestId = ++requestRef.current;
       if (silent) setSnapshotsLoading(true);
       else setRefreshing(true);
       try {
         const data = await api<{ snapshots: Snapshot[] }>("/api/list-snapshots", { node_name: currentNode, vm_name: selected.id });
-        setSnapshots(data.snapshots || []);
+        if (requestId === requestRef.current) setSnapshots(data.snapshots || []);
       } catch (err) {
-        toast.error(errorMessage(err, "Failed to load snapshots"));
+        if (requestId === requestRef.current) toast.error(errorMessage(err, "Failed to load snapshots"));
       } finally {
-        setSnapshotsLoading(false);
-        setRefreshing(false);
+        if (requestId === requestRef.current) {
+          setSnapshotsLoading(false);
+          setRefreshing(false);
+        }
       }
     },
     [currentNode, selected, toast]

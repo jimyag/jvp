@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { Check, Cpu, Database, MemoryStick, Network, Power, PowerOff, Server, ServerCog, X } from "lucide-react";
@@ -134,7 +134,15 @@ export default function NodeDetailPage() {
   const [summaryError, setSummaryError] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
   const [deviceData, setDeviceData] = useState<Partial<Record<TabId, unknown[]>>>({});
-  const [deviceLoading, setDeviceLoading] = useState(false);
+  // 当前页面对应的节点和设备缓存，异步回调中通过 ref 判断结果是否已过期
+  const nodeRef = useRef(nodeName);
+  const deviceDataRef = useRef(deviceData);
+  // 正在请求中的标签页，避免来回切换时重复请求
+  const inflightRef = useRef(new Set<TabId>());
+  useEffect(() => {
+    nodeRef.current = nodeName;
+    deviceDataRef.current = deviceData;
+  });
 
   const setTab = (next: TabId) =>
     setSearchParams(
@@ -148,50 +156,64 @@ export default function NodeDetailPage() {
     );
 
   const load = useCallback(async () => {
+    const requested = nodeName;
+    const stale = () => nodeRef.current !== requested;
     try {
-      const data = await api<Node>("/api/describe-node", { name: nodeName });
+      const data = await api<Node>("/api/describe-node", { name: requested });
+      if (stale()) return;
       setNode(data);
     } catch (err) {
+      if (stale()) return;
       setNode(null);
       toast.error(errorMessage(err, "Failed to load node"));
       setLoading(false);
       return;
     }
     try {
-      const data = await api<NodeSummary>("/api/describe-node-summary", { name: nodeName });
+      const data = await api<NodeSummary>("/api/describe-node-summary", { name: requested });
+      if (stale()) return;
       setSummary(data);
       setSummaryError("");
     } catch (err) {
+      if (stale()) return;
       setSummary(null);
       setSummaryError(errorMessage(err, "Failed to load hardware summary"));
     } finally {
-      setLoading(false);
+      if (!stale()) setLoading(false);
     }
   }, [nodeName, toast]);
 
   useEffect(() => {
     setLoading(true);
+    setNode(null);
+    setSummary(null);
     setDeviceData({});
+    // 同步清空 ref，保证随后执行的设备加载不会命中上一个节点的缓存
+    deviceDataRef.current = {};
+    inflightRef.current = new Set();
     load();
   }, [load]);
 
   const loadDevices = useCallback(
     async (target: TabId, force = false) => {
       if (target === "overview") return;
-      if (!force && deviceData[target]) return;
+      if (!force && (deviceDataRef.current[target] || inflightRef.current.has(target))) return;
+      const requested = nodeName;
+      const inflight = inflightRef.current;
       const { endpoint, key } = tabEndpoints[target];
-      setDeviceLoading(true);
+      inflight.add(target);
       try {
-        const data = await api<Record<string, unknown[]>>(endpoint, { name: nodeName });
-        setDeviceData((prev) => ({ ...prev, [target]: data[key] || [] }));
+        const data = await api<Record<string, unknown[]>>(endpoint, { name: requested });
+        if (nodeRef.current === requested) setDeviceData((prev) => ({ ...prev, [target]: data[key] || [] }));
       } catch (err) {
+        if (nodeRef.current !== requested) return;
         toast.error(errorMessage(err, "Failed to load devices"));
         setDeviceData((prev) => ({ ...prev, [target]: [] }));
       } finally {
-        setDeviceLoading(false);
+        inflight.delete(target);
       }
     },
-    [deviceData, nodeName, toast]
+    [nodeName, toast]
   );
 
   useEffect(() => {
@@ -200,9 +222,12 @@ export default function NodeDetailPage() {
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    await load();
-    if (tab !== "overview") await loadDevices(tab, true);
-    setRefreshing(false);
+    try {
+      await load();
+      if (tab !== "overview") await loadDevices(tab, true);
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const setEnabled = async (enabled: boolean) => {
@@ -242,7 +267,8 @@ export default function NodeDetailPage() {
   const scoped = (path: string) => `${path}?node=${encodeURIComponent(node.name)}`;
 
   let tabContent: ReactNode = null;
-  if (tab !== "overview" && deviceLoading && !deviceData[tab]) {
+  // 每个标签页按自己的缓存判断是否仍在加载，并发切换标签时互不影响
+  if (tab !== "overview" && !deviceData[tab]) {
     tabContent = <LoadingState label="Loading…" className="card" />;
   } else if (tab === "pci" || tab === "gpu") {
     tabContent = (

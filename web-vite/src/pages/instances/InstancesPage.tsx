@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { Camera, Monitor, Play, Plus, RotateCcw, Server, Square, Trash2 } from "lucide-react";
+import { AlertTriangle, Camera, Monitor, Play, Plus, RotateCcw, Server, Square, Trash2 } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
 import Table from "@/components/Table";
 import type { Column } from "@/components/Table";
@@ -37,18 +37,27 @@ export default function InstancesPage() {
   const [query, setQuery] = useState("");
   const [stateFilter, setStateFilter] = useState<StateFilter>("all");
   const [createOpen, setCreateOpen] = useState(searchParams.get("create") === "1");
+  const [loadError, setLoadError] = useState<string | null>(null);
   const requestRef = useRef(0);
 
   const fetchInstances = useCallback(
-    async ({ silent = false }: { silent?: boolean } = {}) => {
+    // silent: 不显示刷新动画；background: 轮询请求，失败时不打扰用户
+    async ({ silent = false, background = false }: { silent?: boolean; background?: boolean } = {}) => {
       if (!currentNode) return;
       const requestId = ++requestRef.current;
       if (!silent) setRefreshing(true);
       try {
         const data = await api<{ instances: Instance[] }>("/api/describe-instances", { node_name: currentNode });
-        if (requestId === requestRef.current) setInstances(data.instances || []);
+        if (requestId === requestRef.current) {
+          setInstances(data.instances || []);
+          setLoadError(null);
+        }
       } catch (err) {
-        if (!silent && requestId === requestRef.current) toast.error(errorMessage(err, "Failed to load instances"));
+        if (!background && requestId === requestRef.current) {
+          const message = errorMessage(err, "Failed to load instances");
+          setLoadError(message);
+          toast.error(message);
+        }
       } finally {
         if (requestId === requestRef.current) {
           setLoading(false);
@@ -67,21 +76,22 @@ export default function InstancesPage() {
     }
     setLoading(true);
     setInstances([]);
+    setLoadError(null);
     fetchInstances({ silent: true });
   }, [currentNode, nodesLoading, fetchInstances]);
 
   // 页面可见时定期刷新状态
   useEffect(() => {
     const timer = setInterval(() => {
-      if (document.visibilityState === "visible") fetchInstances({ silent: true });
+      if (document.visibilityState === "visible") fetchInstances({ silent: true, background: true });
     }, POLL_INTERVAL);
     return () => clearInterval(timer);
   }, [fetchInstances]);
 
   const { request, busy, dialog } = useInstanceActions({
     onChanged: () => {
-      fetchInstances({ silent: true });
-      setTimeout(() => fetchInstances({ silent: true }), 2500);
+      fetchInstances({ silent: true, background: true });
+      setTimeout(() => fetchInstances({ silent: true, background: true }), 2500);
     },
   });
 
@@ -282,7 +292,18 @@ export default function InstancesPage() {
             loading={loading}
             loadingLabel="Loading instances…"
             empty={
-              instances.length > 0 ? (
+              loadError && instances.length === 0 ? (
+                <EmptyState
+                  icon={<AlertTriangle size={20} />}
+                  title="Unable to load instances"
+                  description={loadError}
+                  action={
+                    <button className="btn-secondary" onClick={() => fetchInstances()}>
+                      Try again
+                    </button>
+                  }
+                />
+              ) : instances.length > 0 ? (
                 <EmptyState
                   title="No matching instances"
                   description="Try a different search or filter."
