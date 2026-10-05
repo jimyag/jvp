@@ -399,6 +399,8 @@ StoragePoolService → VolumeService
 - `src/lib/api.ts` 统一 POST 请求并解析 `apierror.ErrorResponse`（`errors[0].message`）
 - `src/lib/types.ts` 集中维护前端实体类型，`src/lib/templates.ts` 复用模板分类逻辑
 - 修复的问题：删除密钥对字段名错误（`keypairID`）、创建密钥对算法字段（`algorithm`）、导入公钥后取 `keypair.id`、私钥下载文件名为空、快照克隆存储池按磁盘路径匹配（不再硬编码 default/boot）、GPU 显存单位、存储池状态大小写判断
+- 驱动 ISO 分类先使用 `isISO` 确认介质类型，再匹配驱动关键词，避免名称包含 VirtIO、driver 或 guest-tools 的普通磁盘镜像被创建向导隐藏
+- 真实 libvirt 验证：通过创建向导创建 Ubuntu 24.04 实例，验证粘贴公钥导入、SSH 登录、cloud-init 无错误完成、8 GB 系统盘扩容、VNC 及串口登录提示；Windows 创建和快照克隆仍待验证
 - 删除模板时提示：实例磁盘以模板卷作为 backing file，删除卷会导致实例不可用
 
 ##### 6.1.1 国际化（i18n）

@@ -12,7 +12,7 @@ export function isISO(template: Template) {
 
 export function isDriverISO(template: Template) {
   const text = templateText(template);
-  return text.includes("virtio") || text.includes("driver") || text.includes("guest-tools") || text.includes("guest tools");
+  return isISO(template) && (text.includes("virtio") || text.includes("driver") || text.includes("guest-tools") || text.includes("guest tools"));
 }
 
 export function isWindowsInstallISO(template: Template) {
