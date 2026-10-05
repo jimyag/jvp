@@ -3,6 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
+import { Loader2 } from "lucide-react";
 
 interface SerialConsoleProps {
   wsUrl: string;
@@ -11,191 +12,107 @@ interface SerialConsoleProps {
   onError?: (error: string) => void;
 }
 
-export default function SerialConsole({
-  wsUrl,
-  onConnect,
-  onDisconnect: _onDisconnect,
-  onError,
-}: SerialConsoleProps) {
-  const terminalRef = useRef<HTMLDivElement>(null);
-  const xtermRef = useRef<any>(null);
-  const wsRef = useRef<WebSocket | null>(null);
-  const fitAddonRef = useRef<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [isInitialized, setIsInitialized] = useState(false);
+export default function SerialConsole({ wsUrl, onConnect, onDisconnect, onError }: SerialConsoleProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [connecting, setConnecting] = useState(true);
+  const callbacks = useRef({ onConnect, onDisconnect, onError });
 
   useEffect(() => {
-    // 如果已经初始化过，不要重复初始化
-    if (isInitialized || xtermRef.current) return;
+    callbacks.current = { onConnect, onDisconnect, onError };
+  });
 
-    let term: any = null;
-    let ws: WebSocket | null = null;
-    let fitAddon: any = null;
-    let isMounted = true;
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
 
-    const initTerminal = async () => {
-      // 确保 DOM 元素存在
-      if (!terminalRef.current || !isMounted) return;
+    const term = new Terminal({
+      cursorBlink: true,
+      fontSize: 13,
+      lineHeight: 1.2,
+      fontFamily: '"JetBrains Mono", "Cascadia Code", Menlo, "DejaVu Sans Mono", monospace',
+      theme: {
+        background: "#0b0c0f",
+        foreground: "#e6e8ec",
+        cursor: "#e6e8ec",
+        cursorAccent: "#0b0c0f",
+        selectionBackground: "rgba(110, 140, 245, 0.35)",
+      },
+      scrollback: 10000,
+    });
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+    term.loadAddon(new WebLinksAddon());
+    term.open(container);
 
+    const fit = () => {
       try {
-        // 再次检查 DOM 元素和挂载状态
-        if (!terminalRef.current || !isMounted) return;
-
-        // 创建终端
-        term = new Terminal({
-          cursorBlink: true,
-          fontSize: 14,
-          fontFamily: '"Cascadia Code", Menlo, "DejaVu Sans Mono", monospace',
-          theme: {
-            background: "#000000",
-            foreground: "#ffffff",
-            cursor: "#ffffff",
-            cursorAccent: "#000000",
-            selectionBackground: "rgba(255, 255, 255, 0.3)",
-          },
-          scrollback: 10000,
-        });
-
-        fitAddon = new FitAddon();
-        term.loadAddon(fitAddon);
-        term.loadAddon(new WebLinksAddon());
-
-        // 确保容器有尺寸
-        const container = terminalRef.current;
-        if (container.clientWidth === 0 || container.clientHeight === 0) {
-          // 等待容器有尺寸
-          await new Promise(resolve => setTimeout(resolve, 100));
-        }
-
-        if (!isMounted) return;
-
-        term.open(container);
-
-        // 延迟 fit 以确保 DOM 完全渲染
-        setTimeout(() => {
-          if (fitAddon && isMounted) {
-            try {
-              fitAddon.fit();
-            } catch (e) {
-              console.warn("Initial fit failed:", e);
-            }
-          }
-        }, 50);
-
-        xtermRef.current = term;
-        fitAddonRef.current = fitAddon;
-        setIsInitialized(true);
-
-        // 连接 WebSocket
-        ws = new WebSocket(wsUrl);
-        ws.binaryType = "arraybuffer";
-        wsRef.current = ws;
-        const decoder = new TextDecoder();
-
-        ws.onopen = () => {
-          console.log("Serial console WebSocket connected");
-          setLoading(false);
-          onConnect?.();
-          term.write("Serial console connected.\r\n");
-        };
-
-        ws.onmessage = (event) => {
-          if (term) {
-            if (event.data instanceof ArrayBuffer) {
-              term.write(decoder.decode(event.data, { stream: true }));
-            } else if (event.data instanceof Blob) {
-              event.data.arrayBuffer().then((buffer) => {
-                if (term) {
-                  term.write(decoder.decode(buffer, { stream: true }));
-                }
-              });
-            } else {
-              term.write(event.data);
-            }
-          }
-        };
-
-        ws.onerror = (event) => {
-          console.error("Serial console WebSocket error:", event);
-          setLoading(false);
-          onError?.("WebSocket connection error");
-          if (term) {
-            term.write("\r\n\x1b[31mWebSocket connection error\x1b[0m\r\n");
-          }
-        };
-
-        ws.onclose = () => {
-          console.log("Serial console WebSocket disconnected");
-          setLoading(false);
-          _onDisconnect?.();
-          if (term) {
-            term.write("\r\n\x1b[33mConnection closed\x1b[0m\r\n");
-          }
-        };
-
-        // 终端输入发送到 WebSocket
-        term.onData((data: string) => {
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(data);
-          }
-        });
-
-        // 窗口调整大小时重新 fit
-        const handleResize = () => {
-          if (fitAddonRef.current) {
-            try {
-              fitAddonRef.current.fit();
-            } catch (error) {
-              console.error("Error fitting terminal:", error);
-            }
-          }
-        };
-
-        window.addEventListener("resize", handleResize);
-
-        // 初始欢迎信息
-        term.write("Connecting to serial console...\r\n");
-
-        // 清理函数
-        return () => {
-          window.removeEventListener("resize", handleResize);
-        };
-      } catch (error) {
-        console.error("Failed to initialize terminal:", error);
-        if (isMounted) {
-          setLoading(false);
-          onError?.("Failed to initialize terminal");
-        }
+        fitAddon.fit();
+      } catch {
+        // 容器尚未完成布局时 fit 可能失败，下一次 resize 会重试
       }
     };
+    const resizeObserver = new ResizeObserver(fit);
+    resizeObserver.observe(container);
+    requestAnimationFrame(fit);
 
-    initTerminal();
+    term.write("\x1b[90mConnecting to serial console…\x1b[0m\r\n");
+
+    const ws = new WebSocket(wsUrl);
+    ws.binaryType = "arraybuffer";
+    const decoder = new TextDecoder();
+    let disposed = false;
+
+    ws.onopen = () => {
+      if (disposed) return;
+      setConnecting(false);
+      term.write("\x1b[32mConnected.\x1b[0m Press Enter if the prompt does not appear.\r\n");
+      term.focus();
+      callbacks.current.onConnect?.();
+    };
+    ws.onmessage = (event) => {
+      if (event.data instanceof ArrayBuffer) {
+        term.write(decoder.decode(event.data, { stream: true }));
+      } else if (event.data instanceof Blob) {
+        event.data.arrayBuffer().then((buf) => term.write(decoder.decode(buf, { stream: true })));
+      } else {
+        term.write(event.data);
+      }
+    };
+    ws.onerror = () => {
+      if (disposed) return;
+      setConnecting(false);
+      term.write("\r\n\x1b[31mWebSocket connection error\x1b[0m\r\n");
+      callbacks.current.onError?.("WebSocket connection error");
+    };
+    ws.onclose = () => {
+      if (disposed) return;
+      setConnecting(false);
+      term.write("\r\n\x1b[33mConnection closed\x1b[0m\r\n");
+      callbacks.current.onDisconnect?.();
+    };
+
+    const dataListener = term.onData((data) => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(data);
+    });
 
     return () => {
-      isMounted = false;
-      if (wsRef.current) {
-        wsRef.current.close();
-        wsRef.current = null;
-      }
-      if (xtermRef.current) {
-        xtermRef.current.dispose();
-        xtermRef.current = null;
-      }
-      setIsInitialized(false);
+      disposed = true;
+      resizeObserver.disconnect();
+      dataListener.dispose();
+      ws.close();
+      term.dispose();
     };
-  }, [wsUrl]); // 只依赖 wsUrl，避免不必要的重新初始化
+  }, [wsUrl]);
 
   return (
-    <div className="relative w-full h-full bg-black">
-      {loading && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-75 z-10">
-          <div className="text-white text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
-            <p>Connecting to serial console...</p>
-          </div>
+    <div className="relative h-full w-full bg-[#0b0c0f]">
+      {connecting && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#0b0c0f]/80 text-sm text-white/70">
+          <Loader2 size={18} className="mr-2 animate-spin" />
+          Connecting…
         </div>
       )}
-      <div ref={terminalRef} className="w-full h-full p-2" />
+      <div ref={containerRef} className="h-full w-full p-3" />
     </div>
   );
 }

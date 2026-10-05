@@ -1,893 +1,635 @@
-import { useEffect, useState } from "react";
-import {
-  Network,
-  RefreshCw,
-  Plus,
-  Play,
-  Square,
-  Trash2,
-} from "lucide-react";
-import { apiPost } from "@/lib/api";
+import { useCallback, useEffect, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { Cable, Network, Play, Plus, Square, Trash2 } from "lucide-react";
+import PageHeader from "@/components/PageHeader";
+import Table from "@/components/Table";
+import Modal from "@/components/Modal";
+import ConfirmDialog from "@/components/ConfirmDialog";
+import DropdownMenu from "@/components/DropdownMenu";
+import NodeSelect from "@/components/NodeSelect";
+import { Alert, Badge, Checkbox, EmptyState, Field, SegmentedControl, Spinner, StatusBadge, Tabs } from "@/components/ui";
 import { useToast } from "@/components/ToastContainer";
-import Header from "@/components/Header";
+import { api, errorMessage } from "@/lib/api";
+import { netmaskToPrefix } from "@/lib/format";
+import { useScopedNode } from "@/lib/nodes";
+import type { HostBridge, LibvirtNetwork } from "@/lib/types";
 
-// Network types
-interface LibvirtNetwork {
-  name: string;
-  uuid: string;
-  node_name: string;
-  type: string;
-  mode: string;
-  bridge: string;
-  state: string;
-  autostart: boolean;
-  persistent: boolean;
-  ip_address: string;
-  netmask: string;
-  dhcp_start: string;
-  dhcp_end: string;
-}
+type TabId = "networks" | "bridges";
 
-interface HostBridge {
-  name: string;
-  state: string;
-  mac: string;
-  ips: string[];
-  interfaces: string[];
-  stp: boolean;
-  mtu: number;
-}
-
-interface Node {
-  name: string;
-  uuid: string;
-  uri: string;
-  type: string;
-  state: string;
-}
+type ConfirmTarget =
+  | { kind: "stop-network"; network: LibvirtNetwork }
+  | { kind: "delete-network"; network: LibvirtNetwork }
+  | { kind: "delete-bridge"; bridge: HostBridge };
 
 interface AvailableInterface {
   name: string;
   mac: string;
   state: string;
-  bound_to?: string; // 绑定到的网桥（空表示未绑定）
+  bound_to?: string;
 }
 
-type TabType = "networks" | "bridges";
+function dhcpRange(gateway: string): [string, string] {
+  const parts = gateway.split(".");
+  if (parts.length !== 4) return ["", ""];
+  const prefix = parts.slice(0, 3).join(".");
+  return [`${prefix}.100`, `${prefix}.200`];
+}
+
+function CreateNetworkModal({ nodeName, onClose, onCreated }: { nodeName: string; onClose: () => void; onCreated: () => void }) {
+  const toast = useToast();
+  const [name, setName] = useState("");
+  const [mode, setMode] = useState<"nat" | "isolated">("nat");
+  const [gateway, setGateway] = useState("192.168.100.1");
+  const [netmask, setNetmask] = useState("255.255.255.0");
+  const [dhcpStart, setDhcpStart] = useState("192.168.100.100");
+  const [dhcpEnd, setDhcpEnd] = useState("192.168.100.200");
+  const [dhcpTouched, setDhcpTouched] = useState(false);
+  const [autostart, setAutostart] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const updateGateway = (value: string) => {
+    setGateway(value);
+    if (!dhcpTouched) {
+      const [start, end] = dhcpRange(value);
+      if (start) {
+        setDhcpStart(start);
+        setDhcpEnd(end);
+      }
+    }
+  };
+
+  const handleSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!name.trim()) return;
+    setSaving(true);
+    try {
+      await api("/api/create-network", {
+        node_name: nodeName,
+        name: name.trim(),
+        mode,
+        ip_address: gateway.trim(),
+        netmask,
+        dhcp_start: dhcpStart.trim(),
+        dhcp_end: dhcpEnd.trim(),
+        autostart,
+      });
+      toast.success(`Network ${name.trim()} created`);
+      onCreated();
+    } catch (err) {
+      toast.error(errorMessage(err, "Failed to create network"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      isOpen
+      onClose={onClose}
+      dismissible={!saving}
+      title="Create libvirt network"
+      description={`A virtual network with DHCP on node ${nodeName}.`}
+      footer={
+        <>
+          <button className="btn-secondary" onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button className="btn-primary" onClick={() => handleSubmit()} disabled={saving || !name.trim()}>
+            {saving && <Spinner size={14} className="text-current" />}
+            Create network
+          </button>
+        </>
+      }
+    >
+      <form className="space-y-4" onSubmit={handleSubmit}>
+        <Field label="Name" required>
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="private" autoFocus />
+        </Field>
+        <Field
+          label="Mode"
+          hint={mode === "nat" ? "Instances reach the outside world through the host (NAT)." : "Instances can only talk to each other and the host."}
+        >
+          <SegmentedControl
+            value={mode}
+            onChange={setMode}
+            options={[
+              { value: "nat", label: "NAT" },
+              { value: "isolated", label: "Isolated" },
+            ]}
+          />
+        </Field>
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Gateway IP">
+            <input className="input font-mono text-[13px]" value={gateway} onChange={(e) => updateGateway(e.target.value)} />
+          </Field>
+          <Field label="Netmask">
+            <select className="input" value={netmask} onChange={(e) => setNetmask(e.target.value)}>
+              <option value="255.255.255.0">/24 · 254 hosts</option>
+              <option value="255.255.255.128">/25 · 126 hosts</option>
+              <option value="255.255.0.0">/16 · 65,534 hosts</option>
+            </select>
+          </Field>
+          <Field label="DHCP start">
+            <input
+              className="input font-mono text-[13px]"
+              value={dhcpStart}
+              onChange={(e) => {
+                setDhcpTouched(true);
+                setDhcpStart(e.target.value);
+              }}
+            />
+          </Field>
+          <Field label="DHCP end">
+            <input
+              className="input font-mono text-[13px]"
+              value={dhcpEnd}
+              onChange={(e) => {
+                setDhcpTouched(true);
+                setDhcpEnd(e.target.value);
+              }}
+            />
+          </Field>
+        </div>
+        <Checkbox checked={autostart} onChange={setAutostart} label="Start automatically when the node boots" />
+      </form>
+    </Modal>
+  );
+}
+
+function CreateBridgeModal({ nodeName, onClose, onCreated }: { nodeName: string; onClose: () => void; onCreated: () => void }) {
+  const toast = useToast();
+  const [name, setName] = useState("");
+  const [stp, setStp] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [interfaces, setInterfaces] = useState<AvailableInterface[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api<{ interfaces: AvailableInterface[] }>("/api/list-available-interfaces", { node_name: nodeName })
+      .then((data) => setInterfaces(data.interfaces || []))
+      .catch(() => setInterfaces([]))
+      .finally(() => setLoading(false));
+  }, [nodeName]);
+
+  const toggle = (iface: string, checked: boolean) =>
+    setSelected((prev) => (checked ? [...prev, iface] : prev.filter((i) => i !== iface)));
+
+  const handleSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!name.trim()) return;
+    setSaving(true);
+    try {
+      await api("/api/create-bridge", { node_name: nodeName, bridge_name: name.trim(), stp, interfaces: selected });
+      toast.success(`Bridge ${name.trim()} created`);
+      onCreated();
+    } catch (err) {
+      toast.error(errorMessage(err, "Failed to create bridge"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      isOpen
+      onClose={onClose}
+      dismissible={!saving}
+      title="Create host bridge"
+      description={`A Linux bridge on node ${nodeName} that connects instances to the physical network.`}
+      footer={
+        <>
+          <button className="btn-secondary" onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button className="btn-primary" onClick={() => handleSubmit()} disabled={saving || !name.trim()}>
+            {saving && <Spinner size={14} className="text-current" />}
+            Create bridge
+          </button>
+        </>
+      }
+    >
+      <form className="space-y-4" onSubmit={handleSubmit}>
+        <Field label="Bridge name" required>
+          <input className="input font-mono text-[13px]" value={name} onChange={(e) => setName(e.target.value)} placeholder="br0" autoFocus />
+        </Field>
+        <Field label="Attach interfaces" hint="Physical interfaces to enslave to the bridge. Optional.">
+          {loading ? (
+            <div className="flex items-center gap-2 py-2 text-sm text-fg-subtle">
+              <Spinner /> Loading interfaces…
+            </div>
+          ) : interfaces.length === 0 ? (
+            <p className="py-2 text-sm text-fg-muted">No available interfaces.</p>
+          ) : (
+            <div className="max-h-48 divide-y divide-line overflow-y-auto rounded-md border border-line">
+              {interfaces.map((iface) => {
+                const bound = Boolean(iface.bound_to);
+                return (
+                  <label
+                    key={iface.name}
+                    className={`flex items-center gap-3 px-3 py-2 text-sm ${bound ? "cursor-not-allowed opacity-50" : "cursor-pointer hover:bg-subtle/60"}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected.includes(iface.name)}
+                      disabled={bound}
+                      onChange={(e) => toggle(iface.name, e.target.checked)}
+                    />
+                    <span className="font-mono font-medium">{iface.name}</span>
+                    <span className="font-mono text-xs text-fg-subtle">{iface.mac}</span>
+                    {bound && <span className="text-xs text-warning">in {iface.bound_to}</span>}
+                    <span className="ml-auto">
+                      <StatusBadge status={iface.state} />
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+        </Field>
+        {selected.length > 0 && (
+          <Alert tone="warning">
+            Moving an interface into a bridge briefly interrupts its connectivity. Don't select the interface you use to reach this node
+            unless you know the IP will move to the bridge.
+          </Alert>
+        )}
+        <Checkbox checked={stp} onChange={setStp} label="Enable Spanning Tree Protocol (STP)" />
+      </form>
+    </Modal>
+  );
+}
 
 export default function NetworksPage() {
-  // Networks state
+  const toast = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = (searchParams.get("tab") as TabId) || "networks";
+  const { nodes, currentNode, loading: nodesLoading } = useScopedNode();
+
   const [networks, setNetworks] = useState<LibvirtNetwork[]>([]);
   const [bridges, setBridges] = useState<HostBridge[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [activeTab, setActiveTab] = useState<TabType>("networks");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [confirm, setConfirm] = useState<ConfirmTarget | null>(null);
 
-  // Node selection
-  const [nodes, setNodes] = useState<Node[]>([]);
-  const [selectedNode, setSelectedNode] = useState<string>("");
-  const [loadingNodes, setLoadingNodes] = useState(true);
+  const setTab = (next: TabId) =>
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        if (next === "networks") p.delete("tab");
+        else p.set("tab", next);
+        return p;
+      },
+      { replace: true }
+    );
 
-  // Create network modal
-  const [showCreateNetworkModal, setShowCreateNetworkModal] = useState(false);
-  const [createNetworkForm, setCreateNetworkForm] = useState({
-    name: "",
-    mode: "nat",
-    ip_address: "192.168.100.1",
-    netmask: "255.255.255.0",
-    dhcp_start: "192.168.100.100",
-    dhcp_end: "192.168.100.200",
-    autostart: true,
-  });
-  const [creatingNetwork, setCreatingNetwork] = useState(false);
-
-  // Create bridge modal
-  const [showCreateBridgeModal, setShowCreateBridgeModal] = useState(false);
-  const [createBridgeForm, setCreateBridgeForm] = useState({
-    bridge_name: "",
-    stp: false,
-    interfaces: [] as string[],
-  });
-  const [creatingBridge, setCreatingBridge] = useState(false);
-  const [availableInterfaces, setAvailableInterfaces] = useState<AvailableInterface[]>([]);
-  const [loadingInterfaces, setLoadingInterfaces] = useState(false);
-
-  const toast = useToast();
+  const fetchAll = useCallback(
+    async ({ silent = false }: { silent?: boolean } = {}) => {
+      if (!currentNode) return;
+      if (!silent) setRefreshing(true);
+      try {
+        const [netData, brData] = await Promise.all([
+          api<{ networks: LibvirtNetwork[] }>("/api/list-networks", { node_name: currentNode }),
+          api<{ bridges: HostBridge[] }>("/api/list-bridges", { node_name: currentNode }),
+        ]);
+        setNetworks(netData.networks || []);
+        setBridges(brData.bridges || []);
+      } catch (err) {
+        toast.error(errorMessage(err, "Failed to load networks"));
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [currentNode, toast]
+  );
 
   useEffect(() => {
-    fetchNodes();
-  }, []);
-
-  useEffect(() => {
-    if (selectedNode && !loadingNodes) {
-      fetchData();
-    }
-  }, [selectedNode, activeTab]);
-
-  const fetchNodes = async () => {
-    setLoadingNodes(true);
-    try {
-      const response = await apiPost<{ nodes: Node[] }>("/api/list-nodes", {});
-      const nodeList = response.nodes || [];
-      setNodes(nodeList);
-
-      if (nodeList.length > 0 && (!selectedNode || !nodeList.some((n) => n.name === selectedNode))) {
-        setSelectedNode(nodeList[0].name);
-      }
-    } catch (error: any) {
-      console.error("Failed to fetch nodes:", error);
-      toast.error(error?.message || "Failed to fetch nodes");
-    } finally {
-      setLoadingNodes(false);
-    }
-  };
-
-  const fetchData = async () => {
-    if (!selectedNode) return;
-
-    setRefreshing(true);
-    try {
-      if (activeTab === "networks") {
-        const response = await apiPost<{ networks: LibvirtNetwork[] }>(
-          "/api/list-networks",
-          { node_name: selectedNode }
-        );
-        setNetworks(response.networks || []);
-      } else {
-        const response = await apiPost<{ bridges: HostBridge[] }>(
-          "/api/list-bridges",
-          { node_name: selectedNode }
-        );
-        setBridges(response.bridges || []);
-      }
-    } catch (error: any) {
-      console.error("Failed to fetch data:", error);
-      toast.error(error?.message || "Failed to fetch data");
-    } finally {
+    if (nodesLoading) return;
+    if (!currentNode) {
       setLoading(false);
-      setRefreshing(false);
-    }
-  };
-
-  // Network actions
-  const handleCreateNetwork = async () => {
-    if (!createNetworkForm.name) {
-      toast.error("Please enter a network name");
       return;
     }
+    setLoading(true);
+    setNetworks([]);
+    setBridges([]);
+    fetchAll({ silent: true });
+  }, [currentNode, nodesLoading, fetchAll]);
 
-    setCreatingNetwork(true);
+  const startNetwork = async (network: LibvirtNetwork) => {
     try {
-      await apiPost("/api/create-network", {
-        node_name: selectedNode,
-        ...createNetworkForm,
-      });
-      toast.success(`Network ${createNetworkForm.name} created successfully`);
-      setShowCreateNetworkModal(false);
-      setCreateNetworkForm({
-        name: "",
-        mode: "nat",
-        ip_address: "192.168.100.1",
-        netmask: "255.255.255.0",
-        dhcp_start: "192.168.100.100",
-        dhcp_end: "192.168.100.200",
-        autostart: true,
-      });
-      await fetchData();
-    } catch (error: any) {
-      console.error("Failed to create network:", error);
-      toast.error(error?.message || "Failed to create network");
-    } finally {
-      setCreatingNetwork(false);
+      await api("/api/start-network", { node_name: currentNode, network_name: network.name });
+      toast.success(`Network ${network.name} started`);
+      fetchAll({ silent: true });
+    } catch (err) {
+      toast.error(errorMessage(err, "Failed to start network"));
     }
   };
 
-  const handleStartNetwork = async (networkName: string) => {
+  const handleConfirm = async () => {
+    if (!confirm) return;
     try {
-      await apiPost("/api/start-network", {
-        node_name: selectedNode,
-        network_name: networkName,
-      });
-      toast.success(`Network ${networkName} started successfully`);
-      await fetchData();
-    } catch (error: any) {
-      console.error("Failed to start network:", error);
-      toast.error(error?.message || "Failed to start network");
+      if (confirm.kind === "stop-network") {
+        await api("/api/stop-network", { node_name: currentNode, network_name: confirm.network.name });
+        toast.success(`Network ${confirm.network.name} stopped`);
+      } else if (confirm.kind === "delete-network") {
+        await api("/api/delete-network", { node_name: currentNode, network_name: confirm.network.name });
+        toast.success(`Network ${confirm.network.name} deleted`);
+      } else {
+        await api("/api/delete-bridge", { node_name: currentNode, bridge_name: confirm.bridge.name });
+        toast.success(`Bridge ${confirm.bridge.name} deleted`);
+      }
+      fetchAll({ silent: true });
+    } catch (err) {
+      toast.error(errorMessage(err, "Operation failed"));
+      throw err;
     }
   };
 
-  const handleStopNetwork = async (networkName: string) => {
-    if (!confirm(`Are you sure you want to stop network "${networkName}"?`)) {
-      return;
-    }
-
-    try {
-      await apiPost("/api/stop-network", {
-        node_name: selectedNode,
-        network_name: networkName,
-      });
-      toast.success(`Network ${networkName} stopped successfully`);
-      await fetchData();
-    } catch (error: any) {
-      console.error("Failed to stop network:", error);
-      toast.error(error?.message || "Failed to stop network");
-    }
-  };
-
-  const handleDeleteNetwork = async (networkName: string) => {
-    if (!confirm(`Are you sure you want to delete network "${networkName}"? This action cannot be undone.`)) {
-      return;
-    }
-
-    try {
-      await apiPost("/api/delete-network", {
-        node_name: selectedNode,
-        network_name: networkName,
-      });
-      toast.success(`Network ${networkName} deleted successfully`);
-      await fetchData();
-    } catch (error: any) {
-      console.error("Failed to delete network:", error);
-      toast.error(error?.message || "Failed to delete network");
-    }
-  };
-
-  // Bridge actions
-  const fetchAvailableInterfaces = async () => {
-    if (!selectedNode) return;
-    setLoadingInterfaces(true);
-    try {
-      const response = await apiPost<{ interfaces: AvailableInterface[] }>(
-        "/api/list-available-interfaces",
-        { node_name: selectedNode }
-      );
-      setAvailableInterfaces(response.interfaces || []);
-    } catch (error: any) {
-      console.error("Failed to fetch available interfaces:", error);
-    } finally {
-      setLoadingInterfaces(false);
-    }
-  };
-
-  const handleOpenCreateBridgeModal = () => {
-    setShowCreateBridgeModal(true);
-    fetchAvailableInterfaces();
-  };
-
-  const handleCreateBridge = async () => {
-    if (!createBridgeForm.bridge_name) {
-      toast.error("Please enter a bridge name");
-      return;
-    }
-
-    setCreatingBridge(true);
-    try {
-      await apiPost("/api/create-bridge", {
-        node_name: selectedNode,
-        ...createBridgeForm,
-      });
-      toast.success(`Bridge ${createBridgeForm.bridge_name} created successfully`);
-      setShowCreateBridgeModal(false);
-      setCreateBridgeForm({ bridge_name: "", stp: false, interfaces: [] });
-      await fetchData();
-    } catch (error: any) {
-      console.error("Failed to create bridge:", error);
-      toast.error(error?.message || "Failed to create bridge");
-    } finally {
-      setCreatingBridge(false);
-    }
-  };
-
-  const handleDeleteBridge = async (bridgeName: string) => {
-    if (!confirm(`Are you sure you want to delete bridge "${bridgeName}"? This action cannot be undone.`)) {
-      return;
-    }
-
-    try {
-      await apiPost("/api/delete-bridge", {
-        node_name: selectedNode,
-        bridge_name: bridgeName,
-      });
-      toast.success(`Bridge ${bridgeName} deleted successfully`);
-      await fetchData();
-    } catch (error: any) {
-      console.error("Failed to delete bridge:", error);
-      toast.error(error?.message || "Failed to delete bridge");
-    }
-  };
-
-  const getStateColor = (state: string): string => {
-    switch (state.toLowerCase()) {
-      case "active":
-      case "up":
-        return "text-green-600 bg-green-100";
-      case "inactive":
-      case "down":
-        return "text-gray-600 bg-gray-100";
-      default:
-        return "text-gray-600 bg-gray-100";
-    }
-  };
-
-  const getModeColor = (mode: string): string => {
-    switch (mode.toLowerCase()) {
-      case "nat":
-        return "text-blue-600 bg-blue-100";
-      case "bridge":
-        return "text-purple-600 bg-purple-100";
-      case "isolated":
-        return "text-orange-600 bg-orange-100";
-      default:
-        return "text-gray-600 bg-gray-100";
-    }
-  };
-
-  if (loadingNodes || loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <RefreshCw className="w-8 h-8 animate-spin text-primary mx-auto mb-2" />
-          <p className="text-gray-600">
-            {loadingNodes ? "Loading nodes..." : "Loading networks..."}
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  if (nodes.length === 0) {
-    return (
-      <div className="space-y-6">
-        <Header
-          title="Networks"
-          description="Manage libvirt networks and host bridges"
-        />
-        <div className="text-center py-12 bg-gray-50 rounded-lg border border-gray-200">
-          <Network className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-          <p className="text-gray-600 mb-2">No nodes available</p>
-          <p className="text-sm text-gray-500">
-            Please create a node first to manage networks
-          </p>
-        </div>
-      </div>
-    );
-  }
+  const noNodes = !nodesLoading && nodes.length === 0;
+  const confirmTarget = !confirm ? "" : confirm.kind === "delete-bridge" ? confirm.bridge.name : confirm.network.name;
 
   return (
     <>
-      <div className="space-y-6">
-        {/* Header */}
-        <Header
-          title="Networks"
-          description="Manage libvirt networks and host bridges"
-          action={
-            <div className="flex gap-2">
-              {/* Node Selector */}
-              <select
-                value={selectedNode}
-                onChange={(e) => setSelectedNode(e.target.value)}
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary bg-white"
-              >
-                {nodes.map((node) => (
-                  <option key={node.name} value={node.name}>
-                    {node.name} ({node.type})
-                  </option>
-                ))}
-              </select>
-
-              <button
-                onClick={fetchData}
-                disabled={refreshing}
-                className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
-              >
-                <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
-                Refresh
-              </button>
-              <button
-                onClick={() => activeTab === "networks" ? setShowCreateNetworkModal(true) : handleOpenCreateBridgeModal()}
-                className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90"
-              >
-                <Plus className="w-4 h-4" />
-                {activeTab === "networks" ? "Create Network" : "Create Bridge"}
-              </button>
-            </div>
-          }
-        />
-
-        {/* Tabs */}
-        <div className="border-b border-gray-200">
-          <nav className="-mb-px flex space-x-8">
-            <button
-              onClick={() => setActiveTab("networks")}
-              className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                activeTab === "networks"
-                  ? "border-primary text-primary"
-                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-              }`}
-            >
-              Libvirt Networks
+      <PageHeader
+        title="Networks"
+        description="Virtual networks and host bridges that instances connect to."
+        onRefresh={() => fetchAll()}
+        refreshing={refreshing}
+        actions={
+          <>
+            <NodeSelect />
+            <button className="btn-primary" onClick={() => setCreateOpen(true)} disabled={!currentNode}>
+              <Plus size={15} />
+              {tab === "networks" ? "Create network" : "Create bridge"}
             </button>
-            <button
-              onClick={() => setActiveTab("bridges")}
-              className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                activeTab === "bridges"
-                  ? "border-primary text-primary"
-                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-              }`}
-            >
-              Host Bridges
-            </button>
-          </nav>
+          </>
+        }
+      />
+
+      {noNodes ? (
+        <div className="card">
+          <EmptyState
+            icon={<Network size={20} />}
+            title="No nodes yet"
+            description="Add a node before managing networks."
+            action={
+              <Link to="/nodes?add=1" className="btn-primary">
+                Add node
+              </Link>
+            }
+          />
         </div>
+      ) : (
+        <>
+          <Tabs
+            className="mb-4"
+            value={tab}
+            onChange={setTab}
+            tabs={[
+              { id: "networks", label: "Libvirt networks", count: loading ? undefined : networks.length },
+              { id: "bridges", label: "Host bridges", count: loading ? undefined : bridges.length },
+            ]}
+          />
 
-        {/* Content */}
-        {activeTab === "networks" ? (
-          // Libvirt Networks List
-          networks.length === 0 ? (
-            <div className="text-center py-12 bg-gray-50 rounded-lg border border-gray-200">
-              <Network className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-              <p className="text-gray-600">No libvirt networks found</p>
-              <button
-                onClick={() => setShowCreateNetworkModal(true)}
-                className="mt-4 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90"
-              >
-                Create Your First Network
-              </button>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {networks.map((network) => (
-                <div
-                  key={network.name}
-                  className="bg-white border border-gray-200 rounded-lg overflow-hidden"
-                >
-                  <div className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3 flex-1">
-                        <Network className="w-8 h-8 text-primary" />
-                        <div className="flex-1">
-                          <div className="flex items-center gap-3">
-                            <span className="text-lg font-semibold">
-                              {network.name}
-                            </span>
-                            <span
-                              className={`px-2 py-1 text-xs font-medium rounded-full ${getStateColor(
-                                network.state
-                              )}`}
-                            >
-                              {network.state}
-                            </span>
-                            <span
-                              className={`px-2 py-1 text-xs font-medium rounded-full ${getModeColor(
-                                network.mode
-                              )}`}
-                            >
-                              {network.mode}
-                            </span>
-                            {network.autostart && (
-                              <span className="px-2 py-1 text-xs font-medium text-green-600 bg-green-100 rounded-full">
-                                Autostart
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-sm text-gray-600 mt-1 space-x-4">
-                            {network.bridge && (
-                              <span>Bridge: {network.bridge}</span>
-                            )}
-                            {network.ip_address && (
-                              <span>
-                                IP: {network.ip_address}/{network.netmask ?
-                                  (network.netmask === "255.255.255.0" ? "24" :
-                                   network.netmask === "255.255.0.0" ? "16" : network.netmask)
-                                  : ""}
-                              </span>
-                            )}
-                            {network.dhcp_start && network.dhcp_end && (
-                              <span>
-                                DHCP: {network.dhcp_start} - {network.dhcp_end}
-                              </span>
-                            )}
-                          </div>
-                        </div>
+          {tab === "networks" ? (
+            <Table
+              rows={networks}
+              rowKey={(n) => n.uuid || n.name}
+              loading={loading}
+              loadingLabel="Loading networks…"
+              empty={
+                <EmptyState
+                  icon={<Network size={20} />}
+                  title="No libvirt networks"
+                  description="Create a NAT network to give instances private IPs with DHCP."
+                  action={
+                    <button className="btn-primary" onClick={() => setCreateOpen(true)}>
+                      <Plus size={15} />
+                      Create network
+                    </button>
+                  }
+                />
+              }
+              columns={[
+                {
+                  key: "name",
+                  header: "Name",
+                  render: (n) => (
+                    <div className="flex items-center gap-2.5">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-md bg-subtle text-fg-subtle">
+                        <Network size={15} />
                       </div>
-                      <div className="flex items-center gap-2">
-                        {network.state.toLowerCase() === "inactive" ? (
-                          <button
-                            onClick={() => handleStartNetwork(network.name)}
-                            className="flex items-center gap-1 px-3 py-1.5 text-sm text-green-700 bg-green-50 hover:bg-green-100 rounded-lg"
-                            title="Start"
-                          >
-                            <Play className="w-4 h-4" />
-                            Start
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => handleStopNetwork(network.name)}
-                            className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg"
-                            title="Stop"
-                          >
-                            <Square className="w-4 h-4" />
-                            Stop
-                          </button>
+                      <div>
+                        <div className="font-medium">{n.name}</div>
+                        {n.bridge && <div className="font-mono text-xs text-fg-subtle">{n.bridge}</div>}
+                      </div>
+                    </div>
+                  ),
+                },
+                { key: "state", header: "Status", render: (n) => <StatusBadge status={n.state} /> },
+                {
+                  key: "mode",
+                  header: "Mode",
+                  render: (n) => (
+                    <div className="flex flex-wrap gap-1">
+                      <Badge tone={n.mode === "nat" ? "accent" : "neutral"} className="uppercase">
+                        {n.mode}
+                      </Badge>
+                      {n.autostart && <Badge>autostart</Badge>}
+                    </div>
+                  ),
+                },
+                {
+                  key: "subnet",
+                  header: "Subnet",
+                  render: (n) =>
+                    n.ip_address ? (
+                      <span className="font-mono text-xs">
+                        {n.ip_address}
+                        {netmaskToPrefix(n.netmask) !== null ? `/${netmaskToPrefix(n.netmask)}` : ""}
+                      </span>
+                    ) : (
+                      <span className="text-fg-subtle">—</span>
+                    ),
+                },
+                {
+                  key: "dhcp",
+                  header: "DHCP range",
+                  render: (n) =>
+                    n.dhcp_start ? (
+                      <span className="font-mono text-xs text-fg-muted">
+                        {n.dhcp_start} – {n.dhcp_end}
+                      </span>
+                    ) : (
+                      <span className="text-fg-subtle">—</span>
+                    ),
+                },
+                {
+                  key: "actions",
+                  header: <span className="sr-only">Actions</span>,
+                  align: "right",
+                  render: (n) => {
+                    const active = n.state.toLowerCase() === "active";
+                    return (
+                      <DropdownMenu
+                        items={[
+                          active
+                            ? { label: "Stop network", icon: <Square size={14} />, onClick: () => setConfirm({ kind: "stop-network", network: n }) }
+                            : { label: "Start network", icon: <Play size={14} />, onClick: () => startNetwork(n) },
+                          { divider: true, label: "divider" },
+                          { label: "Delete network", icon: <Trash2 size={14} />, danger: true, onClick: () => setConfirm({ kind: "delete-network", network: n }) },
+                        ]}
+                      />
+                    );
+                  },
+                },
+              ]}
+            />
+          ) : (
+            <Table
+              rows={bridges}
+              rowKey={(b) => b.name}
+              loading={loading}
+              loadingLabel="Loading bridges…"
+              empty={
+                <EmptyState
+                  icon={<Cable size={20} />}
+                  title="No host bridges"
+                  description="Create a bridge to put instances directly on the physical network."
+                  action={
+                    <button className="btn-primary" onClick={() => setCreateOpen(true)}>
+                      <Plus size={15} />
+                      Create bridge
+                    </button>
+                  }
+                />
+              }
+              columns={[
+                {
+                  key: "name",
+                  header: "Name",
+                  render: (b) => (
+                    <div className="flex items-center gap-2.5">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-md bg-subtle text-fg-subtle">
+                        <Cable size={15} />
+                      </div>
+                      <div>
+                        <div className="font-mono font-medium">{b.name}</div>
+                        {b.mac && <div className="font-mono text-xs text-fg-subtle">{b.mac}</div>}
+                      </div>
+                    </div>
+                  ),
+                },
+                { key: "state", header: "Status", render: (b) => <StatusBadge status={b.state} /> },
+                {
+                  key: "ips",
+                  header: "Addresses",
+                  render: (b) =>
+                    b.ips?.length ? (
+                      <div className="space-y-0.5 font-mono text-xs">
+                        {b.ips.map((ip) => (
+                          <div key={ip}>{ip}</div>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-fg-subtle">—</span>
+                    ),
+                },
+                {
+                  key: "interfaces",
+                  header: "Members",
+                  render: (b) => {
+                    const members = b.interfaces || [];
+                    if (!members.length) return <span className="text-fg-subtle">—</span>;
+                    const physical = members.filter((i) => !i.startsWith("vnet") && !i.startsWith("veth") && !i.startsWith("tap"));
+                    const virtualCount = members.length - physical.length;
+                    return (
+                      <div className="flex flex-wrap items-center gap-1">
+                        {physical.map((i) => (
+                          <Badge key={i} tone="info" className="font-mono">
+                            {i}
+                          </Badge>
+                        ))}
+                        {virtualCount > 0 && (
+                          <span className="text-xs text-fg-subtle" title={members.filter((i) => !physical.includes(i)).join(", ")}>
+                            +{virtualCount} instance {virtualCount === 1 ? "port" : "ports"}
+                          </span>
                         )}
-                        <button
-                          onClick={() => handleDeleteNetwork(network.name)}
-                          className="flex items-center gap-1 px-3 py-1.5 text-sm text-red-700 bg-red-50 hover:bg-red-100 rounded-lg"
-                          title="Delete"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                          Delete
-                        </button>
                       </div>
+                    );
+                  },
+                },
+                {
+                  key: "opts",
+                  header: "Options",
+                  render: (b) => (
+                    <div className="flex gap-1 text-xs text-fg-muted">
+                      {b.mtu ? <span>MTU {b.mtu}</span> : null}
+                      {b.stp && <Badge>STP</Badge>}
                     </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )
-        ) : (
-          // Host Bridges List
-          bridges.length === 0 ? (
-            <div className="text-center py-12 bg-gray-50 rounded-lg border border-gray-200">
-              <Network className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-              <p className="text-gray-600">No host bridges found</p>
-              <button
-                onClick={handleOpenCreateBridgeModal}
-                className="mt-4 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90"
-              >
-                Create Your First Bridge
-              </button>
-            </div>
+                  ),
+                },
+                {
+                  key: "actions",
+                  header: <span className="sr-only">Actions</span>,
+                  align: "right",
+                  render: (b) => (
+                    <DropdownMenu
+                      items={[{ label: "Delete bridge", icon: <Trash2 size={14} />, danger: true, onClick: () => setConfirm({ kind: "delete-bridge", bridge: b }) }]}
+                    />
+                  ),
+                },
+              ]}
+            />
+          )}
+        </>
+      )}
+
+      {createOpen && tab === "networks" && (
+        <CreateNetworkModal
+          nodeName={currentNode}
+          onClose={() => setCreateOpen(false)}
+          onCreated={() => {
+            setCreateOpen(false);
+            fetchAll({ silent: true });
+          }}
+        />
+      )}
+      {createOpen && tab === "bridges" && (
+        <CreateBridgeModal
+          nodeName={currentNode}
+          onClose={() => setCreateOpen(false)}
+          onCreated={() => {
+            setCreateOpen(false);
+            fetchAll({ silent: true });
+          }}
+        />
+      )}
+
+      <ConfirmDialog
+        isOpen={Boolean(confirm)}
+        onClose={() => setConfirm(null)}
+        onConfirm={handleConfirm}
+        title={
+          confirm?.kind === "stop-network" ? "Stop network?" : confirm?.kind === "delete-network" ? "Delete network?" : "Delete bridge?"
+        }
+        message={
+          confirm?.kind === "stop-network" ? (
+            <>
+              Instances attached to <strong className="text-fg">{confirmTarget}</strong> will lose network connectivity until it is started
+              again.
+            </>
           ) : (
-            <div className="space-y-4">
-              {bridges.map((bridge) => (
-                <div
-                  key={bridge.name}
-                  className="bg-white border border-gray-200 rounded-lg overflow-hidden"
-                >
-                  <div className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3 flex-1">
-                        <Network className="w-8 h-8 text-purple-600" />
-                        <div className="flex-1">
-                          <div className="flex items-center gap-3">
-                            <span className="text-lg font-semibold">
-                              {bridge.name}
-                            </span>
-                            <span
-                              className={`px-2 py-1 text-xs font-medium rounded-full ${getStateColor(
-                                bridge.state
-                              )}`}
-                            >
-                              {bridge.state}
-                            </span>
-                            {bridge.stp && (
-                              <span className="px-2 py-1 text-xs font-medium text-blue-600 bg-blue-100 rounded-full">
-                                STP
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-sm text-gray-600 mt-1">
-                            <div className="flex flex-wrap gap-x-4 gap-y-1">
-                              {bridge.mac && (
-                                <span>MAC: {bridge.mac}</span>
-                              )}
-                              {bridge.ips && bridge.ips.length > 0 && (
-                                <span>IPs: {bridge.ips.join(", ")}</span>
-                              )}
-                              {bridge.mtu > 0 && (
-                                <span>MTU: {bridge.mtu}</span>
-                              )}
-                            </div>
-                            {bridge.interfaces && bridge.interfaces.length > 0 && (
-                              <div className="mt-2">
-                                <span className="text-gray-500">Interfaces: </span>
-                                <div className="flex flex-wrap gap-1 mt-1">
-                                  {bridge.interfaces.map((iface) => {
-                                    const isVeth = iface.startsWith("veth") || iface.startsWith("vnet");
-                                    const isPhysical = iface.startsWith("eth") || iface.startsWith("en") || iface.startsWith("eno");
-                                    return (
-                                      <span
-                                        key={iface}
-                                        className={`px-2 py-0.5 text-xs rounded ${
-                                          isPhysical
-                                            ? "bg-blue-100 text-blue-700"
-                                            : isVeth
-                                            ? "bg-gray-100 text-gray-600"
-                                            : "bg-purple-100 text-purple-700"
-                                        }`}
-                                      >
-                                        {iface}
-                                      </span>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handleDeleteBridge(bridge.name)}
-                          className="flex items-center gap-1 px-3 py-1.5 text-sm text-red-700 bg-red-50 hover:bg-red-100 rounded-lg"
-                          title="Delete"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <>
+              <strong className="text-fg">{confirmTarget}</strong> will be permanently deleted. Instances attached to it will lose network
+              connectivity.
+            </>
           )
-        )}
-      </div>
-
-      {/* Create Network Modal */}
-      {showCreateNetworkModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
-            <h2 className="text-xl font-semibold mb-4">Create Network</h2>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Network Name *
-                </label>
-                <input
-                  type="text"
-                  value={createNetworkForm.name}
-                  onChange={(e) =>
-                    setCreateNetworkForm({ ...createNetworkForm, name: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-                  placeholder="e.g., mynetwork"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Mode
-                </label>
-                <select
-                  value={createNetworkForm.mode}
-                  onChange={(e) =>
-                    setCreateNetworkForm({ ...createNetworkForm, mode: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-                >
-                  <option value="nat">NAT (Network Address Translation)</option>
-                  <option value="isolated">Isolated (No external access)</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  IP Address (Gateway)
-                </label>
-                <input
-                  type="text"
-                  value={createNetworkForm.ip_address}
-                  onChange={(e) =>
-                    setCreateNetworkForm({ ...createNetworkForm, ip_address: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-                  placeholder="192.168.100.1"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Netmask
-                </label>
-                <select
-                  value={createNetworkForm.netmask}
-                  onChange={(e) =>
-                    setCreateNetworkForm({ ...createNetworkForm, netmask: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-                >
-                  <option value="255.255.255.0">255.255.255.0 (/24 - 254 hosts)</option>
-                  <option value="255.255.0.0">255.255.0.0 (/16 - 65534 hosts)</option>
-                  <option value="255.255.255.128">255.255.255.128 (/25 - 126 hosts)</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  DHCP Start
-                </label>
-                <input
-                  type="text"
-                  value={createNetworkForm.dhcp_start}
-                  onChange={(e) =>
-                    setCreateNetworkForm({ ...createNetworkForm, dhcp_start: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-                  placeholder="192.168.100.100"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  DHCP End
-                </label>
-                <input
-                  type="text"
-                  value={createNetworkForm.dhcp_end}
-                  onChange={(e) =>
-                    setCreateNetworkForm({ ...createNetworkForm, dhcp_end: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-                  placeholder="192.168.100.200"
-                />
-              </div>
-              <div className="flex items-center">
-                <input
-                  type="checkbox"
-                  id="autostart"
-                  checked={createNetworkForm.autostart}
-                  onChange={(e) =>
-                    setCreateNetworkForm({ ...createNetworkForm, autostart: e.target.checked })
-                  }
-                  className="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded"
-                />
-                <label htmlFor="autostart" className="ml-2 block text-sm text-gray-700">
-                  Start network automatically on boot
-                </label>
-              </div>
-            </div>
-            <div className="flex gap-2 mt-6">
-              <button
-                onClick={() => {
-                  setShowCreateNetworkModal(false);
-                  setCreateNetworkForm({
-                    name: "",
-                    mode: "nat",
-                    ip_address: "192.168.100.1",
-                    netmask: "255.255.255.0",
-                    dhcp_start: "192.168.100.100",
-                    dhcp_end: "192.168.100.200",
-                    autostart: true,
-                  });
-                }}
-                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreateNetwork}
-                disabled={creatingNetwork}
-                className="flex-1 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50"
-              >
-                {creatingNetwork ? "Creating..." : "Create"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Create Bridge Modal */}
-      {showCreateBridgeModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
-            <h2 className="text-xl font-semibold mb-4">Create Bridge</h2>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Bridge Name *
-                </label>
-                <input
-                  type="text"
-                  value={createBridgeForm.bridge_name}
-                  onChange={(e) =>
-                    setCreateBridgeForm({ ...createBridgeForm, bridge_name: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-                  placeholder="e.g., br0"
-                />
-              </div>
-
-              {/* Network Interfaces Selection */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Bind Network Interfaces (Optional)
-                </label>
-                {loadingInterfaces ? (
-                  <div className="text-sm text-gray-500 py-2">Loading interfaces...</div>
-                ) : availableInterfaces.length === 0 ? (
-                  <div className="text-sm text-gray-500 py-2">No available interfaces found</div>
-                ) : (
-                  <div className="border border-gray-300 rounded-lg p-2 max-h-40 overflow-y-auto">
-                    {availableInterfaces.map((iface) => {
-                      const isBound = !!iface.bound_to;
-                      return (
-                        <label
-                          key={iface.name}
-                          className={`flex items-center gap-2 p-2 rounded ${
-                            isBound ? "opacity-50 cursor-not-allowed" : "hover:bg-gray-50 cursor-pointer"
-                          }`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={createBridgeForm.interfaces.includes(iface.name)}
-                            disabled={isBound}
-                            onChange={(e) => {
-                              if (e.target.checked) {
-                                setCreateBridgeForm({
-                                  ...createBridgeForm,
-                                  interfaces: [...createBridgeForm.interfaces, iface.name],
-                                });
-                              } else {
-                                setCreateBridgeForm({
-                                  ...createBridgeForm,
-                                  interfaces: createBridgeForm.interfaces.filter((i) => i !== iface.name),
-                                });
-                              }
-                            }}
-                            className="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded"
-                          />
-                          <span className="flex-1 text-sm">
-                            <span className="font-medium">{iface.name}</span>
-                            {iface.mac && (
-                              <span className="text-gray-500 ml-2 text-xs">{iface.mac}</span>
-                            )}
-                            {isBound && (
-                              <span className="text-orange-600 ml-2 text-xs">(bound to {iface.bound_to})</span>
-                            )}
-                          </span>
-                          <span
-                            className={`px-2 py-0.5 text-xs rounded ${
-                              iface.state === "up"
-                                ? "bg-green-100 text-green-700"
-                                : "bg-gray-100 text-gray-600"
-                            }`}
-                          >
-                            {iface.state}
-                          </span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                )}
-                <p className="text-xs text-gray-500 mt-1">
-                  Select physical network interfaces to bind to this bridge
-                </p>
-              </div>
-
-              <div className="flex items-center">
-                <input
-                  type="checkbox"
-                  id="stp"
-                  checked={createBridgeForm.stp}
-                  onChange={(e) =>
-                    setCreateBridgeForm({ ...createBridgeForm, stp: e.target.checked })
-                  }
-                  className="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded"
-                />
-                <label htmlFor="stp" className="ml-2 block text-sm text-gray-700">
-                  Enable Spanning Tree Protocol (STP)
-                </label>
-              </div>
-            </div>
-            <div className="flex gap-2 mt-6">
-              <button
-                onClick={() => {
-                  setShowCreateBridgeModal(false);
-                  setCreateBridgeForm({ bridge_name: "", stp: false, interfaces: [] });
-                }}
-                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreateBridge}
-                disabled={creatingBridge}
-                className="flex-1 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50"
-              >
-                {creatingBridge ? "Creating..." : "Create"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+        }
+        confirmText={confirm?.kind === "stop-network" ? "Stop" : "Delete"}
+        variant={confirm?.kind === "stop-network" ? "warning" : "danger"}
+      />
     </>
   );
 }

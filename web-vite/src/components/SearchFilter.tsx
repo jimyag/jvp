@@ -1,45 +1,34 @@
 import { Search, X } from "lucide-react";
-import { useState } from "react";
 
 interface SearchFilterProps {
-  onSearch: (query: string) => void;
+  value: string;
+  onChange: (query: string) => void;
   placeholder?: string;
+  className?: string;
 }
 
-export default function SearchFilter({
-  onSearch,
-  placeholder = "Search...",
-}: SearchFilterProps) {
-  const [query, setQuery] = useState("");
-
-  const handleChange = (value: string) => {
-    setQuery(value);
-    onSearch(value);
-  };
-
-  const handleClear = () => {
-    setQuery("");
-    onSearch("");
-  };
-
+export default function SearchFilter({ value, onChange, placeholder = "Search…", className = "" }: SearchFilterProps) {
   return (
-    <div className="relative">
-      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-        <Search className="h-5 w-5 text-gray-400" />
-      </div>
+    <div className={`relative ${className}`}>
+      <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-fg-subtle" />
       <input
-        type="text"
-        className="block w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent"
+        type="search"
+        className="input pl-9 pr-8 [&::-webkit-search-cancel-button]:hidden"
         placeholder={placeholder}
-        value={query}
-        onChange={(e) => handleChange(e.target.value)}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") onChange("");
+        }}
       />
-      {query && (
+      {value && (
         <button
-          onClick={handleClear}
-          className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
+          type="button"
+          onClick={() => onChange("")}
+          className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-fg-subtle hover:text-fg"
+          aria-label="Clear search"
         >
-          <X className="h-5 w-5" />
+          <X size={14} />
         </button>
       )}
     </div>

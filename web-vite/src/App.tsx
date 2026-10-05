@@ -1,10 +1,10 @@
-import { RouterProvider, createBrowserRouter } from 'react-router-dom';
-import { ToastProvider } from './components/ToastContainer';
-import routes from './router';
+import { RouterProvider, createBrowserRouter } from "react-router-dom";
+import { ToastProvider } from "./components/ToastContainer";
+import routes from "./router";
+
+const router = createBrowserRouter(routes);
 
 function App() {
-  const router = createBrowserRouter(routes);
-
   return (
     <ToastProvider>
       <RouterProvider router={router} />

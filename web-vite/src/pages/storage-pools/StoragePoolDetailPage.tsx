@@ -1,802 +1,505 @@
-import { useEffect, useMemo, useState } from "react";
-import { useParams, useNavigate, useSearchParams, useLocation } from "react-router-dom";
-import {
-  Database,
-  HardDrive,
-  ArrowLeft,
-  RefreshCw,
-  Play,
-  Square,
-  Trash2,
-  Maximize2,
-} from "lucide-react";
-import { apiPost } from "@/lib/api";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Database, HardDrive, Maximize2, Play, Plus, RefreshCw, Square, Trash2 } from "lucide-react";
+import PageHeader from "@/components/PageHeader";
+import Table from "@/components/Table";
+import Modal from "@/components/Modal";
+import ConfirmDialog from "@/components/ConfirmDialog";
+import DropdownMenu from "@/components/DropdownMenu";
+import SearchFilter from "@/components/SearchFilter";
+import { Alert, Badge, Card, Checkbox, CopyButton, EmptyState, Field, LoadingState, Spinner, StatCard, StatusBadge, UsageBar } from "@/components/ui";
 import { useToast } from "@/components/ToastContainer";
-import Header from "@/components/Header";
+import { api, errorMessage } from "@/lib/api";
+import { formatBytes, percent } from "@/lib/format";
+import type { StoragePool, Volume } from "@/lib/types";
 
-interface Volume {
-  volume_id: string;
-  name: string;
-  node_name: string;
-  pool: string;
-  path: string;
-  capacity_b: number;
-  size_gb: number;
-  allocation_b: number;
-  format: string;
+function CreateVolumeModal({
+  nodeName,
+  poolName,
+  onClose,
+  onCreated,
+}: {
+  nodeName: string;
+  poolName: string;
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const toast = useToast();
+  const [name, setName] = useState("");
+  const [size, setSize] = useState(20);
+  const [format, setFormat] = useState("qcow2");
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (size < 1) return;
+    setSaving(true);
+    try {
+      await api("/api/create-volume", {
+        node_name: nodeName,
+        pool_name: poolName,
+        name: name.trim() || undefined,
+        size_gb: size,
+        format,
+      });
+      toast.success("Volume created");
+      onCreated();
+    } catch (err) {
+      toast.error(errorMessage(err, "Failed to create volume"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      isOpen
+      onClose={onClose}
+      dismissible={!saving}
+      title="Create volume"
+      description={`In pool ${poolName}`}
+      footer={
+        <>
+          <button className="btn-secondary" onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button className="btn-primary" onClick={() => handleSubmit()} disabled={saving || size < 1}>
+            {saving && <Spinner size={14} className="text-current" />}
+            Create volume
+          </button>
+        </>
+      }
+    >
+      <form className="space-y-4" onSubmit={handleSubmit}>
+        <Field label="Name" hint="Leave empty to generate a unique ID.">
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="data-disk" autoFocus />
+        </Field>
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Size (GB)" required>
+            <input type="number" className="input" min={1} value={size} onChange={(e) => setSize(Number(e.target.value))} />
+          </Field>
+          <Field label="Format" hint={format === "qcow2" ? "Thin-provisioned, supports snapshots." : "Fully allocated, fastest I/O."}>
+            <select className="input" value={format} onChange={(e) => setFormat(e.target.value)}>
+              <option value="qcow2">qcow2</option>
+              <option value="raw">raw</option>
+            </select>
+          </Field>
+        </div>
+      </form>
+    </Modal>
+  );
 }
 
-interface StoragePool {
-  name: string;
-  uuid: string;
-  state: string;
-  type: string;
-  capacity: number;
-  allocation: number;
-  available: number;
-  path: string;
-  volume_count: number;
-}
+function ResizeVolumeModal({
+  nodeName,
+  poolName,
+  volume,
+  onClose,
+  onResized,
+}: {
+  nodeName: string;
+  poolName: string;
+  volume: Volume;
+  onClose: () => void;
+  onResized: () => void;
+}) {
+  const toast = useToast();
+  const [size, setSize] = useState(volume.size_gb + 10);
+  const [saving, setSaving] = useState(false);
+  const valid = size > volume.size_gb;
 
-interface DescribeStoragePoolResponse {
-  pool: StoragePool;
-}
+  const handleSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!valid) return;
+    setSaving(true);
+    try {
+      await api("/api/resize-volume", { node_name: nodeName, pool_name: poolName, volume_id: volume.volume_id, new_size_gb: size });
+      toast.success(`${volume.name} resized to ${size} GB`);
+      onResized();
+    } catch (err) {
+      toast.error(errorMessage(err, "Failed to resize volume"));
+    } finally {
+      setSaving(false);
+    }
+  };
 
-interface ListVolumesResponse {
-  volumes: Volume[];
+  return (
+    <Modal
+      isOpen
+      onClose={onClose}
+      dismissible={!saving}
+      size="sm"
+      title="Resize volume"
+      description={volume.name}
+      footer={
+        <>
+          <button className="btn-secondary" onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button className="btn-primary" onClick={() => handleSubmit()} disabled={saving || !valid}>
+            {saving && <Spinner size={14} className="text-current" />}
+            Resize
+          </button>
+        </>
+      }
+    >
+      <form className="space-y-4" onSubmit={handleSubmit}>
+        <Field label="New size (GB)" hint={`Current size is ${volume.size_gb} GB. Volumes can only grow.`}>
+          <input
+            type="number"
+            className="input"
+            min={volume.size_gb + 1}
+            value={size}
+            onChange={(e) => setSize(Number(e.target.value))}
+            autoFocus
+          />
+        </Field>
+        <Alert tone="info">After resizing, extend the partition and filesystem inside the guest to use the new space.</Alert>
+      </form>
+    </Modal>
+  );
 }
 
 export default function StoragePoolDetailPage() {
+  const toast = useToast();
   const navigate = useNavigate();
-  const location = useLocation();
   const [searchParams] = useSearchParams();
   const nodeName = searchParams.get("node") || "";
-  const { poolName: encodedPoolName } = useParams<{ poolName: string }>();
-  const poolName = useMemo(() => {
-    const decoded = decodeURIComponent(encodedPoolName || "");
-    if (decoded === "placeholder") {
-      const segments = location.pathname.split("/").filter(Boolean);
-      const urlPool = segments[1];
-      return urlPool ? decodeURIComponent(urlPool) : decoded;
-    }
-    return decoded;
-  }, [encodedPoolName, location.pathname]);
+  const { poolName = "" } = useParams();
 
   const [pool, setPool] = useState<StoragePool | null>(null);
   const [volumes, setVolumes] = useState<Volume[]>([]);
   const [loading, setLoading] = useState(true);
+  const [volumesLoading, setVolumesLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [loadingVolumes, setLoadingVolumes] = useState(false);
+  const [query, setQuery] = useState("");
 
-  // Delete pool modal
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [deleteVolumesOnDelete, setDeleteVolumesOnDelete] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [resizeTarget, setResizeTarget] = useState<Volume | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Volume | null>(null);
+  const [confirm, setConfirm] = useState<null | "stop" | "delete">(null);
+  const [deleteVolumes, setDeleteVolumes] = useState(false);
 
-  // Create volume modal
-  const [showCreateVolumeModal, setShowCreateVolumeModal] = useState(false);
-  const [createVolumeName, setCreateVolumeName] = useState("");
-  const [createVolumeSize, setCreateVolumeSize] = useState(20);
-  const [createVolumeFormat, setCreateVolumeFormat] = useState("qcow2");
-  const [creatingVolume, setCreatingVolume] = useState(false);
+  const listPath = `/storage-pools?node=${encodeURIComponent(nodeName)}`;
 
-  // Delete volume modal
-  const [showDeleteVolumeModal, setShowDeleteVolumeModal] = useState(false);
-  const [volumeToDelete, setVolumeToDelete] = useState<Volume | null>(null);
-  const [deletingVolume, setDeletingVolume] = useState(false);
-
-  // Resize volume modal
-  const [showResizeVolumeModal, setShowResizeVolumeModal] = useState(false);
-  const [volumeToResize, setVolumeToResize] = useState<Volume | null>(null);
-  const [newVolumeSize, setNewVolumeSize] = useState(0);
-  const [resizingVolume, setResizingVolume] = useState(false);
-
-  const toast = useToast();
-
-  useEffect(() => {
-    if (poolName && nodeName) {
-      fetchPoolDetail();
-      fetchVolumes();
-    }
-  }, [poolName, nodeName]);
-
-  const fetchPoolDetail = async () => {
-    setRefreshing(true);
+  const fetchPool = useCallback(async () => {
     try {
-      const response = await apiPost<DescribeStoragePoolResponse>(
-        "/api/describe-storage-pool",
-        {
-          node_name: nodeName,
-          pool_name: poolName,
-        }
-      );
-      setPool(response.pool);
-    } catch (error: any) {
-      console.error("Failed to fetch storage pool detail:", error);
-      toast.error(error?.message || "Failed to fetch storage pool detail");
+      const data = await api<{ pool: StoragePool }>("/api/describe-storage-pool", { node_name: nodeName, pool_name: poolName });
+      setPool(data.pool);
+    } catch (err) {
+      setPool(null);
+      toast.error(errorMessage(err, "Failed to load storage pool"));
     } finally {
       setLoading(false);
+    }
+  }, [nodeName, poolName, toast]);
+
+  const fetchVolumes = useCallback(async () => {
+    setVolumesLoading(true);
+    try {
+      const data = await api<{ volumes: Volume[] }>("/api/list-volumes", { node_name: nodeName, pool_name: poolName });
+      setVolumes(data.volumes || []);
+    } catch (err) {
+      setVolumes([]);
+      toast.error(errorMessage(err, "Failed to load volumes"));
+    } finally {
+      setVolumesLoading(false);
+    }
+  }, [nodeName, poolName, toast]);
+
+  useEffect(() => {
+    if (!nodeName || !poolName) {
+      setLoading(false);
+      return;
+    }
+    fetchPool();
+    fetchVolumes();
+  }, [nodeName, poolName, fetchPool, fetchVolumes]);
+
+  const reload = async () => {
+    await Promise.all([fetchPool(), fetchVolumes()]);
+  };
+
+  const handleRescan = async () => {
+    setRefreshing(true);
+    try {
+      await api("/api/refresh-storage-pool", { node_name: nodeName, pool_name: poolName });
+      await reload();
+    } catch (err) {
+      toast.error(errorMessage(err, "Failed to rescan pool"));
+    } finally {
       setRefreshing(false);
     }
   };
 
-  const fetchVolumes = async () => {
-    setLoadingVolumes(true);
+  const poolAction = async (action: "start" | "stop") => {
     try {
-      const response = await apiPost<ListVolumesResponse>(
-        "/api/list-volumes",
-        {
-          node_name: nodeName,
-          pool_name: poolName,
-        }
-      );
-      setVolumes(response.volumes || []);
-    } catch (error: any) {
-      console.error("Failed to fetch volumes:", error);
-      toast.error(error?.message || "Failed to fetch volumes");
-    } finally {
-      setLoadingVolumes(false);
+      await api(`/api/${action}-storage-pool`, { node_name: nodeName, pool_name: poolName });
+      toast.success(action === "start" ? "Pool started" : "Pool stopped");
+      await reload();
+    } catch (err) {
+      toast.error(errorMessage(err, `Failed to ${action} pool`));
+      throw err;
     }
   };
 
-  const handleStartPool = async () => {
+  const handleDeletePool = async () => {
     try {
-      await apiPost("/api/start-storage-pool", {
-        node_name: nodeName,
-        pool_name: poolName,
-      });
-      toast.success(`Storage pool ${poolName} started successfully`);
-      await fetchPoolDetail();
-    } catch (error: any) {
-      console.error("Failed to start storage pool:", error);
-      toast.error(error?.message || "Failed to start storage pool");
+      await api("/api/delete-storage-pool", { node_name: nodeName, pool_name: poolName, delete_volumes: deleteVolumes });
+      toast.success(`Storage pool ${poolName} deleted`);
+      navigate(listPath);
+    } catch (err) {
+      toast.error(errorMessage(err, "Failed to delete storage pool"));
+      throw err;
     }
   };
 
-  const handleStopPool = async () => {
-    if (!confirm(`Are you sure you want to stop storage pool "${poolName}"?`)) {
-      return;
-    }
-
+  const handleDeleteVolume = async () => {
+    if (!deleteTarget) return;
     try {
-      await apiPost("/api/stop-storage-pool", {
-        node_name: nodeName,
-        pool_name: poolName,
-      });
-      toast.success(`Storage pool ${poolName} stopped successfully`);
-      await fetchPoolDetail();
-    } catch (error: any) {
-      console.error("Failed to stop storage pool:", error);
-      toast.error(error?.message || "Failed to stop storage pool");
+      await api("/api/delete-volume", { node_name: nodeName, pool_name: poolName, volume_id: deleteTarget.volume_id });
+      toast.success(`Volume ${deleteTarget.name} deleted`);
+      reload();
+    } catch (err) {
+      toast.error(errorMessage(err, "Failed to delete volume"));
+      throw err;
     }
   };
 
-  const handleRefreshPool = async () => {
-    try {
-      await apiPost("/api/refresh-storage-pool", {
-        node_name: nodeName,
-        pool_name: poolName,
-      });
-      toast.success(`Storage pool ${poolName} refreshed successfully`);
-      await fetchPoolDetail();
-      await fetchVolumes();
-    } catch (error: any) {
-      console.error("Failed to refresh storage pool:", error);
-      toast.error(error?.message || "Failed to refresh storage pool");
-    }
-  };
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return volumes
+      .filter((v) => !q || v.name.toLowerCase().includes(q) || v.path.toLowerCase().includes(q) || v.volume_id.toLowerCase().includes(q))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [volumes, query]);
 
-  const handleDeletePool = () => {
-    setShowDeleteModal(true);
-  };
-
-  const confirmDeletePool = async () => {
-    setDeleting(true);
-    try {
-      await apiPost("/api/delete-storage-pool", {
-        node_name: nodeName,
-        pool_name: poolName,
-        delete_volumes: deleteVolumesOnDelete,
-      });
-      toast.success(
-        deleteVolumesOnDelete
-          ? `Storage pool ${poolName} and all volumes deleted successfully`
-          : `Storage pool ${poolName} deleted successfully`
-      );
-      navigate(`/storage-pools?node=${nodeName}`);
-    } catch (error: any) {
-      console.error("Failed to delete storage pool:", error);
-      toast.error(error?.message || "Failed to delete storage pool");
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  // Volume operations
-  const handleCreateVolume = async () => {
-    setCreatingVolume(true);
-    try {
-      await apiPost("/api/create-volume", {
-        node_name: nodeName,
-        pool_name: poolName,
-        name: createVolumeName || undefined,
-        size_gb: createVolumeSize,
-        format: createVolumeFormat,
-      });
-      toast.success(`Volume created successfully`);
-      setShowCreateVolumeModal(false);
-      setCreateVolumeName("");
-      await fetchVolumes();
-      await fetchPoolDetail();
-    } catch (error: any) {
-      console.error("Failed to create volume:", error);
-      toast.error(error?.message || "Failed to create volume");
-    } finally {
-      setCreatingVolume(false);
-    }
-  };
-
-  const handleDeleteVolumeClick = (volume: Volume) => {
-    setVolumeToDelete(volume);
-    setShowDeleteVolumeModal(true);
-  };
-
-  const confirmDeleteVolume = async () => {
-    if (!volumeToDelete) return;
-    setDeletingVolume(true);
-    try {
-      await apiPost("/api/delete-volume", {
-        node_name: nodeName,
-        pool_name: poolName,
-        volume_id: volumeToDelete.volume_id,
-      });
-      toast.success(`Volume ${volumeToDelete.name} deleted successfully`);
-      setShowDeleteVolumeModal(false);
-      setVolumeToDelete(null);
-      await fetchVolumes();
-      await fetchPoolDetail();
-    } catch (error: any) {
-      console.error("Failed to delete volume:", error);
-      toast.error(error?.message || "Failed to delete volume");
-    } finally {
-      setDeletingVolume(false);
-    }
-  };
-
-  const handleResizeVolumeClick = (volume: Volume) => {
-    setVolumeToResize(volume);
-    setNewVolumeSize(volume.size_gb + 10);
-    setShowResizeVolumeModal(true);
-  };
-
-  const confirmResizeVolume = async () => {
-    if (!volumeToResize) return;
-    if (newVolumeSize <= volumeToResize.size_gb) {
-      toast.error("New size must be larger than current size");
-      return;
-    }
-    setResizingVolume(true);
-    try {
-      await apiPost("/api/resize-volume", {
-        node_name: nodeName,
-        pool_name: poolName,
-        volume_id: volumeToResize.volume_id,
-        new_size_gb: newVolumeSize,
-      });
-      toast.success(
-        `Volume ${volumeToResize.name} resized to ${newVolumeSize} GB successfully`
-      );
-      setShowResizeVolumeModal(false);
-      setVolumeToResize(null);
-      await fetchVolumes();
-    } catch (error: any) {
-      console.error("Failed to resize volume:", error);
-      toast.error(error?.message || "Failed to resize volume");
-    } finally {
-      setResizingVolume(false);
-    }
-  };
-
-  const formatBytes = (bytes: number): string => {
-    if (bytes === 0) return "0 B";
-    const k = 1024;
-    const sizes = ["B", "KB", "MB", "GB", "TB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`;
-  };
-
-  const getStateColor = (state: string): string => {
-    switch (state) {
-      case "Active":
-      case "Running":
-        return "text-green-600 bg-green-100";
-      case "Inactive":
-        return "text-gray-600 bg-gray-100";
-      case "Building":
-        return "text-yellow-600 bg-yellow-100";
-      case "Degraded":
-        return "text-orange-600 bg-orange-100";
-      case "Inaccessible":
-        return "text-red-600 bg-red-100";
-      default:
-        return "text-gray-600 bg-gray-100";
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <RefreshCw className="w-8 h-8 animate-spin text-primary mx-auto mb-2" />
-          <p className="text-gray-600">Loading storage pool...</p>
-        </div>
-      </div>
-    );
-  }
+  if (loading) return <LoadingState label="Loading storage pool…" />;
 
   if (!pool) {
     return (
-      <>
-        <div className="space-y-6">
-          <Header
-            title="Storage Pool Not Found"
-            description="The requested storage pool does not exist"
-          />
-          <button
-            onClick={() => navigate("/storage-pools")}
-            className="flex items-center gap-2 text-primary hover:underline"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to Storage Pools
-          </button>
-        </div>
-      </>
+      <div className="card">
+        <EmptyState
+          icon={<Database size={20} />}
+          title="Storage pool not found"
+          description={nodeName ? `Pool "${poolName}" does not exist on node ${nodeName}.` : "No node was specified for this pool."}
+          action={
+            <Link to={listPath} className="btn-primary">
+              Back to storage pools
+            </Link>
+          }
+        />
+      </div>
     );
   }
 
-  const usagePercent =
-    pool.capacity > 0
-      ? ((pool.allocation / pool.capacity) * 100).toFixed(1)
-      : "0";
+  const active = pool.state.toLowerCase() === "active";
+  const used = percent(pool.allocation, pool.capacity);
 
   return (
     <>
-      <div className="space-y-6">
-        {/* Header */}
-        <Header
-          title={
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => navigate(`/storage-pools?node=${nodeName}`)}
-                className="p-2 hover:bg-gray-100 rounded-lg"
-              >
-                <ArrowLeft className="w-5 h-5" />
-              </button>
-              <Database className="w-8 h-8 text-primary" />
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900">
-                  {pool.name}
-                </h1>
-                <p className="text-sm text-gray-600">{pool.path}</p>
-              </div>
-            </div>
-          }
-          description=""
-          action={
-            <div className="flex gap-2">
-              <button
-                onClick={handleRefreshPool}
-                disabled={refreshing}
-                className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
-              >
-                <RefreshCw
-                  className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`}
-                />
-                Refresh
-              </button>
-              {pool.state.toLowerCase() === "inactive" ? (
-                <button
-                  onClick={handleStartPool}
-                  className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
-                >
-                  <Play className="w-4 h-4" />
-                  Start
-                </button>
-              ) : (
-                <button
-                  onClick={handleStopPool}
-                  className="flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
-                >
-                  <Square className="w-4 h-4" />
-                  Stop
-                </button>
-              )}
-              <button
-                onClick={handleDeletePool}
-                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-              >
-                <Trash2 className="w-4 h-4" />
-                Delete
-              </button>
-            </div>
-          }
-        />
-
-        {/* Pool Info Card */}
-        <div className="bg-white border border-gray-200 rounded-lg p-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <div>
-              <p className="text-sm text-gray-600 mb-1">Status</p>
-              <span
-                className={`px-3 py-1 text-sm font-medium rounded-full ${getStateColor(
-                  pool.state
-                )}`}
-              >
-                {pool.state}
-              </span>
-            </div>
-            <div>
-              <p className="text-sm text-gray-600 mb-1">Type</p>
-              <p className="text-lg font-semibold text-gray-900">{pool.type || "N/A"}</p>
-            </div>
-            <div>
-              <p className="text-sm text-gray-600 mb-1">Capacity</p>
-              <p className="text-lg font-semibold text-gray-900">
-                {formatBytes(pool.capacity)}
-              </p>
-            </div>
-            <div>
-              <p className="text-sm text-gray-600 mb-1">Volumes</p>
-              <p className="text-lg font-semibold text-gray-900">
-                {pool.volume_count}
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-6">
-            <div className="flex justify-between items-center mb-2">
-              <p className="text-sm text-gray-600">Storage Usage</p>
-              <p className="text-sm font-medium text-gray-900">
-                {formatBytes(pool.allocation)} / {formatBytes(pool.capacity)} (
-                {usagePercent}%)
-              </p>
-            </div>
-            <div className="w-full bg-gray-200 rounded-full h-3">
-              <div
-                className="bg-primary h-3 rounded-full transition-all"
-                style={{ width: `${usagePercent}%` }}
-              />
-            </div>
-            <p className="text-sm text-gray-600 mt-2">
-              {formatBytes(pool.available)} free
-            </p>
-          </div>
-        </div>
-
-        {/* Volumes List */}
-        <div className="bg-white border border-gray-200 rounded-lg">
-          <div className="p-4 border-b border-gray-200 flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-gray-900">
-              Volumes ({volumes.length})
-            </h2>
-            <button
-              onClick={() => setShowCreateVolumeModal(true)}
-              className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={!pool || pool.state !== "Active"}
-              title={
-                !pool
-                  ? "Loading..."
-                  : pool.state !== "Active"
-                  ? "Pool must be active to create volumes. Click 'Start' button first."
-                  : "Create a new volume"
-              }
-            >
-              Create Volume
+      <PageHeader
+        breadcrumbs={[{ label: "Storage", to: listPath }, { label: nodeName, to: listPath }, { label: pool.name }]}
+        title={pool.name}
+        icon={<Database size={18} />}
+        meta={
+          <>
+            <StatusBadge status={pool.state} />
+            {pool.type && <Badge>{pool.type}</Badge>}
+            <span className="flex items-center gap-1 font-mono text-xs text-fg-subtle">
+              {pool.path}
+              <CopyButton text={pool.path} />
+            </span>
+          </>
+        }
+        actions={
+          <>
+            <button className="btn-secondary" onClick={handleRescan} disabled={refreshing || !active}>
+              <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />
+              Rescan
             </button>
-          </div>
-          {loadingVolumes ? (
-            <div className="p-8 text-center">
-              <RefreshCw className="w-6 h-6 animate-spin text-primary mx-auto mb-2" />
-              <p className="text-sm text-gray-600">Loading volumes...</p>
-            </div>
-          ) : volumes.length > 0 ? (
-            <div className="divide-y divide-gray-200">
-              {volumes.map((volume) => (
-                <div
-                  key={volume.volume_id}
-                  className="p-4 hover:bg-gray-50 transition-colors"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3 flex-1">
-                      <HardDrive className="w-5 h-5 text-gray-400" />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="font-medium text-gray-900 truncate">
-                            {volume.name}
-                          </p>
-                          <span className="px-2 py-0.5 text-xs font-medium text-gray-600 bg-gray-100 rounded flex-shrink-0">
-                            {volume.format}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <p className="text-xs text-gray-600">
-                            ID: {volume.volume_id}
-                          </p>
-                          <span className="text-xs text-gray-400">•</span>
-                          <p
-                            className="text-xs text-gray-600 truncate"
-                            title={volume.path}
-                          >
-                            {volume.path}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-4 ml-4 flex-shrink-0">
-                      <div className="text-right">
-                        <p className="text-sm font-medium text-gray-900">
-                          {volume.size_gb} GB
-                        </p>
-                        <p className="text-xs text-gray-600">
-                          {formatBytes(volume.allocation_b)} used
-                          {volume.capacity_b > 0 && (
-                            <span className="ml-1">
-                              (
-                              {(
-                                (volume.allocation_b / volume.capacity_b) *
-                                100
-                              ).toFixed(0)}
-                              %)
-                            </span>
-                          )}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handleResizeVolumeClick(volume)}
-                          className="p-2 text-gray-600 hover:text-primary hover:bg-gray-100 rounded transition-colors"
-                          title="Resize Volume"
-                        >
-                          <Maximize2 className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteVolumeClick(volume)}
-                          className="p-2 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
-                          title="Delete Volume"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="p-8 text-center">
-              <HardDrive className="w-8 h-8 text-gray-400 mx-auto mb-2" />
-              <p className="text-sm text-gray-600">No volumes in this pool</p>
-            </div>
-          )}
-        </div>
+            {active ? (
+              <button className="btn-secondary" onClick={() => setConfirm("stop")}>
+                <Square size={14} />
+                Stop
+              </button>
+            ) : (
+              <button className="btn-primary" onClick={() => poolAction("start").catch(() => undefined)}>
+                <Play size={14} />
+                Start
+              </button>
+            )}
+            <DropdownMenu
+              triggerClassName="btn-secondary w-9 px-0"
+              items={[
+                {
+                  label: "Delete pool",
+                  icon: <Trash2 size={14} />,
+                  danger: true,
+                  onClick: () => {
+                    setDeleteVolumes(false);
+                    setConfirm("delete");
+                  },
+                },
+              ]}
+            />
+          </>
+        }
+      />
+
+      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <StatCard label="Used" value={formatBytes(pool.allocation)} hint={`${used.toFixed(1)}% of ${formatBytes(pool.capacity)}`}>
+          <UsageBar value={used} size="sm" />
+        </StatCard>
+        <StatCard label="Free" value={formatBytes(pool.available)} hint="Available for new volumes" />
+        <StatCard label="Volumes" value={pool.volume_count} hint="Disks, images and ISOs" />
       </div>
 
-      {/* Create Volume Modal */}
-      {showCreateVolumeModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
-            <h2 className="text-xl font-semibold mb-4">Create Volume</h2>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Name (Optional)
-                </label>
-                <input
-                  type="text"
-                  value={createVolumeName}
-                  onChange={(e) => setCreateVolumeName(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary"
-                  placeholder="my-volume (leave empty to auto-generate)"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  If not provided, a unique ID will be generated automatically
-                </p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Size (GB)
-                </label>
-                <input
-                  type="number"
-                  value={createVolumeSize}
-                  onChange={(e) => setCreateVolumeSize(Number(e.target.value))}
-                  min="1"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary"
-                  placeholder="20"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Format
-                </label>
-                <select
-                  value={createVolumeFormat}
-                  onChange={(e) => setCreateVolumeFormat(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary"
-                >
-                  <option value="qcow2">qcow2</option>
-                  <option value="raw">raw</option>
-                </select>
-              </div>
-            </div>
-            <div className="flex gap-2 mt-6">
-              <button
-                onClick={() => setShowCreateVolumeModal(false)}
-                disabled={creatingVolume}
-                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreateVolume}
-                disabled={creatingVolume}
-                className="flex-1 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50"
-              >
-                {creatingVolume ? "Creating..." : "Create"}
-              </button>
-            </div>
-          </div>
-        </div>
+      {!active && (
+        <Alert tone="warning" className="mb-6" title="This pool is not active">
+          Start the pool to create volumes or launch instances from it.
+        </Alert>
       )}
 
-      {/* Delete Volume Modal */}
-      {showDeleteVolumeModal && volumeToDelete && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
-            <h2 className="text-xl font-semibold mb-4 text-red-600">
-              Delete Volume
-            </h2>
-            <p className="text-gray-700 mb-4">
-              Are you sure you want to delete volume{" "}
-              <span className="font-semibold">{volumeToDelete.name}</span>?
-            </p>
-            <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
-              <p className="text-sm text-red-700">
-                This action cannot be undone. All data in this volume will be permanently deleted.
-              </p>
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => {
-                  setShowDeleteVolumeModal(false);
-                  setVolumeToDelete(null);
-                }}
-                disabled={deletingVolume}
-                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmDeleteVolume}
-                disabled={deletingVolume}
-                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
-              >
-                {deletingVolume ? "Deleting..." : "Delete"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Resize Volume Modal */}
-      {showResizeVolumeModal && volumeToResize && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
-            <h2 className="text-xl font-semibold mb-4">Resize Volume</h2>
-            <p className="text-gray-700 mb-4">
-              Resize volume <span className="font-semibold">{volumeToResize.name}</span>
-            </p>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Current Size
-                </label>
-                <p className="text-lg font-semibold text-gray-900">
-                  {volumeToResize.size_gb} GB
-                </p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  New Size (GB)
-                </label>
-                <input
-                  type="number"
-                  value={newVolumeSize}
-                  onChange={(e) => setNewVolumeSize(Number(e.target.value))}
-                  min={volumeToResize.size_gb + 1}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Must be larger than current size ({volumeToResize.size_gb} GB)
-                </p>
-              </div>
-            </div>
-            <div className="flex gap-2 mt-6">
-              <button
-                onClick={() => {
-                  setShowResizeVolumeModal(false);
-                  setVolumeToResize(null);
-                }}
-                disabled={resizingVolume}
-                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmResizeVolume}
-                disabled={resizingVolume}
-                className="flex-1 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50"
-              >
-                {resizingVolume ? "Resizing..." : "Resize"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Delete Pool Modal */}
-      {showDeleteModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
-            <h2 className="text-xl font-semibold mb-4 text-red-600">
-              Delete Storage Pool
-            </h2>
-            <p className="text-gray-700 mb-4">
-              Are you sure you want to delete storage pool{" "}
-              <span className="font-semibold">{poolName}</span>?
-            </p>
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
-              <label className="flex items-start gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={deleteVolumesOnDelete}
-                  onChange={(e) => setDeleteVolumesOnDelete(e.target.checked)}
-                  className="mt-1"
-                />
-                <div>
-                  <p className="font-medium text-yellow-800">
-                    Delete all volumes and directory
-                  </p>
-                  <p className="text-sm text-yellow-700 mt-1">
-                    This will permanently delete all volumes in the pool and the
-                    pool directory. This action cannot be undone.
-                  </p>
+      <Card
+        title="Volumes"
+        bodyClassName=""
+        actions={
+          <>
+            <SearchFilter value={query} onChange={setQuery} placeholder="Filter volumes" className="hidden w-56 sm:block" />
+            <button className="btn-primary" onClick={() => setCreateOpen(true)} disabled={!active}>
+              <Plus size={14} />
+              Create volume
+            </button>
+          </>
+        }
+      >
+        <Table
+          bare
+          rows={filtered}
+          loading={volumesLoading}
+          rowKey={(v) => v.volume_id}
+          empty={
+            volumes.length ? (
+              <EmptyState title="No matching volumes" />
+            ) : (
+              <EmptyState icon={<HardDrive size={20} />} title="No volumes in this pool" description="Create a volume or register a template to add one." />
+            )
+          }
+          columns={[
+            {
+              key: "name",
+              header: "Name",
+              render: (v) => (
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">{v.name}</span>
+                  </div>
+                  <div className="flex max-w-[460px] items-center gap-1 font-mono text-xs text-fg-subtle" title={v.path}>
+                    <span className="truncate">{v.path}</span>
+                    <CopyButton text={v.path} />
+                  </div>
                 </div>
-              </label>
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => {
-                  setShowDeleteModal(false);
-                  setDeleteVolumesOnDelete(false);
-                }}
-                disabled={deleting}
-                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmDeletePool}
-                disabled={deleting}
-                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
-              >
-                {deleting ? "Deleting..." : "Delete"}
-              </button>
-            </div>
-          </div>
-        </div>
+              ),
+            },
+            { key: "format", header: "Format", render: (v) => <Badge>{v.format || "—"}</Badge> },
+            { key: "size", header: "Size", render: (v) => <span className="whitespace-nowrap">{v.size_gb} GB</span> },
+            {
+              key: "allocated",
+              header: "Allocated",
+              className: "w-48",
+              render: (v) => (
+                <div className="space-y-1">
+                  <div className="text-xs text-fg-muted">
+                    {formatBytes(v.allocation_b)}
+                    {v.capacity_b > 0 && ` · ${percent(v.allocation_b, v.capacity_b).toFixed(0)}%`}
+                  </div>
+                  <UsageBar value={percent(v.allocation_b, v.capacity_b)} size="sm" />
+                </div>
+              ),
+            },
+            {
+              key: "actions",
+              header: <span className="sr-only">Actions</span>,
+              align: "right",
+              render: (v) => (
+                <DropdownMenu
+                  items={[
+                    { label: "Resize", icon: <Maximize2 size={14} />, onClick: () => setResizeTarget(v) },
+                    { divider: true, label: "divider" },
+                    { label: "Delete volume", icon: <Trash2 size={14} />, danger: true, onClick: () => setDeleteTarget(v) },
+                  ]}
+                />
+              ),
+            },
+          ]}
+        />
+      </Card>
+
+      {createOpen && (
+        <CreateVolumeModal
+          nodeName={nodeName}
+          poolName={poolName}
+          onClose={() => setCreateOpen(false)}
+          onCreated={() => {
+            setCreateOpen(false);
+            reload();
+          }}
+        />
       )}
+      {resizeTarget && (
+        <ResizeVolumeModal
+          nodeName={nodeName}
+          poolName={poolName}
+          volume={resizeTarget}
+          onClose={() => setResizeTarget(null)}
+          onResized={() => {
+            setResizeTarget(null);
+            reload();
+          }}
+        />
+      )}
+
+      <ConfirmDialog
+        isOpen={Boolean(deleteTarget)}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={handleDeleteVolume}
+        title="Delete volume?"
+        message={
+          <>
+            <strong className="text-fg">{deleteTarget?.name}</strong> and all data on it will be permanently deleted. Make sure no instance or
+            template uses it.
+          </>
+        }
+        confirmText="Delete volume"
+      />
+      <ConfirmDialog
+        isOpen={confirm === "stop"}
+        onClose={() => setConfirm(null)}
+        onConfirm={() => poolAction("stop")}
+        title="Stop storage pool?"
+        message="Instances with disks in this pool may fail to start until the pool is started again."
+        confirmText="Stop pool"
+        variant="warning"
+      />
+      <ConfirmDialog
+        isOpen={confirm === "delete"}
+        onClose={() => setConfirm(null)}
+        onConfirm={handleDeletePool}
+        title="Delete storage pool?"
+        message={
+          <>
+            The pool definition <strong className="text-fg">{pool.name}</strong> will be removed from libvirt.
+          </>
+        }
+        confirmText="Delete pool"
+      >
+        <Checkbox
+          checked={deleteVolumes}
+          onChange={setDeleteVolumes}
+          label="Also delete all volumes and the pool directory"
+          description="Permanently removes every disk, template and ISO stored in this pool."
+        />
+      </ConfirmDialog>
     </>
   );
 }
-

@@ -1,353 +1,243 @@
-import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
-import Header from "@/components/Header";
+import { useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { Info, Plus, Power, PowerOff, ServerCog, Trash2 } from "lucide-react";
+import PageHeader from "@/components/PageHeader";
 import Table from "@/components/Table";
-import StatusBadge from "@/components/StatusBadge";
+import Modal from "@/components/Modal";
+import ConfirmDialog from "@/components/ConfirmDialog";
+import DropdownMenu from "@/components/DropdownMenu";
+import { Alert, Badge, EmptyState, Field, Spinner, StatusBadge } from "@/components/ui";
 import { useToast } from "@/components/ToastContainer";
-import { apiPost } from "@/lib/api";
-import { RefreshCw, Server, Info, Plus, Trash2, AlertCircle } from "lucide-react";
+import { api, errorMessage } from "@/lib/api";
+import { useNodes } from "@/lib/nodes";
+import type { Node } from "@/lib/types";
 
-interface Node {
-  name: string;
-  uuid: string;
-  uri: string;
-  type: string;
-  state: string;
-  created_at?: string;
-  updated_at?: string;
-}
+const NODE_TYPES: { value: string; label: string; description: string }[] = [
+  { value: "remote", label: "Remote", description: "A libvirt host reached over the network (e.g. qemu+ssh)." },
+  { value: "local", label: "Local", description: "The machine running this JVP server." },
+  { value: "compute", label: "Compute", description: "Dedicated to running virtual machines." },
+  { value: "storage", label: "Storage", description: "Dedicated to storage pools and volumes." },
+  { value: "hybrid", label: "Hybrid", description: "Runs both compute and storage workloads." },
+];
 
-export default function NodesPage() {
-  const [nodes, setNodes] = useState<Node[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [createForm, setCreateForm] = useState({
-    name: "",
-    uri: "",
-    type: "remote" as string,
-  });
-  const [creating, setCreating] = useState(false);
+function AddNodeModal({ onClose, onCreated }: { onClose: () => void; onCreated: (name: string) => void }) {
   const toast = useToast();
-  const navigate = useNavigate();
+  const [name, setName] = useState("");
+  const [uri, setUri] = useState("");
+  const [type, setType] = useState("remote");
+  const [saving, setSaving] = useState(false);
+  const valid = name.trim() && uri.trim();
+  const isSSH = uri.includes("+ssh://") || type === "remote";
 
-  useEffect(() => {
-    fetchNodes();
-  }, []);
-
-  const fetchNodes = async () => {
-    setRefreshing(true);
+  const handleSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!valid) return;
+    setSaving(true);
     try {
-      const response = await apiPost<{ nodes: Node[] }>("/api/list-nodes", {});
-      setNodes(response.nodes || []);
-    } catch (error: any) {
-      console.error("Failed to fetch nodes:", error);
-      toast.error(error?.message || "Failed to fetch nodes");
+      await api("/api/create-node", { name: name.trim(), uri: uri.trim(), type });
+      toast.success(`Node ${name.trim()} added`);
+      onCreated(name.trim());
+    } catch (err) {
+      toast.error(errorMessage(err, "Failed to add node"));
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      setSaving(false);
     }
   };
-
-  const handleViewDetails = (nodeName: string) => {
-    navigate(`/nodes/${nodeName}`);
-  };
-
-  const handleCreateNode = async () => {
-    if (!createForm.name || !createForm.uri) {
-      toast.error("Please fill in all required fields");
-      return;
-    }
-
-    setCreating(true);
-    try {
-      await apiPost("/api/create-node", {
-        name: createForm.name,
-        uri: createForm.uri,
-        type: createForm.type,
-      });
-      toast.success(`Node ${createForm.name} created successfully`);
-      setShowCreateModal(false);
-      setCreateForm({ name: "", uri: "", type: "remote" });
-      await fetchNodes();
-    } catch (error: any) {
-      console.error("Failed to create node:", error);
-      toast.error(error?.message || "Failed to create node");
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const handleDeleteNode = async (nodeName: string) => {
-    if (!confirm(`Are you sure you want to delete node "${nodeName}"?`)) {
-      return;
-    }
-
-    try {
-      await apiPost("/api/delete-node", { name: nodeName });
-      toast.success(`Node ${nodeName} deleted successfully`);
-      await fetchNodes();
-    } catch (error: any) {
-      console.error("Failed to delete node:", error);
-      toast.error(error?.message || "Failed to delete node");
-    }
-  };
-
-  const getStateColor = (state: string) => {
-    switch (state) {
-      case "online":
-        return "green";
-      case "offline":
-        return "red";
-      case "maintenance":
-        return "yellow";
-      default:
-        return "gray";
-    }
-  };
-
-  const getTypeColor = (type: string) => {
-    switch (type) {
-      case "local":
-        return "blue";
-      case "remote":
-        return "purple";
-      case "compute":
-        return "green";
-      case "storage":
-        return "orange";
-      case "hybrid":
-        return "indigo";
-      default:
-        return "gray";
-    }
-  };
-
-  const columns = [
-    {
-      key: "name",
-      label: "Name",
-      render: (_: unknown, node: Node) => (
-        <div className="flex items-center gap-2">
-          <Server size={16} className="text-gray-400" />
-          <span className="font-medium">{node.name}</span>
-        </div>
-      ),
-    },
-    {
-      key: "type",
-      label: "Type",
-      render: (_: unknown, node: Node) => (
-        <StatusBadge
-          status={node.type}
-          color={getTypeColor(node.type)}
-          text={node.type}
-        />
-      ),
-    },
-    {
-      key: "state",
-      label: "State",
-      render: (_: unknown, node: Node) => (
-        <StatusBadge
-          status={node.state}
-          color={getStateColor(node.state)}
-          text={node.state}
-        />
-      ),
-    },
-    {
-      key: "uri",
-      label: "URI",
-      render: (_: unknown, node: Node) => (
-        <span className="font-mono text-sm text-gray-600">{node.uri}</span>
-      ),
-    },
-    {
-      key: "actions",
-      label: "Actions",
-      render: (_: unknown, node: Node) => (
-        <div className="flex gap-2">
-          <button
-            onClick={() => handleViewDetails(node.name)}
-            className="btn-secondary flex items-center gap-2"
-          >
-            <Info size={16} />
-            Details
-          </button>
-          <button
-            onClick={() => handleDeleteNode(node.name)}
-            className="btn-danger flex items-center gap-2"
-          >
-            <Trash2 size={16} />
-            Delete
-          </button>
-        </div>
-      ),
-    },
-  ];
 
   return (
-    <>
-      <Header
-        title="Nodes"
-        description="Manage physical and virtual nodes in the cluster"
-        action={
-          <div className="flex gap-2">
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="btn-primary flex items-center gap-2"
-            >
-              <Plus size={16} />
-              Add Node
-            </button>
-            <button
-              onClick={fetchNodes}
-              disabled={refreshing}
-              className="btn-secondary flex items-center gap-2"
-            >
-              <RefreshCw size={16} className={refreshing ? "animate-spin" : ""} />
-              Refresh
-            </button>
-          </div>
-        }
-      />
-
-      <div className="card">
-        {loading ? (
-          <div className="flex justify-center py-12">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-          </div>
-        ) : nodes.length === 0 ? (
-          <div className="text-center py-12">
-            <Server size={48} className="mx-auto text-gray-400 mb-4" />
-            <p className="text-gray-500 mb-4">No nodes found</p>
-          </div>
-        ) : (
-          <Table
-            data={nodes}
-            columns={columns}
-            keyField="uuid"
+    <Modal
+      isOpen
+      onClose={onClose}
+      dismissible={!saving}
+      title="Add node"
+      description="Connect a libvirt host so JVP can manage its virtual machines."
+      footer={
+        <>
+          <button className="btn-secondary" onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button className="btn-primary" onClick={() => handleSubmit()} disabled={saving || !valid}>
+            {saving && <Spinner size={14} className="text-current" />}
+            Add node
+          </button>
+        </>
+      }
+    >
+      <form className="space-y-4" onSubmit={handleSubmit}>
+        <Field label="Name" required hint="A unique, short identifier, e.g. node-1.">
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="node-1" autoFocus />
+        </Field>
+        <Field label="Libvirt URI" required>
+          <input
+            className="input font-mono text-[13px]"
+            value={uri}
+            onChange={(e) => setUri(e.target.value)}
+            placeholder="qemu+ssh://root@192.168.1.100/system"
           />
+        </Field>
+        <Field label="Type" hint={NODE_TYPES.find((t) => t.value === type)?.description}>
+          <select className="input" value={type} onChange={(e) => setType(e.target.value)}>
+            {NODE_TYPES.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+        {isSSH && (
+          <Alert tone="info" title="Passwordless SSH is required">
+            <p className="mt-1">The JVP server must be able to log in to the host without a password:</p>
+            <pre className="mt-2 overflow-x-auto rounded-md bg-surface/70 px-3 py-2 font-mono text-xs text-fg">
+              {"ssh-keygen -t ed25519\nssh-copy-id root@<host>\nssh root@<host> virsh list"}
+            </pre>
+          </Alert>
         )}
-      </div>
-
-      {/* Info Card */}
-      <div className="card mt-4 bg-blue-50 border-blue-200">
-        <h3 className="text-sm font-semibold text-blue-900 mb-2">Node Information</h3>
-        <ul className="text-sm text-blue-800 space-y-1">
-          <li>• <strong>Local:</strong> The node running this JVP instance</li>
-          <li>• <strong>Remote:</strong> A node accessible via network (SSH/libvirt)</li>
-          <li>• <strong>Compute:</strong> Specialized for running VMs</li>
-          <li>• <strong>Storage:</strong> Specialized for storage operations</li>
-          <li>• <strong>Hybrid:</strong> Can perform both compute and storage tasks</li>
-        </ul>
-      </div>
-
-      {/* Create Node Modal */}
-      {showCreateModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
-            <div className="p-6">
-              <h2 className="text-xl font-semibold mb-4">Add New Node</h2>
-
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Node Name <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={createForm.name}
-                    onChange={(e) =>
-                      setCreateForm({ ...createForm, name: e.target.value })
-                    }
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="e.g., node1, server1"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Unique identifier for this node
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Libvirt URI <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={createForm.uri}
-                    onChange={(e) =>
-                      setCreateForm({ ...createForm, uri: e.target.value })
-                    }
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
-                    placeholder="qemu+ssh://root@192.168.1.100/system"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Connection URI for libvirt
-                  </p>
-                  {createForm.type === "remote" && (
-                    <div className="mt-2 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
-                      <div className="flex items-start gap-2">
-                        <AlertCircle className="w-4 h-4 text-yellow-600 mt-0.5 flex-shrink-0" />
-                        <div className="text-xs text-yellow-800">
-                          <p className="font-semibold mb-1">SSH Keyless Login Required</p>
-                          <p className="mb-1">Before connecting to a remote node via SSH, ensure SSH keyless login is configured:</p>
-                          <ol className="list-decimal list-inside space-y-0.5 ml-1">
-                            <li>Generate SSH key pair (if not exists): <code className="bg-yellow-100 px-1 rounded">ssh-keygen -t rsa</code></li>
-                            <li>Copy public key to remote node: <code className="bg-yellow-100 px-1 rounded">ssh-copy-id user@host</code></li>
-                            <li>Test keyless login: <code className="bg-yellow-100 px-1 rounded">ssh user@host</code></li>
-                          </ol>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Node Type
-                  </label>
-                  <select
-                    value={createForm.type}
-                    onChange={(e) =>
-                      setCreateForm({ ...createForm, type: e.target.value })
-                    }
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="local">Local</option>
-                    <option value="remote">Remote</option>
-                    <option value="compute">Compute</option>
-                    <option value="storage">Storage</option>
-                    <option value="hybrid">Hybrid</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="flex gap-2 mt-6">
-                <button
-                  onClick={handleCreateNode}
-                  disabled={creating}
-                  className="flex-1 btn-primary"
-                >
-                  {creating ? "Creating..." : "Create Node"}
-                </button>
-                <button
-                  onClick={() => {
-                    setShowCreateModal(false);
-                    setCreateForm({ name: "", uri: "", type: "remote" });
-                  }}
-                  disabled={creating}
-                  className="flex-1 btn-secondary"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-    </>
+      </form>
+    </Modal>
   );
 }
 
+export default function NodesPage() {
+  const toast = useToast();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { nodes, loading, refresh } = useNodes();
+  const [refreshing, setRefreshing] = useState(false);
+  const [addOpen, setAddOpen] = useState(searchParams.get("add") === "1");
+  const [toDelete, setToDelete] = useState<Node | null>(null);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await refresh();
+    setRefreshing(false);
+  };
+
+  const closeAdd = () => {
+    setAddOpen(false);
+    if (searchParams.get("add")) setSearchParams({}, { replace: true });
+  };
+
+  const setNodeEnabled = async (node: Node, enabled: boolean) => {
+    try {
+      await api(enabled ? "/api/enable-node" : "/api/disable-node", { name: node.name });
+      toast.success(enabled ? `Node ${node.name} enabled` : `Node ${node.name} is now in maintenance`);
+      refresh();
+    } catch (err) {
+      toast.error(errorMessage(err, "Failed to update node"));
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!toDelete) return;
+    try {
+      await api("/api/delete-node", { name: toDelete.name });
+      toast.success(`Node ${toDelete.name} removed`);
+      refresh();
+    } catch (err) {
+      toast.error(errorMessage(err, "Failed to remove node"));
+      throw err;
+    }
+  };
+
+  return (
+    <>
+      <PageHeader
+        title="Nodes"
+        description="Libvirt hosts managed by this JVP server."
+        onRefresh={handleRefresh}
+        refreshing={refreshing}
+        actions={
+          <button className="btn-primary" onClick={() => setAddOpen(true)}>
+            <Plus size={15} />
+            Add node
+          </button>
+        }
+      />
+
+      <Table
+        rows={nodes}
+        rowKey={(n) => n.uuid || n.name}
+        loading={loading}
+        loadingLabel="Loading nodes…"
+        onRowClick={(n) => navigate(`/nodes/${encodeURIComponent(n.name)}`)}
+        empty={
+          <EmptyState
+            icon={<ServerCog size={20} />}
+            title="No nodes yet"
+            description="Add a libvirt host to start managing virtual machines."
+            action={
+              <button className="btn-primary" onClick={() => setAddOpen(true)}>
+                <Plus size={15} />
+                Add node
+              </button>
+            }
+          />
+        }
+        columns={[
+          {
+            key: "name",
+            header: "Name",
+            render: (n) => (
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-8 w-8 items-center justify-center rounded-md bg-subtle text-fg-subtle">
+                  <ServerCog size={15} />
+                </div>
+                <span className="font-medium">{n.name}</span>
+              </div>
+            ),
+          },
+          { key: "state", header: "Status", render: (n) => <StatusBadge status={n.state} /> },
+          { key: "type", header: "Type", render: (n) => <Badge className="capitalize">{n.type}</Badge> },
+          {
+            key: "uri",
+            header: "URI",
+            render: (n) => <span className="font-mono text-xs text-fg-muted">{n.uri}</span>,
+          },
+          {
+            key: "actions",
+            header: <span className="sr-only">Actions</span>,
+            align: "right",
+            render: (n) => (
+              <div onClick={(e) => e.stopPropagation()}>
+                <DropdownMenu
+                  items={[
+                    { label: "View details", icon: <Info size={14} />, onClick: () => navigate(`/nodes/${encodeURIComponent(n.name)}`) },
+                    n.state === "maintenance"
+                      ? { label: "Enable node", icon: <Power size={14} />, onClick: () => setNodeEnabled(n, true) }
+                      : { label: "Enter maintenance", icon: <PowerOff size={14} />, onClick: () => setNodeEnabled(n, false) },
+                    { divider: true, label: "divider" },
+                    { label: "Remove node", icon: <Trash2 size={14} />, danger: true, onClick: () => setToDelete(n) },
+                  ]}
+                />
+              </div>
+            ),
+          },
+        ]}
+      />
+
+      {addOpen && (
+        <AddNodeModal
+          onClose={closeAdd}
+          onCreated={() => {
+            closeAdd();
+            refresh();
+          }}
+        />
+      )}
+
+      <ConfirmDialog
+        isOpen={Boolean(toDelete)}
+        onClose={() => setToDelete(null)}
+        onConfirm={handleDelete}
+        title="Remove node?"
+        message={
+          <>
+            <strong className="text-fg">{toDelete?.name}</strong> will be disconnected from JVP. Virtual machines on the host keep running and
+            are not deleted.
+          </>
+        }
+        confirmText="Remove"
+      />
+    </>
+  );
+}
