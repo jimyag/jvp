@@ -1,6 +1,8 @@
 module github.com/jimyag/jvp
 
-go 1.25
+go 1.27
+
+toolchain go1.27.3
 
 require (
 	github.com/digitalocean/go-libvirt v0.0.0-20251120220305-e19c2691f7c2
