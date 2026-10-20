@@ -43,6 +43,8 @@ github.com/gorilla/websocket v1.5.3 h1:saDtZ6Pbx/0u+bgYQ3q96pZgCzfhKXGPqt7kZ72aN
 github.com/gorilla/websocket v1.5.3/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
 github.com/jimmicro/grace v0.0.0-20251102152554-f8295e240732 h1:Nkoq4EsZYCFGOR1R9L088pc7Pp8lLltUc/dVj+1ynBA=
 github.com/jimmicro/grace v0.0.0-20251102152554-f8295e240732/go.mod h1:g4nxUTDJdxFNEU/reWrvpAytnods5jCJUQ0cjjHe9Rw=
+github.com/jimmicro/grace v0.0.0-20261020151021-358edf13acb6 h1:QxZBS06DYjXIqpo7N0ZyAeozqU81oyEPkiyfSaMIcvs=
+github.com/jimmicro/grace v0.0.0-20261020151021-358edf13acb6/go.mod h1:g4nxUTDJdxFNEU/reWrvpAytnods5jCJUQ0cjjHe9Rw=
 github.com/jimmicro/version v1.0.0 h1:xSmSTIXP++HBaaSiI80a9choe/baJFWIgQVY03MzHJ4=
 github.com/jimmicro/version v1.0.0/go.mod h1:/t8xgCGvTfdpjvNgcZGlhZW4weqTcb5DFinrGWZ/9d8=
 github.com/json-iterator/go v1.1.12 h1:PV8peI4a0ysnczrg+LtxykD8LfKY9ML6u2jnxaEnrnM=
