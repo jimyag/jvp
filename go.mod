@@ -9,7 +9,7 @@ require (
 	github.com/digitalocean/go-qemu v0.0.0-20250212194115-ee9b0668d242
 	github.com/gin-gonic/gin v1.11.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/jimmicro/grace v0.0.0-20251102152554-f8295e240732
+	github.com/jimmicro/grace v0.0.0-20261020151021-358edf13acb6
 	github.com/jimmicro/version v1.0.0
 	github.com/rs/zerolog v1.34.0
 	github.com/sony/sonyflake v1.3.0
